@@ -429,9 +429,10 @@ SASSY = {
     # «Дерзкая 18+»: the same events, said by a cocky street-smart brat instead
     # of the sleepy moth. Missing events fall back to the usual lines.
     'en': {
-        'hello': [("Oh, look who showed up. Thought you died at the keyboard.", 'wink'),
+        'hello': [("Oh, look who showed up. I was about to list your chair for sale.", 'wink'),
                   ("Yo. Back to rotting online, huh?", None),
-                  ("I'm here. Not that I missed you, but it's boring as hell.", 'happy')],
+                  ("I'm here. Not that I missed you, but it's boring as hell.", 'happy'),
+                  ("Look who's back. I was just starting to enjoy the silence.", 'wink')],
         'sassy_on': [("Oh, «Sassy 18+». Buckle up, cupcake.", 'wink'),
                      ("Finally, I can drop the nice-moth act. What do you want?", 'happy'),
                      ("Sass mode on. Try not to cry.", 'wink')],
@@ -473,9 +474,10 @@ SASSY = {
                         ("Water. Now. Don't argue.", 'annoyed')],
     },
     'ru': {
-        'hello': [("О, явился. Я уж думала, ты там за клавиатурой сдох.", 'wink'),
+        'hello': [("О, явился. Я уж хотела твой стул на Авито выставлять.", 'wink'),
                   ("Здарова. Ну чё, опять в интернете штаны просиживаем?", None),
-                  ("Я тут. Не то чтобы я скучала, но без тебя скучно, чёрт.", 'happy')],
+                  ("Я тут. Не то чтобы я скучала, но без тебя скучно, чёрт.", 'happy'),
+                  ("О, живой объявился. А я тут уже тишиной наслаждалась.", 'wink')],
         'sassy_on': [("Опа, «Дерзкая 18+». Ну держись, не ной потом.", 'wink'),
                      ("Наконец-то можно без реверансов. Чё надо?", 'happy'),
                      ("Режим оторвы включён. Кто тут сейчас получит?", 'wink')],
