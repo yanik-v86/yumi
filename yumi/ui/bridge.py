@@ -352,7 +352,8 @@ class WebBridge:
                                secs=max(2, min(30, float(seconds or 8))),
                                size=self.app.settings.get('stt_size', 'small'),
                                mic=self.app.settings.get('stt_mic'),
-                               engine=engine)
+                               engine=engine,
+                               beam=self.app.settings.get('stt_beam', 5))
 
         res = self._ears_exclusive(work)
         if res is None:
@@ -387,6 +388,7 @@ class WebBridge:
                             model_size=s.get('wake_model_size', 'small'),
                             judge_log=s.get('wake_judge_log', True),
                             engine=s.get('stt_engine'),
+                            beam=s.get('stt_beam', 5),
                             oww_ear=ear)
             return res, round(time.monotonic() - started, 2)
 

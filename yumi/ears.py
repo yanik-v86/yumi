@@ -212,13 +212,13 @@ def mics():
     return data.get('mics') if isinstance(data.get('mics'), list) else []
 
 
-def listen(lang='ru', secs=7, size='small', mic=None, engine=None):
+def listen(lang='ru', secs=7, size='small', mic=None, engine=None, beam=5):
     """hear one phrase: {'text': the words whisper read, 'vosk': the words vosk read}
     ('' for silence, None when the ears are not set up); the mind tries both readings"""
     info = _ensure()
     if not info:
         return None
-    q = {'lang': lang, 'secs': round(secs, 1), 'size': size}
+    q = {'lang': lang, 'secs': round(secs, 1), 'size': size, 'beam': beam}
     if engine and engine != 'whisper':
         q['engine'] = engine
     if mic:
@@ -237,7 +237,7 @@ def listen(lang='ru', secs=7, size='small', mic=None, engine=None):
 
 def wake(lang='ru', word='юми', secs=20, size='small', mic=None,
          sensitivity='normal', confirm=True, model_size=None, judge_log=False, engine=None,
-         oww_ear=None, hints=None):
+         oww_ear=None, hints=None, beam=5):
     """wait for the wake word (say «Юми» and she is all ears): a dict
     {'woke': bool, 'text': what came after the word, '' when it was said alone,
      'alt': what the stop ear read around the name — the other reading,
@@ -251,7 +251,7 @@ def wake(lang='ru', word='юми', secs=20, size='small', mic=None,
         return None
     q = {'lang': lang, 'word': word, 'secs': round(secs, 1), 'size': size,
          'sensitivity': sensitivity, 'confirm': '1' if confirm else '0',
-         'judge_log': '1' if judge_log else '0'}
+         'judge_log': '1' if judge_log else '0', 'beam': beam}
     if engine and engine != 'whisper':
         q['engine'] = engine
     if model_size:

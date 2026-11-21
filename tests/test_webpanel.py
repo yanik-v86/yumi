@@ -312,6 +312,16 @@ try:
     assert entries['wake_sensitivity']['type'] == 'select'
     assert entries['ui_lang']['type'] == 'select'
     assert entries['stt_echo']['type'] == 'switch'
+    assert entries['stt_crosscheck']['type'] == 'switch'
+    assert entries['stt_beam']['type'] == 'number'
+    assert (entries['stt_beam']['min'], entries['stt_beam']['max'],
+            entries['stt_beam']['step']) == (1, 16, 1)
+    assert catalog.validate_settings_patch({'stt_beam': '8'}) == {'stt_beam': 8}
+    try:
+        catalog.validate_settings_patch({'stt_beam': 32})
+        raise AssertionError('bad beam accepted')
+    except ValueError:
+        pass
     assert entries['voice_vol']['type'] == 'range'
     assert entries['tts_pitch']['type'] == 'range'
     assert entries['nlu_confidence']['type'] == 'range', entries.get('nlu_confidence')

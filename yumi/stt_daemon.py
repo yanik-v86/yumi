@@ -1333,6 +1333,8 @@ class Ears:
         self.models = {}
         self.wsp = {}                   # faster-whisper models, one per (lang, size)
         self.nemo = None                # the streaming Nemotron ear, loaded on the first need
+        self.nemo_beam = 0              # the beam this recognizer was built with; a changed
+                                        # panel dial rebuilds it on the next phrase
         self.error = None
         self.busy = False
         self.abort = False
@@ -1395,16 +1397,20 @@ class Ears:
             log(f'whisper: {name} is ready')
             return m
 
-    def nemotron(self):
+    def nemotron(self, beam=5):
         """the streaming Nemotron 0.6b transducer, or None: the ear the settings may
         name (stt_engine: 'nemotron', tools/nemotron_setup.sh puts it in); loaded once
-        and shared by every language (the language is set on the stream itself)"""
+        and shared by every language (the language is set on the stream itself).
+        The decode keeps several paths open: a greedy 0.6b ear turns rare words into
+        «бапушки» instead of «пушкин», which the mind then has to answer."""
         if not (NEMO_DIR / 'encoder.int8.onnx').exists():
             return None
         import sherpa_onnx
+        beam = max(1, min(16, int(beam or 5)))
         with self.lock:
-            if self.nemo is not None:
+            if self.nemo is not None and self.nemo_beam == beam:
                 return self.nemo
+            method = 'modified_beam_search' if beam > 1 else 'greedy_search'
             try:
                 self.nemo = sherpa_onnx.OnlineRecognizer.from_transducer(
                     tokens=str(NEMO_DIR / 'tokens.txt'),
@@ -1412,11 +1418,14 @@ class Ears:
                     decoder=str(NEMO_DIR / 'decoder.int8.onnx'),
                     joiner=str(NEMO_DIR / 'joiner.int8.onnx'),
                     num_threads=2, sample_rate=RATE, feature_dim=80,
-                    decoding_method='greedy_search')
+                    decoding_method=method,
+                    **({'max_active_paths': beam} if beam > 1 else {}))
+                self.nemo_beam = beam
             except Exception as e:      # noqa: BLE001 - a failed ear is no tragedy
                 log('nemotron will not load, whisper reads instead: ' + str(e)[-120:])
+                self.nemo, self.nemo_beam = None, 0
                 return None
-            log('nemotron: the 0.6b ear is ready')
+            log(f'nemotron: the 0.6b ear is ready (beam {beam})')
         return self.nemo
 
     def transcribe(self, pcm, lang, size='small', beam=5):
@@ -1449,7 +1458,7 @@ class Ears:
             return ''
         return text
 
-    def read_tape(self, said, lang, size='small', engine='whisper'):
+    def read_tape(self, said, lang, size='small', engine='whisper', beam=5):
         """the phrase's bytes (s16 mono RATE) and who read them: (text, ear).
         The ear the settings name reads first — Nemotron 0.6b when it is chosen,
         whisper otherwise. Whisper is the fallback, never the worker: when
@@ -1459,7 +1468,7 @@ class Ears:
         background as readily as the user. '' and '' when nobody could read it"""
         text, ear = '', ''
         if engine == 'nemotron':
-            nrec = self.nemotron()
+            nrec = self.nemotron(beam)
             if nrec:                    # the streaming ear reads; a failure falls through
                 try:
                     text = transcribe_nemo_model(nrec, said, lang)
@@ -1468,7 +1477,7 @@ class Ears:
                     log('nemotron failed, whisper answers instead: ' + str(e)[-120:])
         else:                           # the whisper ear (the settings name it) reads
             try:
-                text = self.transcribe(said, lang, size)   # whisper reads the tape
+                text = self.transcribe(said, lang, size, beam)   # whisper reads the tape
                 ear = 'whisper' if text else ''
             except Exception as e:      # noqa: BLE001 - whisper is best effort
                 log('whisper failed, the small ear answers instead: ' + str(e)[-120:])
@@ -1476,7 +1485,7 @@ class Ears:
             # whisper is the fallback: the same tape, a different reader — a name
             # or a command Nemotron swallowed must not die on an empty reading
             try:
-                text = self.transcribe(said, lang, size)
+                text = self.transcribe(said, lang, size, beam)
                 ear = 'whisper' if text else ''
             except Exception as e:      # noqa: BLE001 - whisper is best effort
                 log('whisper (fallback) failed, the small ear answers instead: '
@@ -1488,12 +1497,12 @@ class Ears:
                 text, ear = back, 'vosk'
         return text, ear
 
-    def transcribe_said(self, said, lang, size='small', engine='whisper'):
+    def transcribe_said(self, said, lang, size='small', engine='whisper', beam=5):
         """the phrase's bytes (s16 mono RATE) as words: read_tape's text alone —
         None never leaves here, the caller gets the best reading of the three"""
-        return self.read_tape(said, lang, size, engine)[0]
+        return self.read_tape(said, lang, size, engine, beam)[0]
 
-    def listen(self, lang, secs, quiet, size='small', mic=None, engine='whisper'):
+    def listen(self, lang, secs, quiet, size='small', mic=None, engine='whisper', beam=5):
         """hear one phrase: the recognized text ('' when there was nothing)"""
         from vosk import KaldiRecognizer
         import selectors
@@ -1569,7 +1578,7 @@ class Ears:
                 text = ''
                 vtext = ' '.join(json.loads(rec.FinalResult() or '{}').get('text', '').split())
                 if len(said) >= RATE:         # under a second is a breath, not a phrase
-                    text = self.transcribe_said(said, lang, size, engine)
+                    text = self.transcribe_said(said, lang, size, engine, beam)
                 if not text:                  # whisper silent or away: vosk's words stand in
                     text = vtext
                 return {'text': text, 'vosk': vtext}   # both readings: the mind will choose
@@ -1596,7 +1605,7 @@ class Ears:
 
     def wake(self, lang, word, secs, size='small', mic=None,
              sensitivity='normal', confirm=True, model_size=None, judge_log=False,
-             engine='whisper', oww_ear='auto', diag=False, hints=None):
+             engine='whisper', oww_ear='auto', diag=False, hints=None, beam=5):
         """wait for the wake word, keeping the microphone on:
         {'woke': True, 'text': the phrase after it} — the name was heard, the phrase came
         {'woke': True, 'text': ''} — the name alone, a phrase may still come
@@ -1794,7 +1803,7 @@ class Ears:
                         diag.event(arbitration='STT', reason='phrase_end', stt_start=True,
                                    judge_called=False, final_wake=False,
                                    **diag_base('LISTENING', voiced))
-                        text, ear = self.read_tape(window, lang, size, engine)
+                        text, ear = self.read_tape(window, lang, size, engine, beam)
                         if text and ear == 'vosk' and fallback_route(text, hints) == 'ignore':
                             # the weakest ear read the background: an honest «не расслышала»
                             # (she asks what you wanted) beats a confident wrong command
@@ -2413,6 +2422,10 @@ class Handler(BaseHTTPRequestHandler):
             self.ears.stop()
             return self._json({'ok': True})
         engine = (q.get('engine') or ['whisper'])[0] or 'whisper'
+        try:
+            beam = max(1, min(16, int((q.get('beam') or ['5'])[0])))
+        except (TypeError, ValueError):
+            beam = 5
         if u.path == '/wake':
             try:
                 secs = min(300.0, max(5.0, float((q.get('secs') or ['20'])[0])))
@@ -2441,7 +2454,7 @@ class Handler(BaseHTTPRequestHandler):
                                      sensitivity=sensitivity, confirm=confirm,
                                      model_size=model_size, judge_log=judge_log,
                                      engine=engine, oww_ear=oww_ear, diag=diag,
-                                     hints=hints)
+                                     hints=hints, beam=beam)
             except Exception as e:          # noqa: BLE001 - any failure is reported over HTTP
                 self.ears.error = str(e)
                 return self._json({'error': str(e)}, 500)
@@ -2464,7 +2477,7 @@ class Handler(BaseHTTPRequestHandler):
         mic = (q.get('mic') or [None])[0] or None
         try:
             res = self.ears.listen(lang, secs, quiet=min(6.0, secs), size=size, mic=mic,
-                                   engine=engine)
+                                   engine=engine, beam=beam)
         except Exception as e:          # noqa: BLE001 - any failure is reported over HTTP
             self.ears.error = str(e)
             return self._json({'error': str(e)}, 500)

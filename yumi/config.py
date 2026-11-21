@@ -98,6 +98,12 @@ DEFAULT_SETTINGS = {
     'stt_size': 'small',      # her hearing: small (45 MB) / big (a sharper ~1.8 GB model)
     'stt_engine': 'whisper',  # who reads the phrases: whisper / nemotron (a streaming
                               # 0.6b ear, ~650 MB, tools/nemotron_setup.sh; faster)
+    'stt_beam': 5,            # how widely the phrase ear searches while decoding: whisper's
+                              # beam_size / nemotron's max_active_paths. Greedy decoding
+                              # can mangle rare words; a wider beam often keeps the word
+                              # whole, at the cost of a little more CPU
+    'stt_crosscheck': True,   # when two ears hear the phrase differently, show both readings
+                              # to the mind: it can tell «бапушки» from «пушкин»
     'stt_mic': None,          # which microphone the ears hear with: None = auto (the desktop's pick)
     'stt_echo': True,         # the webrtc echo canceller around the mic; false = plain mic only
     'stt_selfmute': True,     # the ears close while she speaks, so she never hears

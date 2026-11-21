@@ -1473,9 +1473,15 @@ class Brain(Extras):
         self.chat_history.append({'role': 'user', 'content': text})
         del self.chat_history[:-limit]  # the recent turn goes along; in an active
                                         # dialogue the window is a little wider
+        history = list(self.chat_history)
+        if self.settings.get('stt_crosscheck', True):
+            note = reading_note(text, alt, lang)
+            if note:
+                history.insert(-1, {'role': 'system', 'content': note})
+                _mind_log(f'crosscheck: {alt!r}')
         self.thinking = True
         self.conversation.waiting_answer = True   # hold the ears until this answer lands
-        self.requests.append(('chat_ask', list(self.chat_history)))
+        self.requests.append(('chat_ask', history))
 
     def params_report(self, lang='en'):
         """what she is made of right now, in one breath: her ears, her name ear,
@@ -3174,6 +3180,22 @@ def drop_name(text, word='юми'):
     if toks and _near1(toks[0], w[0] if w else 'юми'):
         toks = toks[1:]
     return ' '.join(toks)
+
+
+def reading_note(text, alt, lang='ru'):
+    """a system line for the mind when the two ears heard the phrase differently:
+    the primary reading goes to chat, but the other ear may have kept the word the
+    first one mangled («бапушки» against «пушкин») — let the mind choose the sense"""
+    if not alt or alt == text:
+        return ''
+    first, second = text[:200], alt[:200]
+    if lang == 'ru':
+        return ('Одну и ту же фразу уши расслышали по-разному. Основное ухо: '
+                f'«{first}». Другое ухо: «{second}». Если одно написание явно '
+                'испорчено звуком, считай, что человек сказал более осмысленный вариант.')
+    return ('The two ears heard the same phrase differently. First ear: '
+            f'"{first}". Other ear: "{second}". If one reading is clearly garbled, '
+            'treat the more sensible wording as what the person said.')
 
 
 def _near1(a, b):

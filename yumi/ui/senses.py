@@ -226,7 +226,8 @@ class SensesMixin:
             res = ears.listen(lang=self.settings.get('speech_lang', 'en'), secs=secs,
                               size=self.settings.get('stt_size', 'small'),
                               mic=self.settings.get('stt_mic'),
-                              engine=self.settings.get('stt_engine'))
+                              engine=self.settings.get('stt_engine'),
+                              beam=self.settings.get('stt_beam', 5))
             text = res.get('text') if isinstance(res, dict) else res
             vtxt = res.get('vosk', '') if isinstance(res, dict) else ''
             self._vs('held', 'processing the heard phrase')
@@ -253,7 +254,8 @@ class SensesMixin:
             res = ears.listen(lang=self.settings.get('speech_lang', 'en'), secs=secs,
                               size=self.settings.get('stt_size', 'small'),
                               mic=self.settings.get('stt_mic'),
-                              engine=self.settings.get('stt_engine'))
+                              engine=self.settings.get('stt_engine'),
+                              beam=self.settings.get('stt_beam', 5))
         finally:
             self.followup_waiting = False
         if conv.stale(cid) or not conv.active:
@@ -392,6 +394,7 @@ class SensesMixin:
                                     model_size=self.settings.get('wake_model_size', 'small'),
                                     judge_log=self.settings.get('wake_judge_log', True),
                                     engine=self.settings.get('stt_engine'),
+                                    beam=self.settings.get('stt_beam', 5),
                                     oww_ear=self.settings.get('wake_ear', 'auto'),
                                     hints=self.wake_hints(b))
                 finally:
@@ -432,7 +435,8 @@ class SensesMixin:
                                       secs=15,
                                       size=self.settings.get('stt_size', 'small'),
                                       mic=self.settings.get('stt_mic'),
-                                      engine=self.settings.get('stt_engine'))
+                                      engine=self.settings.get('stt_engine'),
+                                      beam=self.settings.get('stt_beam', 5))
                     if cmd:
                         said = cmd.get('text') or ''
                         vtxt = cmd.get('vosk') or ''   # the other reading, as on the click-listen

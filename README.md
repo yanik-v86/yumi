@@ -473,6 +473,13 @@ it reads the same tape a second time. It can go entirely:
 faster-whisper once the settings name the nemotron ear (vosk then stands alone if the ear ever
 fails). The wake-word judge uses it too.
 
+Both ears search with a width set by `stt_beam` (5 by default, **Settings → Her ears →
+Reading width**): whisper's `beam_size` and Nemotron's `max_active_paths`. Greedy decoding is
+fast but may turn a rare word into «бапушки» instead of «Пушкин». Chat has a second guard:
+`stt_crosscheck` (on, **Compare both ears**). When the primary ear and Vosk's stop ear disagree,
+the mind sees both readings and picks the sensible one; `/tmp/yumi/mind.log` gets a
+`crosscheck: ...` line beside `heard`.
+
 The phrase after the name is read from the tape, not from Vosk's passing stream: how many
 seconds to take is `wake_read_s` (4 s by default, **Settings → Her ears → Phrase window after
 the name**). A command is short, so a longer window adds latency, not words. When neither
