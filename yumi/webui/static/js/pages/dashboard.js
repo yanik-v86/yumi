@@ -73,6 +73,12 @@ export function render(view, ctx) {
 
   const nowTitle = el('h2', { text: lang() === 'ru' ? 'Тишина' : 'Quiet' });
   const nowArtist = el('div', { class: 'artist', text: '—' });
+  const resumeBtn = el('button', {
+    class: 'btn btn-small', type: 'button', disabled: true,
+    text: lang() === 'ru' ? 'Продолжи' : 'Resume',
+    title: lang() === 'ru' ? 'Трек, на котором остановили' : 'The track you stopped on',
+    onclick: () => musicCmd('resume'),
+  });
   const nowCard = el('div', { class: 'card' },
     el('h3', { text: lang() === 'ru' ? 'Сейчас играет' : 'Now playing' }),
     el('div', { class: 'now' },
@@ -83,6 +89,7 @@ export function render(view, ctx) {
       musicBtn('play_pause', 'play', lang() === 'ru' ? 'играть / пауза' : 'play / pause'),
       musicBtn('next', 'next'),
       musicBtn('stop', 'stop'),
+      resumeBtn,
       el('button', {
         class: 'btn btn-small', type: 'button', text: lang() === 'ru' ? 'Тише' : 'Quieter',
         onclick: () => musicCmd('volume_down'),
@@ -394,6 +401,7 @@ export function render(view, ctx) {
     nowCard.querySelector('h3').textContent = runtime.music?.volume != null
       ? `${lang() === 'ru' ? 'Сейчас играет' : 'Now playing'} · ${runtime.music.volume}%`
       : (lang() === 'ru' ? 'Сейчас играет' : 'Now playing');
+    resumeBtn.disabled = !runtime.music?.resumable;
   }
 
   draw(ctx.status);

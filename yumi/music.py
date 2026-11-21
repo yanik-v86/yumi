@@ -66,6 +66,21 @@ _MUSIC_DIR = _xdg_music_dir()
 _running_processes = {'mpd': None, 'player': None}
 _stop_event = threading.Event()
 
+# what was sounding when «стоп» cut her off, so «юми, продолжи» brings that very
+# track back instead of dealing a fresh random hand (see resume_music below)
+_resume = {'mode': None, 'value': None}   # mode: mpd_file | tracks | file | dir | player
+
+
+def _remember(mode, value):
+    """keep the last thing that made sound — the memory survives «стоп»"""
+    _resume['mode'] = mode
+    _resume['value'] = value
+
+
+def resume_available():
+    """is there something to continue? asked by the panel and by the status"""
+    return bool(_resume.get('mode')) or bool(_player_status()) or bool(get_mpd_status())
+
 # the player the words answer to right now (the queue decides: Jellyfin
 # streams and her folders sound on her mpd, the server's paths on the
 # server's) and the mpd named by music_server, the middle of the chain
@@ -214,6 +229,15 @@ def play_music(file_path=None, directory=None):
                                        # with the same first song twice in a row
         _mpc('play')
         if is_mpd_playing():
+            # keep the very song, not just the folder: «mpc stop» leaves the queue
+            # standing, so a play on this same mpd brings that track back
+            cur = _mpc('current', '-f', '%file%')
+            file_ = (cur.stdout or '').strip() if cur and cur.returncode == 0 else ''
+            if file_:
+                _remember('mpd_file', {'file': file_,
+                                       'env': dict(_MPDA['env']) if _MPDA['env'] else None})
+            else:
+                _remember('dir', str(directory))
             return True
 
     # fallback: ffplay over the first audio files of the directory (she picks one)
@@ -232,6 +256,7 @@ def play_music(file_path=None, directory=None):
                     env=ENV, start_new_session=True
                 )
                 _running_processes['player'] = proc.pid
+                _remember('file', str(song))   # «стоп» kills ffplay: keep the song
                 return True
             except OSError:
                 pass
@@ -297,6 +322,7 @@ def play_tracks(tracks):
             _mpc('random', 'off')
             _mpc('play')
             if is_mpd_playing():
+                _remember('tracks', tracks)   # the exact queue to bring back on «продолжи»
                 return True
         else:
             _mpc('clear')          # nothing went in: the queue stays clean
@@ -314,6 +340,7 @@ def play_tracks(tracks):
                 env=ENV, start_new_session=True
             )
             _running_processes['player'] = proc.pid
+            _remember('tracks', tracks)   # ffplay's fallback: the same queue on resume
             return True
         except OSError:
             pass
@@ -692,17 +719,67 @@ def system_volume(cmd):
     return new if r.returncode == 0 else None
 
 
+def resume_music():
+    """«юми, продолжи»: the very track «стоп» cut off comes back. Not «включи
+    музыку» — that deals a fresh random hand; this one keeps the last song.
+    A still-loaded player or a paused queue is simply carried on; a song we
+    started ourselves and killed is played again from what we remembered.
+    """
+    # a paused player keeps its track and its place: just carry on
+    if _player_status().lower().startswith('paused'):
+        r = _playerctl('play')
+        if r is not None and r.returncode == 0:
+            return True
+    if '[paused]' in (get_mpd_status() or '').lower():
+        r = _mpc('play')
+        if r is not None and r.returncode == 0:
+            return True
+
+    mode, value = _resume.get('mode'), _resume.get('value')
+    if mode == 'mpd_file' and value:
+        saved = _MPDA['env']
+        _MPDA['env'] = value.get('env')
+        try:
+            r = _mpc('play')
+            if r is not None and r.returncode == 0 and is_mpd_playing():
+                return True
+        finally:
+            _MPDA['env'] = saved
+        # the queue was dealt out again since: put that one song back
+        return play_tracks([{'path': value['file']}])
+    if mode == 'tracks' and value:
+        return play_tracks(value)
+    if mode == 'file' and value:
+        return play_tracks([{'path': value}])
+    if mode == 'dir' and value:
+        return play_music(directory=value)
+    if mode == 'player':
+        r = _playerctl('play')
+        if r is not None and r.returncode == 0:
+            return True
+    # no memory: mpd keeps its queue through a stop, so a plain play still
+    # resumes the track that was on; failing that, her library starts
+    return music_control('play')
+
+
 def music_control(cmd):
     """One entry for her voice and menu: 'play', 'pause', 'play_pause',
-    'next', 'previous', 'stop', plus the system volume: 'volume_up',
-    'volume_down', 'volume N' (10..100).
+    'next', 'previous', 'stop', 'resume' (the track «стоп» cut off), plus the
+    system volume: 'volume_up', 'volume_down', 'volume N' (10..100).
 
     «Включи музыку» ('play') is always her own library: never a toggle of some
     other player that happens to be around. The true toggle 'play_pause' is
     kept for the hotkey and the menu button. 'pause' only quiets what plays.
     """
     if cmd == 'stop':
+        if _player_status().lower().startswith('playing'):
+            # whatever has the sound now is the track to bring back — an outside
+            # player wins over an older memory of her own mpd
+            _remember('player', True)
         return stop_music(force=True)
+
+    if cmd == 'resume':
+        return resume_music()
 
     if cmd == 'play':                  # «включи музыку»: hers, from the top
         if is_mpd_playing():

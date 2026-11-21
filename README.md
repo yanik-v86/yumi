@@ -559,6 +559,11 @@ httpd stream `music_stream` names, e.g. `http://192.168.0.189:8123` — without
 it the sound stays on the server).
 Playback wants `mpd` and `mpc` (with `ffplay` as a fallback).
 
+«Тише» and «громче» work without addressing her — just like «стоп»: the small ear hears those
+words while she waits for her name and the volume turns at once, even while she sleeps. After
+«стоп», say «Юми, продолжи» and she brings back that very track instead of dealing a fresh
+random hand. The same **Resume** button lives on the dashboard in the browser panel.
+
 **The wake word.** Say «Yumi» and she is all ears at once, no buttons — the name may come
 behind a filler word («well, Yumi») and a half-heard mush of syllables counts too, so she
 catches it properly at first try more often than not. Said with a phrase

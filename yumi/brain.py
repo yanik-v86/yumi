@@ -2061,7 +2061,8 @@ class Brain(Extras):
 
         Args:
             cmd: One of 'play', 'pause', 'play_pause', 'next', 'previous',
-                 'stop', 'who' (кто играет: she names the artist and the track),
+                 'stop', 'resume' (продолжи: the track «стоп» cut off),
+                 'who' (кто играет: she names the artist and the track),
                  'like' (лайк: adds the current track to favorites),
                  'volume_up', 'volume_down', 'volume N' (10..100)
         """
@@ -2076,6 +2077,11 @@ class Brain(Extras):
         if cmd == 'play':              # «включи музыку»: the library that is awake —
             self.thinking = True       # Jellyfin when home, her folders away from it
             self.requests.append(('music_search', {'kind': 'play', 'query': ''}))
+            return
+
+        if cmd == 'resume':            # «продолжи»: the very track that was stopped
+            self.say('music_resume')
+            self.requests.append(('music_resume',))
             return
 
         phrases = {'play_pause': 'music_toggle',
@@ -3153,7 +3159,10 @@ MUSIC_FILLERS = frozenset(('юми', 'yumi', 'а', 'и', 'ну', 'давай', '
 MUSIC_PLAY = frozenset((
     'включи', 'включить', 'включай', 'включать', 'запусти', 'запустить',
     'запускай', 'запускать', 'поставь', 'поставить', 'играй', 'играть',
-    'продолжай', 'продолжить', 'play', 'resume', 'start'))
+    'play', 'start'))
+# «продолжи» is not «включи»: it brings back the track «стоп» cut short
+MUSIC_RESUME = frozenset((
+    'продолжи', 'продолжай', 'продолжить', 'resume', 'continue'))
 MUSIC_PAUSE = frozenset(('пауза', 'паузу', 'приостанови', 'приостановить', 'pause'))
 MUSIC_STOP_ANY = frozenset(('стоп', 'стопи', 'останови', 'остановить', 'stop'))
 MUSIC_STOP_MUSIC = frozenset(('выключи', 'выключить', 'выключать', 'выруби', 'выруб'))
@@ -3176,12 +3185,14 @@ MUSIC_ANY = frozenset(('что-нибудь', 'нибудь', 'какую-ниб
 MUSIC_ARTIST_W = ('исполнителя', 'исполнитель', 'исполнителя', 'артиста',
                   'группу', 'группы', 'artist', 'band', 'singer')
 MUSIC_ALBUM_W = frozenset(('альбом', 'альбома', 'album'))
-VOLUME_UP = frozenset(('громче', 'повысь', 'повысить', 'louder', 'up'))
-VOLUME_DOWN = frozenset(('тише', 'тихо', 'quieter', 'softer', 'lower'))
+VOLUME_UP = frozenset(('громче', 'повысь', 'повысить', 'прибавь', 'прибавить',
+                       'увеличь', 'увеличить', 'louder', 'up'))
+VOLUME_DOWN = frozenset(('тише', 'тихо', 'убавь', 'убавить', 'уменьши', 'уменьшить',
+                         'quieter', 'softer', 'lower'))
 VOLUME_WORD = entities.VOLUME_WORD         # one dictionary for the rules and the skills
 VOLUME_NUMBERS = entities.VOLUME_NUMBERS
 VOLUME_ONES = entities.VOLUME_ONES
-MUSIC_KNOWN = (MUSIC_WORDS | MUSIC_FILLERS | MUSIC_PLAY | MUSIC_PAUSE
+MUSIC_KNOWN = (MUSIC_WORDS | MUSIC_FILLERS | MUSIC_PLAY | MUSIC_RESUME | MUSIC_PAUSE
                | MUSIC_STOP_ANY | MUSIC_STOP_MUSIC | MUSIC_LIKE | set(MUSIC_NEXT)
                | VOLUME_UP | VOLUME_DOWN | VOLUME_WORD | set(VOLUME_NUMBERS)
                | {'следующ', 'предыдущ', 'дальше', 'назад', 'turn', 'off', 'on'})
@@ -3355,6 +3366,10 @@ def music_control_text(text, lang='en', guess=False):
             _verbs(toks, MUSIC_STOP_MUSIC)
             or ('turn' in toks and 'off' in toks and 'on' not in toks)):
         return 'stop'                  # «выключи музыку», but «выключи свет» is not hers
+
+    # «юми, продолжи»: bring back the track she was stopped on — not a new one
+    if _verbs(toks, MUSIC_RESUME):
+        return 'resume'
 
     # the system volume: «тише», «громче», «громкость 50» (a digit or a word)
     if any(t in VOLUME_DOWN or t.startswith(('тише', 'тихо', 'потише'))

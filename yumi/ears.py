@@ -242,6 +242,8 @@ def wake(lang='ru', word='юми', secs=20, size='small', mic=None,
     {'woke': bool, 'text': what came after the word, '' when it was said alone,
      'alt': what the stop ear read around the name — the other reading,
      'fallback': the name came from vosk rather than the trained ear,
+     'stop': the stop word was heard without a name,
+     'cmd': 'volume_down'/'volume_up' — «тише»/«громче» without a name,
      'verdict': {'matched', 'reason', 'fallback'}},
     or None when the ears cannot work at all. A manual listen takes the mic over.
     hints are the user's own phrases/keywords from actions.json: the fallback
@@ -274,13 +276,15 @@ def wake(lang='ru', word='юми', secs=20, size='small', mic=None,
         verdict = {
             'matched': bool(data.get('woke')),
             'reason': ('stop_command' if data.get('stop')
+                       else 'volume_command' if data.get('cmd')
                        else 'matched' if data.get('woke') else 'no wake in this window'),
             'fallback': bool(data.get('fallback')),
         }
     return {'woke': bool(data.get('woke')), 'text': str(data.get('text') or ''),
             'alt': str(data.get('alt') or ''),
             'fallback': bool(data.get('fallback')),
-            'stop': bool(data.get('stop')), 'verdict': verdict}
+            'stop': bool(data.get('stop')), 'cmd': str(data.get('cmd') or ''),
+            'verdict': verdict}
 
 
 def tap(on, lang='ru', size='small', mic=None):

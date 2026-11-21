@@ -85,7 +85,7 @@ WebBridge (yumi.ui.bridge)  ── GLib.idle_add ──▶  App / Brain / Memory
 | `chat` | Разговор | чат с умом, история с ревизией и SSE-операциями Insert/Update/Remove/Clear, «сказать в мир», быстрый старт, живая реплика |
 | `notes` | Заметки | поиск по заметкам, создание и правка, удаление, очистка, запись голосом через `/api/voice/listen` |
 | `files` | Файлы | очередь обработки, drag-and-drop загрузка, недавние, полка, открыть, конвертировать, сжать |
-| `music` | Музыка | текущий трек, play/pause/next/stop, громкость, поиск по Jellyfin/папкам |
+| `music` | Музыка | текущий трек, play/pause/next/stop/продолжи, громкость, поиск по Jellyfin/папкам |
 | `voice` | Ушки и голос | карточки «Активация», «Судья фраз», «Голос»: выбор движка, состояние «доступно/нет», проверка имени и фразы вживую, прослушивание TTS; ниже — «закрыть ушки», выбор микрофона, живое состояние микрофона с кнопками Пауза/Продолжить/Освободить и остальные настройки ушек/звука |
 | `doctor` | Диагностика | один отчёт: движки, микрофоны, модели, имя, TTS и STT; быстрый запуск без микрофона, запись и проверку хэшей моделей, копирование отчёта. То же, что `yumi --doctor` |
 | `buttons` | Кнопки | кольцо, порядок, выключенные кнопки, свои команды, добавление и редактирование; карточка ожидающего разрешения Разово/Всегда/Запретить |
@@ -171,9 +171,9 @@ ctx.navigate(id)
 | POST | `/api/notes` | `{text, title?}` — новая заметка |
 | GET/PATCH/DELETE | `/api/notes/<id>` | одна заметка, правка, удаление |
 | POST | `/api/notes/clear` | `{all:true}` — стереть всю книжку |
-| GET | `/api/music` | текущий трек и громкость |
+| GET | `/api/music` | текущий трек, громкость и `resumable` (есть что продолжить после «стоп») |
 | GET | `/api/music/search` | `?kind=&q=` |
-| POST | `/api/music/play`, `/api/music/control` | play/pause/next/stop/volume |
+| POST | `/api/music/play`, `/api/music/control` | play/pause/next/stop/resume/volume |
 | GET | `/api/voice/engines` | наличие oww/vosk/whisper/nemotron/TTS, список голосов и моделей |
 | GET | `/api/voice/mics` | свежий список микрофонов звуковой системы (заодно обновляет меню ушек) |
 | GET | `/api/voice/state` | одно состояние микрофона: state/owner/generation/reason/wake_enabled/transitions |

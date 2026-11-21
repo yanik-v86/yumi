@@ -972,6 +972,15 @@ WAKE_STOPS = {'иди', 'или', 'уже', 'ели', 'юли', 'умер', 'о�
 STOP_COMMANDS = {'стоп', 'стопи', 'останови', 'остановись', 'прекрати', 'stop'}
 STOP_FILE = HOME / 'stop_words.json'       # extra stop words the user may add (a json list)
 _stops_cache = {'t': 0.0, 'words': frozenset(STOP_COMMANDS)}
+# the other two words that work without her name (как «стоп»): the same small ear
+# hears them while she waits for «юми» — «тише» and «громче» turn the system knob
+QUICK_DOWN = frozenset(('тише', 'тихо', 'потише', 'убавь', 'убавить', 'уменьши',
+                        'уменьшить', 'quieter', 'softer', 'lower'))
+QUICK_UP = frozenset(('громче', 'погромче', 'повысь', 'повысить', 'прибавь',
+                      'прибавить', 'увеличь', 'увеличить', 'louder', 'up'))
+QUICK_FILLERS = frozenset(('пожалуйста', 'please', 'чуть', 'немного', 'еще', 'ещё',
+                           'громкость', 'звук', 'bit', 'little', 'a'))
+_quick_cache = {'t': 0.0}                  # one shout must not turn the knob twice in one breath
 
 
 def _stop_words():
@@ -1069,6 +1078,51 @@ def stop_mush(text, spellings=()):
             if near(tok, s + 'стоп', 2) <= 2:
                 return True             # «юмистоп»: the pause drowned, one word stands
     return False
+
+
+def quick_volume(text, spellings=()):
+    """A bare «тише»/«громче» in the passing speech — the volume turns without
+    her name, just as «стоп» stops her. Only a short whole phrase counts: her
+    name may lead it, a polite word may follow, and one letter may slip over the
+    music; a long sentence that happens to carry the word is background talk.
+    Returns 'volume_down' / 'volume_up', or None when the phrase is not one.
+    """
+    toks = [t.strip('.,!?"«»…:;()[]-—').lower().replace('ё', 'е')
+            for t in (text or '').split()]
+    toks = [t for t in toks if t]
+    if spellings and toks and (toks[0] in spellings
+                               or any(near(toks[0], s, 1) <= 1 for s in spellings)):
+        toks = toks[1:]                    # «юми тише»: the name may lead it too
+    if not toks or len(toks) > 4:
+        return None
+    words = QUICK_DOWN | QUICK_UP
+    hits = []
+    for t in toks:
+        close = lambda group: (len(t) >= 4 and any(near(t, w) <= 1
+                               for w in group if len(w) <= 6))
+        if t in words or close(words):
+            hits.append(t)
+        elif t not in QUICK_FILLERS:
+            return None                    # other words: not a bare volume wish
+    if not hits:
+        return None
+    down = any(t in QUICK_DOWN or (len(t) >= 4 and any(near(t, w) <= 1
+               for w in QUICK_DOWN if len(w) <= 6)) for t in hits)
+    up = any(t in QUICK_UP or (len(t) >= 4 and any(near(t, w) <= 1
+             for w in QUICK_UP if len(w) <= 6)) for t in hits)
+    if down == up:                         # both or neither: not a clear wish
+        return None
+    return 'volume_down' if down else 'volume_up'
+
+
+def _quick_ready(gap=0.8):
+    """one phrase, one step: a final re-heard on the tail of the same shout must
+    not walk the loudness down ten percent at a time"""
+    now = time.monotonic()
+    if now - _quick_cache['t'] < gap:
+        return False
+    _quick_cache['t'] = now
+    return True
 
 
 _PHON_MAP = str.maketrans({'ю': 'у', 'ё': 'о', 'ы': 'и', 'э': 'е',
@@ -1610,6 +1664,8 @@ class Ears:
         {'woke': True, 'text': the phrase after it} — the name was heard, the phrase came
         {'woke': True, 'text': ''} — the name alone, a phrase may still come
         {'woke': False, 'stop': True, ...} — «стоп» was heard: everything stops now
+        {'woke': False, 'cmd': 'volume_down'|'volume_up', ...} — «тише»/«громче»
+            without her name: the knob turns, as with the stop word
         {'woke': False, ...} — quiet the whole 'secs', or called off by /stop, or busy.
         OpenWakeWord with yumi.onnx is the only ear that decides (раздел 2 ТЗ) — Vosk,
         Nemotron and Whisper stay out of the wake decision: vosk runs as the light
@@ -1725,6 +1781,15 @@ class Ears:
                        judge_called=False, final_wake=False, **diag_base(state))
             judge_note(f'STOP {text!r}')
             return {'woke': False, 'stop': True, 'text': text}
+
+        def quick_result(cmd, text):
+            """a bare «тише»/«громче» passed the small ear without her name: the
+            diary keeps it, the app turns the knob (same road as the stop word)"""
+            diag.event(arbitration='QUICK', reason=cmd, vosk_text=text,
+                       judge_called=False, final_wake=False, **diag_base('SLEEP'))
+            judge_note(f'QUICK {cmd} {text!r}')
+            return {'woke': False, 'cmd': cmd, 'text': text}
+
         with self.lock:                     # one microphone at a time
             if self.busy:
                 return {'woke': False, 'text': None}
@@ -2004,7 +2069,8 @@ class Ears:
                     # nothing else does («останови музыку» is a command: it goes
                     # to STT, not to the stop)
                     if rec is not None:
-                        if rec.AcceptWaveform(chunk):
+                        final = bool(rec.AcceptWaveform(chunk))
+                        if final:
                             words = ' '.join(json.loads(
                                 rec.FinalResult() or '{}').get('text', '').split())
                             if words and not woken:
@@ -2028,6 +2094,15 @@ class Ears:
                                     # wake_result, so keep that segment in the diary
                                     self.tap.note(' '.join(words.split()))
                                 return stop_result(words, 'LISTENING' if woken else 'SLEEP')
+                        # «тише» / «громче» без имени: the same little ear, the same
+                        # bypass as «стоп» — while she waits for her name the words
+                        # turn the knob. Finals only: a partial re-heard frame after
+                        # frame must not walk the loudness down ten at a time. Once
+                        # she is all ears (woken) the phrase belongs to STT instead.
+                        if final and words and not woken:
+                            cmd = quick_volume(words, spellings)
+                            if cmd and _quick_ready():
+                                return quick_result(cmd, words)
                     else:
                         words = ''
                     # the ring: every chunk lands here (not only the loud
@@ -2461,7 +2536,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({'ok': True, 'woke': res['woke'], 'text': res.get('text'),
                                'alt': res.get('alt'),
                                'fallback': bool(res.get('fallback')),
-                               'stop': bool(res.get('stop'))})
+                               'stop': bool(res.get('stop')),
+                               'cmd': str(res.get('cmd') or '')})
         if u.path != '/listen':
             return self._json({'error': 'no such path'}, 404)
         if self.ears.busy and self.ears.kind == 'wake':

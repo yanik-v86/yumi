@@ -408,6 +408,14 @@ class SensesMixin:
                     # «стоп» overrides everything: even mid-word, asleep or thinking
                     GLib.idle_add(lambda: self.ev(lambda b: b.stop_all()) and False)
                     continue
+                if res.get('cmd'):
+                    # «тише» / «громче» без имени: тот же путь, что у «стоп» —
+                    # маленькое ухо слышало слово, пока она ждёт имя, громкость
+                    # поворачивается сразу, без обращения и без разговора с умом
+                    cmd = res['cmd']
+                    GLib.idle_add(lambda c=cmd: self.ev(
+                        lambda br: br.music_control(c)) and False)
+                    continue
                 if not res.get('woke'):
                     continue            # quiet: nobody called her name
                 self._vs('candidate')

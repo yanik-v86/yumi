@@ -57,7 +57,16 @@ assert m('дальше') == 'next'
 assert m('юми дальше') == 'next'
 assert m('дальш') == 'next'                       # a letter the music ate
 assert m('перемотай дальше') == 'next'
-assert m('продолжай дальше') == 'play'            # a resume, not a skip
+assert m('продолжай дальше') == 'resume'          # a resume, not a skip
+
+# «юми, продолжи»: the track «стоп» cut off comes back, not a fresh random hand
+assert m('продолжи') == 'resume'
+assert m('юми продолжи') == 'resume'
+assert m('продолжи музыку') == 'resume'
+assert m('продолжай') == 'resume'
+assert m('продолжить') == 'resume'
+assert m('resume') == 'resume'
+assert m('continue') == 'resume'
 assert m('следуший') == 'next'                    # the same slip in «следующий»
 assert m('предъидущий') == 'previous'
 assert m('запусти плейлист') == 'play'
@@ -78,6 +87,14 @@ assert m('что включи музыку') == 'play'           # a verb nearby
 assert m('что выключи музыку') is None            # the stray «что» is a stranger to the parser
 
 # the volume, the way the ears really hear it: падежи and a lone number count
+assert m('тише') == 'volume_down'
+assert m('громче') == 'volume_up'
+assert m('юми тише') == 'volume_down'
+assert m('потише, пожалуйста') == 'volume_down'
+assert m('убавь громкость') == 'volume_down'
+assert m('прибавь громкость') == 'volume_up'
+assert m('уменьши звук') == 'volume_down'
+assert m('увеличь громкость') == 'volume_up'
 assert m('юми громкость тридцать') == 'volume 30'
 assert m('громкости 30') == 'volume 30'            # whisper's verdict from the diary
 assert m('громкость девяносто') == 'volume 90'

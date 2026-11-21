@@ -49,6 +49,7 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
         self._web_music_at = 0.0
         self._web_music = None
         self._web_volume = None
+        self._web_resumable = False
         self._web_bubble = ''
         self._web_status_at = 0.0
         self.doctor_last = None         # last diagnostics summary for the panel/status
@@ -481,6 +482,11 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                 self.music_like()
             elif kind == 'music_search':
                 self.music_search(r[1])
+            elif kind == 'music_resume':
+                try:
+                    music.music_control('resume')
+                except Exception:
+                    pass
             elif kind == 'stop_all':
                 self.hush()                    # her voice dies mid-word
                 self.stop_timer_sound()

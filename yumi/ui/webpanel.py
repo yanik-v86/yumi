@@ -303,6 +303,10 @@ class PanelMixin:
                 self._web_volume = music.read_volume()
             except Exception:
                 self._web_volume = None
+            try:
+                self._web_resumable = bool(music.resume_available())
+            except Exception:
+                self._web_resumable = False
         tm = b.timer or {}
         timer = {
             'seconds': int(round(b.timer_seconds())),
@@ -355,7 +359,8 @@ class PanelMixin:
                 'unavailable': sorted(b.unavailable or []),
                 'palette': palette,
                 'ui_colors': ui,
-                'music': {'now_playing': self._web_music, 'volume': self._web_volume},
+                'music': {'now_playing': self._web_music, 'volume': self._web_volume,
+                          'resumable': self._web_resumable},
                 'nlu': {'last_intent': getattr(b, 'last_intent', ''),
                         'last_confidence': round(float(getattr(b, 'last_confidence', 0.0)), 3),
                         'confirm': bool(getattr(b, 'intent_confirm', None)),

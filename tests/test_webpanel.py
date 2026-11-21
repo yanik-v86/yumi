@@ -63,7 +63,7 @@ class Bridge:
                         'face': 'idle', 'monitor': None, 'monitors': 1,
                         'chat_models': [], 'mics': [], 'unavailable': [],
                         'palette': {}, 'ui_colors': {'accent': '#c9a7e0'},
-                        'music': {'now_playing': None, 'volume': 50},
+                        'music': {'now_playing': None, 'volume': 50, 'resumable': False},
                         'wake_on': True, 'tap_ears': False, 'downloads': False,
                         'conversation': {'active': False, 'source': None, 'since': 0,
                                          'until': 0, 'remaining': 0, 'last_at': 0,
@@ -313,6 +313,8 @@ try:
     assert entries['ui_lang']['type'] == 'select'
     assert entries['stt_echo']['type'] == 'switch'
     assert entries['stt_crosscheck']['type'] == 'switch'
+    assert entries['stt_early_read']['type'] == 'switch'
+    assert entries['stt_early_read']['page'] == 'voice'
     assert entries['stt_beam']['type'] == 'number'
     assert (entries['stt_beam']['min'], entries['stt_beam']['max'],
             entries['stt_beam']['step']) == (1, 16, 1)

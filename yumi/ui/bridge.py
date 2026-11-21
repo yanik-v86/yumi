@@ -313,6 +313,7 @@ class WebBridge:
         playing = music.now_playing()
         return {'now_playing': playing, 'volume': music.read_volume(),
                 'mpd': bool(music.get_mpd_status()),
+                'resumable': bool(music.resume_available()),
                 'source': self.app.settings.get('music_source')}
 
     def music_search(self, kind, query):

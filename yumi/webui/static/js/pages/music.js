@@ -5,7 +5,7 @@ import {
 
 export function render(view, ctx) {
   const lang = () => ctx.lang;
-  let music = { now_playing: null, volume: null, source: null, mpd: false };
+  let music = { now_playing: null, volume: null, source: null, mpd: false, resumable: false };
   let results = [];
   let searching = false;
 
@@ -72,12 +72,17 @@ export function render(view, ctx) {
     },
   }, icon('heart', 16), el('span', { text: lang() === 'ru' ? 'Лайк' : 'Like' }));
 
+  const resumeButton = transportButton(
+    'resume', 'play', lang() === 'ru' ? 'Продолжи' : 'Resume');
+  resumeButton.title = lang() === 'ru'
+    ? 'Трек, на котором остановили' : 'The track you stopped on';
   controls.append(
     transportButton('previous', 'prev', lang() === 'ru' ? 'Назад' : 'Prev'),
     transportButton('play_pause', 'play', lang() === 'ru' ? 'Играть' : 'Play'),
     likeButton,
     transportButton('next', 'next', lang() === 'ru' ? 'Дальше' : 'Next'),
     transportButton('stop', 'stop', lang() === 'ru' ? 'Стоп' : 'Stop'),
+    resumeButton,
   );
 
   // ---------------------------------------------------------------- search
@@ -193,6 +198,7 @@ export function render(view, ctx) {
       volume.value = String(music.volume);
       volumeOut.textContent = `${music.volume}%`;
     }
+    resumeButton.disabled = !music.resumable;
   }
 
   async function refresh() {
