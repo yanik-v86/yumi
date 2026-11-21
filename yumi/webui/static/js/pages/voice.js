@@ -10,8 +10,6 @@ const CARD_KEYS = {
     'wake_judge_log'],
   voice: ['voice_kind', 'voice_vol', 'tts_ru_speaker', 'tts_en_speaker',
     'tts_pitch', 'tts_ru_model'],
-  talk: ['conversation_mode', 'conversation_timeout_s', 'conversation_gap_reset_min',
-    'conversation_history_n'],
   rest: ['stt_mic', 'stt_echo', 'stt_selfmute', 'name_duck', 'tap_ears', 'timer_sound'],
 };
 const ALL_KEYS = [...new Set(Object.values(CARD_KEYS).flat())];
@@ -91,11 +89,10 @@ export function render(view, ctx) {
   const activationBox = el('div', { class: 'card' });
   const judgeBox = el('div', { class: 'card' });
   const voiceBox = el('div', { class: 'card' });
-  const talkBox = el('div', { class: 'card' });
   const restBox = el('div', { class: 'card', style: { marginTop: '16px' } });
 
   view.append(sectionTitle(say('Активация, судья и голос', 'Activation, judge and voice')));
-  view.append(el('div', { class: 'stack' }, activationBox, judgeBox, voiceBox, talkBox));
+  view.append(el('div', { class: 'stack' }, activationBox, judgeBox, voiceBox));
   view.append(sectionTitle(say('Тонкая настройка', 'Fine tuning')));
   view.append(restBox);
 
@@ -246,13 +243,6 @@ export function render(view, ctx) {
       }));
   }
 
-  function drawTalk() {
-    fill(talkBox, CARD_KEYS.talk,
-      say('4. Диалог без имени', '4. Hands-free talk'),
-      say('После ответа Юми слушает следующую фразу без wake-word; пауза тишины закрывает диалог. Тот же тумблер есть на странице «Разговор».',
-          'After an answer Yumi listens for the next phrase with no wake word; a pause of silence closes the talk. The same switch lives on the Talk page.'));
-  }
-
   function drawRest() {
     restBox.replaceChildren();
     fill(restBox, CARD_KEYS.rest,
@@ -374,7 +364,6 @@ export function render(view, ctx) {
     drawActivation();
     drawJudge();
     drawVoice();
-    drawTalk();
     drawRest();
   }
 

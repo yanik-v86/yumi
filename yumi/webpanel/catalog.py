@@ -56,7 +56,8 @@ PAGES = [
 
 # which page owns which section
 SECTION_PAGE = {
-    'behavior': 'settings', 'sound': 'settings', 'mind': 'settings', 'ears': 'voice',
+    'behavior': 'settings', 'sound': 'settings', 'mind': 'settings',
+    'dialogue': 'settings', 'ears': 'voice',
     'music': 'music', 'look': 'appearance', 'language': 'settings', 'web': 'security',
     'extra': 'settings', 'exports': 'configs',
 }
@@ -75,6 +76,9 @@ SECTIONS = [
     {'id': 'mind', 'title': {'en': 'Her mind', 'ru': 'Её мозги'},
      'hint': {'en': 'The local model, memory and commands',
               'ru': 'Локальная модель, память и команды'}},
+    {'id': 'dialogue', 'title': {'en': 'Hands-free talk', 'ru': 'Диалог без имени'},
+     'hint': {'en': 'The switch and the answer window, all in one place',
+              'ru': 'Тумблер и окно ответа — всё в одном месте'}},
     {'id': 'ears', 'title': {'en': 'Her ears', 'ru': 'Её ушки'},
      'hint': {'en': 'What she hears and how she wakes',
               'ru': 'Что она слышит и как просыпается'}},
@@ -98,8 +102,8 @@ KEY_SECTION = {
     'outfit': 'look', 'ui_lang': 'language', 'speech_lang': 'language',
     'chat_provider': 'mind', 'chat_model': 'mind', 'chat_think': 'mind',
     'chat_stream': 'mind', 'sassy': 'mind', 'chat_history_n': 'mind', 'chat_memory': 'mind',
-    'conversation_mode': 'mind', 'conversation_timeout_s': 'mind',
-    'conversation_gap_reset_min': 'mind', 'conversation_history_n': 'mind',
+    'conversation_mode': 'dialogue', 'conversation_timeout_s': 'dialogue',
+    'conversation_gap_reset_min': 'dialogue', 'conversation_history_n': 'dialogue',
     'notes_voice': 'mind',
     'embed_model': 'mind', 'nlu': 'mind', 'nlu_confidence': 'mind',
     'intents': 'mind', 'ollama_url': 'mind',

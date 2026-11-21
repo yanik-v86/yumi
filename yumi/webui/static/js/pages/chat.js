@@ -35,26 +35,19 @@ export function render(view, ctx) {
       ? 'Это то, что она говорит вслух в мире, не ответ в чате.'
       : 'This is what she says aloud in the world, not the chat answer.' }));
 
-  // Conversation mode lives where the talk happens: after a voice answer she
-  // keeps the microphone for the next phrase, so the name need not be repeated.
+  // All dialogue knobs live in Settings; this card only reports the live state.
   const convState = el('div', { class: 'bubble', text: '…' });
-  const convBtn = el('button', { class: 'btn btn-small', type: 'button', text: '' });
   const convCard = el('div', { class: 'card' },
     el('h3', { text: lang() === 'ru' ? 'Диалог без имени' : 'Hands-free talk' }),
     convState,
-    el('div', { class: 'row', style: { marginTop: '8px' } }, convBtn),
     el('p', { class: 'card-hint', style: { marginTop: '12px' }, text: lang() === 'ru'
-      ? 'После голосового ответа она послушает продолжение без повтора «Юми». Пауза или «стоп» закроют диалог.'
-      : 'After a voice answer she listens for a follow-up without repeating her name. A pause or “stop” closes the talk.' }));
+      ? 'Тумблер и параметры — в «Настройках → Диалог без имени». Пауза или «стоп» закроют диалог.'
+      : 'The switch and all parameters live in “Settings → Hands-free talk”. A pause or “stop” closes the talk.' }));
 
   function drawConv() {
     const rt = ctx.status?.runtime || {};
     const conv = rt.conversation || {};
     const on = Boolean(ctx.status?.settings?.conversation_mode);
-    convBtn.textContent = on
-      ? (lang() === 'ru' ? 'Выключить' : 'Turn off')
-      : (lang() === 'ru' ? 'Включить' : 'Turn on');
-    convBtn.classList.toggle('btn-primary', !on);
     if (!on) {
       convState.textContent = lang() === 'ru'
         ? 'Выключен: после каждого ответа имя нужно повторять.'
@@ -69,19 +62,6 @@ export function render(view, ctx) {
         : 'On: after an answer she listens for your next phrase.';
     }
   }
-
-  convBtn.addEventListener('click', async () => {
-    const next = !Boolean(ctx.status?.settings?.conversation_mode);
-    convBtn.disabled = true;
-    try {
-      await ctx.applySettings({ conversation_mode: next });
-      await ctx.refreshStatus();
-    } catch (err) {
-      errToast(err);
-    } finally {
-      convBtn.disabled = false;
-    }
-  });
 
   const prompts = lang() === 'ru'
     ? ['Как ты?', 'Что ты умеешь?', 'Расскажи что-нибудь', 'Помоги с планом на день']

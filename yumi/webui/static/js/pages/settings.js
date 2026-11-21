@@ -134,6 +134,12 @@ export function render(view, ctx) {
           ? 'Проверить микрофон и голос можно на странице «Ушки и голос».'
           : 'Test the microphone and voice on the Ears & voice page.');
     }
+    if (section.id === 'dialogue') {
+      return el('div', { class: 'card-hint', style: { marginBottom: '12px' } },
+        lang() === 'ru'
+          ? 'Живой статус диалога (открыт, число реплик, секунды) — на странице «Разговор».'
+          : 'The live dialogue status (open, exchanges, seconds) is on the Talk page.');
+    }
     return null;
   }
 

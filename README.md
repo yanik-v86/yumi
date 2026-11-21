@@ -561,7 +561,7 @@ The waiting hears nothing else: everything is computed on the spot, offline.
 ### Hands-free conversation
 
 Normally you repeat her name for every question. Turn on
-**Settings → Her mind → Keep talking without the name** and after a *chat* answer
+**Settings → Hands-free talk → Keep talking without the name** and after a *chat* answer
 Yumi keeps the microphone for a few more seconds: ask a second or third question
 without saying «Yumi» again. Silence or «stop» closes the talk and she goes back
 to waiting for her name. The wake-word loop also owns the follow-up listener,
@@ -575,9 +575,10 @@ old voice-chat history, while the memory diary stays. During an active dialogue
 a wider window of recent messages travels with the question
 (**Messages in an active talk**, 20, capped at 30).
 
-In the browser panel the switch and the live dialogue status (open, number of
-exchanges, seconds left) live on the **Talk** page (`/#/chat`); the
-«waiting for follow-up» microphone state shows on **Overview** and
+In the browser panel all four parameters, including the on/off switch, live in
+**Settings → Hands-free talk** (`/#/settings`). The **Talk** page (`/#/chat`)
+only shows the live dialogue status (open, number of exchanges, seconds left);
+the «waiting for follow-up» microphone state shows on **Overview** and
 **Ears & voice**. It is the same mode and the same settings as in GTK.
 
 ## Files
@@ -634,7 +635,8 @@ exchanges, seconds left) live on the **Talk** page (`/#/chat`); the
   live and are saved to the same files the desktop Yumi uses. The chat uses a revision
   and Insert/Update/Remove/Clear ops over SSE, so two tabs stay in sync and a missed
   event triggers a full resync.
-- **Hands-free talk:** the Talk page (`/#/chat`) toggles conversation mode and shows
+- **Hands-free talk:** the on/off switch and all parameters live in Settings →
+  Hands-free talk (`/#/settings`). The Talk page (`/#/chat`) shows only
   `runtime.conversation` — whether the dialogue is open, its exchange count and the
   seconds left before silence closes it. The same status is visible in GTK.
 - **Network:** it listens on `127.0.0.1` only by default. `0.0.0.0` exposes it to the LAN;

@@ -325,6 +325,12 @@ try:
     assert entries['conversation_timeout_s']['choices'] == [5, 8, 10, 15, 20]
     assert entries['conversation_gap_reset_min']['type'] == 'select'
     assert entries['conversation_history_n']['choices'] == [4, 10, 16, 20, 30]
+    # every dialogue knob, including the on/off switch, lives only in Settings
+    conv_keys = ('conversation_mode', 'conversation_timeout_s',
+                 'conversation_gap_reset_min', 'conversation_history_n')
+    assert all(entries[key]['section'] == 'dialogue' for key in conv_keys)
+    assert all(entries[key]['page'] == 'settings' for key in conv_keys)
+    assert 'dialogue' in {section['id'] for section in schema['sections']}
     assert catalog.validate_settings_patch({'tts_pitch': '1.3'}) == {'tts_pitch': 1.3}
     assert catalog.validate_settings_patch({'nlu_confidence': '0.9'}) == {'nlu_confidence': 0.9}
     try:

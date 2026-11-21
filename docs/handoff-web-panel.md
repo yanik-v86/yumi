@@ -214,10 +214,11 @@ pending_permission}`. `confirm: true` (совместимость) или неп
 `{active, source, since, until, remaining, last_at, exchanges, timeout,
 waiting_answer, reason, id}`) и `runtime.conversation_active`. Четыре настройки
 автодиалога — `conversation_mode`, `conversation_timeout_s`,
-`conversation_gap_reset_min`, `conversation_history_n` — живут в секции `mind`;
-выключение режима или wake-word закрывает диалог сразу, а `conversation_timeout_s`
-применяется на ходу. Их тумблер и живой индикатор находятся на странице `chat`
-(`/#/chat`), дубль настроек — на `voice`, индикатор — на `dashboard`. Отдельного
+`conversation_gap_reset_min`, `conversation_history_n` — живут в отдельной секции
+`dialogue` на странице `settings` (`/#/settings`): тумблер и все параметры диалога
+только там. Выключение режима или wake-word закрывает диалог сразу, а
+`conversation_timeout_s` применяется на ходу. Живой индикатор находится на странице
+`chat` (`/#/chat`), ещё один — на `dashboard` и `voice`. Отдельного
 API-вызова или SSE-события для диалога нет: панель читает тот же снимок статуса,
 что и GTK. История чата хранится как `{messages, rev, ops}`; `rev`
 растёт на каждую операцию, SSE `chat` несёт `{rev, ops:[insert|update|remove|clear]}`,
