@@ -230,6 +230,9 @@ export function render(view, ctx) {
       if (op.op === 'insert' && m) {
         removeTemp(m.role, m.text);
         addMessage(m.role, m.text, m.ts, m.id);
+        if (m.role === 'assistant' && String(m.text || '').trim()) {
+          log.querySelector('.msg.typing')?.remove();
+        }
       } else if (op.op === 'update' && op.id) {
         const node = [...log.children].find((n) => n.dataset?.id === String(op.id));
         if (node) {
@@ -238,6 +241,9 @@ export function render(view, ctx) {
           node.textContent = text;
           node.dataset.text = String(text);
           if (meta) node.append(el('span', { class: 'meta', text: meta }));
+          if (node.classList.contains('assistant') && String(text).trim()) {
+            log.querySelector('.msg.typing')?.remove();
+          }
         }
       } else if (op.op === 'remove' && op.id) {
         const node = [...log.children].find((n) => n.dataset?.id === String(op.id));
@@ -300,8 +306,11 @@ export function render(view, ctx) {
       typing.remove();
       // SSE may have arrived first; the revision check makes this a safe replay
       applyOps(data.ops, data.rev);
-      if (!data.ops?.length) {
-        addMessage('assistant', data.reply || (lang() === 'ru' ? '…' : '…'));
+      if (!data.reply) {
+        const hasAssistant = [...log.children].some((n) => n.classList.contains('assistant') && !n.classList.contains('typing') && n.dataset?.text);
+        if (!hasAssistant) addMessage('assistant', lang() === 'ru' ? '…' : '…');
+      } else if (!data.ops?.length) {
+        addMessage('assistant', data.reply);
       }
       ctx.refreshStatus();
     } catch (err) {

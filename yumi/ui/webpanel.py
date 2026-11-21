@@ -722,17 +722,90 @@ class PanelMixin:
         if note:
             messages.append({'role': 'system', 'content': note})
         messages.append({'role': 'user', 'content': text})
-        reply = chat.ask(s, messages)
+
+        assistant_id = None
+        assistant_text = ''
         ops = []
+
         with self.web_chat_lock:
-            ops.append(self._web_chat_insert({'role': 'user', 'text': text, 'ts': time.time()}))
-            if reply:
-                ops.append(self._web_chat_insert({'role': 'assistant', 'text': reply,
-                                                  'ts': time.time()}))
+            user_op = self._web_chat_insert({'role': 'user', 'text': text, 'ts': time.time()})
             self.save_web_chat()
+            ops.append(user_op)
+        self._web_chat_publish([user_op])
+
+        def publish_assistant(force_save=False):
+            nonlocal assistant_text
+            op = None
+            with self.web_chat_lock:
+                for m in self.web_chat:
+                    if str(m.get('id')) == str(assistant_id):
+                        if m.get('text') == assistant_text:
+                            break
+                        m['text'] = assistant_text
+                        self.web_chat_rev += 1
+                        op = {'op': 'update', 'id': str(assistant_id), 'rev': self.web_chat_rev,
+                              'patch': {'text': assistant_text}}
+                        self.web_chat_ops.append(op)
+                        if len(self.web_chat_ops) > 1000:
+                            self.web_chat_ops = self.web_chat_ops[-1000:]
+                        if force_save:
+                            self.save_web_chat()
+                        break
+            if op:
+                ops.append(op)
+                self._web_chat_publish([op])
+
+        reply_parts = []
+        last_save = time.time()
+        try:
+            for chunk in chat.ask_stream(s, messages):
+                if not chunk:
+                    continue
+                reply_parts.append(chunk)
+                assistant_text = ''.join(reply_parts)
+                if assistant_id is None:
+                    with self.web_chat_lock:
+                        entry = {'role': 'assistant', 'text': assistant_text, 'ts': time.time()}
+                        ins_op = self._web_chat_insert(entry)
+                        assistant_id = entry.get('id')
+                        self.save_web_chat()
+                        ops.append(ins_op)
+                    self._web_chat_publish([ins_op])
+                    last_save = time.time()
+                    continue
+                now = time.time()
+                if now - last_save >= 0.4:
+                    publish_assistant(force_save=False)
+                    last_save = now
+        except Exception:
+            pass
+
+        reply = ' '.join(''.join(reply_parts).split())
+        assistant_text = reply
+        if assistant_id is not None:
+            if reply:
+                publish_assistant(force_save=True)
+            else:
+                remove_op = None
+                with self.web_chat_lock:
+                    for i, m in enumerate(self.web_chat):
+                        if str(m.get('id')) == str(assistant_id):
+                            self.web_chat.pop(i)
+                            self.web_chat_rev += 1
+                            remove_op = {'op': 'remove', 'id': str(assistant_id), 'rev': self.web_chat_rev}
+                            self.web_chat_ops.append(remove_op)
+                            if len(self.web_chat_ops) > 1000:
+                                self.web_chat_ops = self.web_chat_ops[-1000:]
+                            self.save_web_chat()
+                            break
+                if remove_op:
+                    ops.append(remove_op)
+                    self._web_chat_publish([remove_op])
+
+        with self.web_chat_lock:
             rev = self.web_chat_rev
-            history = len(self.web_chat)
-        self._web_chat_publish(ops)
+            history_len = len(self.web_chat)
+
         sassy = bool(s.get('sassy'))
         if s.get('chat_memory', True) and bool(s.get('sassy')) == sassy:
             tag = memory.TAG_SASSY if sassy else None
@@ -743,7 +816,7 @@ class PanelMixin:
             except Exception:
                 pass
         return {'reply': reply or '', 'recalled': note != '',
-                'history': history, 'rev': rev, 'ops': ops}
+                'history': history_len, 'rev': rev, 'ops': ops}
 
     # ---------------------------------------------------------------- voice state
     def _web_voice_pause(self):
