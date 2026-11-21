@@ -65,6 +65,11 @@ class Bridge:
                         'palette': {}, 'ui_colors': {'accent': '#c9a7e0'},
                         'music': {'now_playing': None, 'volume': 50},
                         'wake_on': True, 'tap_ears': False, 'downloads': False,
+                        'conversation': {'active': False, 'source': None, 'since': 0,
+                                         'until': 0, 'remaining': 0, 'last_at': 0,
+                                         'exchanges': 0, 'timeout': 10,
+                                         'waiting_answer': False, 'reason': '', 'id': 0},
+                        'conversation_active': False,
                         'outfit': 'auto', 'shelf_count': 0, 'recent_count': 0,
                         'timer': {'seconds': 0, 'text': '', 'running': False,
                                   'pending': False, 'paused': False, 'done': False}},
@@ -315,6 +320,11 @@ try:
     assert entries['tts_ru_speaker']['type'] == 'select'
     assert entries['tts_en_speaker']['choices'][0] == 'en_0'
     assert entries['tts_ru_model']['type'] == 'select'
+    assert entries['conversation_mode']['type'] == 'switch'
+    assert entries['conversation_timeout_s']['type'] == 'select'
+    assert entries['conversation_timeout_s']['choices'] == [5, 8, 10, 15, 20]
+    assert entries['conversation_gap_reset_min']['type'] == 'select'
+    assert entries['conversation_history_n']['choices'] == [4, 10, 16, 20, 30]
     assert catalog.validate_settings_patch({'tts_pitch': '1.3'}) == {'tts_pitch': 1.3}
     assert catalog.validate_settings_patch({'nlu_confidence': '0.9'}) == {'nlu_confidence': 0.9}
     try:
@@ -386,6 +396,8 @@ try:
 
     code, data, _ = call('GET', '/api/status')
     assert code == 200 and data['runtime']['bubble'] == 'привет'
+    assert data['runtime']['conversation_active'] is False
+    assert data['runtime']['conversation']['active'] is False
     code, data, _ = call('GET', '/api/schema')
     assert code == 200 and data['version'] and data['pages']
     code, data, _ = call('GET', '/api/actions')
@@ -468,6 +480,11 @@ try:
     code, data, _ = call('PATCH', '/api/settings', {'patch': {'chatter': False}}, csrf=csrf)
     assert code == 200 and bridge.applied[-1] == {'chatter': False}
     assert data['settings']['chatter'] is False
+
+    code, data, _ = call('PATCH', '/api/settings',
+                         {'patch': {'conversation_mode': True}}, csrf=csrf)
+    assert code == 200 and bridge.applied[-1] == {'conversation_mode': True}
+    assert data['settings']['conversation_mode'] is True
 
     code, data, _ = call('GET', '/api/config/settings')
     assert code == 200 and data['writable'] and data['text'] == '{}'

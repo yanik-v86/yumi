@@ -34,6 +34,11 @@ assert vs.snapshot()['wake_enabled'] is True
 assert vs.wake_off()
 assert vs.snapshot()['wake_enabled'] is False
 
+assert vs.followup()
+follow = vs.snapshot()
+assert follow['state'] == 'awaiting_followup' and follow['owner'] == 'conversation'
+assert 'awaiting_followup' in STATES
+
 try:
     vs.set('dancing')
     raise AssertionError('an unknown state was accepted')

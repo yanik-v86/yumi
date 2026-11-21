@@ -17,6 +17,7 @@ from pathlib import Path
 from . import jobs as J
 from . import addressing
 from . import chat
+from . import conversation as dialogue
 from . import entities
 from . import nlu
 from . import notes
@@ -271,6 +272,9 @@ class Brain(Extras):
         self.last_hour = int(time.localtime().tm_hour)  # the hour she last chimed, so she does not repeat
         self.moth = Moth(self)
         self.chat_history = []          # what you asked and what she answered, the last few turns
+        self.last_chat_exchange_at = 0.0  # monotonic time of the last voice-chat exchange
+        self.conversation = dialogue.Conversation(
+            timeout=self.settings.get('conversation_timeout_s', 10))
         self.listening = False          # the mic button was pressed: she is waiting for a phrase
         self.thinking = False           # the question is away at Ollama
         self.chat_streaming = False     # the mind is answering in a stream right now
@@ -527,6 +531,9 @@ class Brain(Extras):
                 'chat_provider': ['ollama', 'polza.ai'],
                 'chat_model': self.chat_models or [self.settings.get('chat_model')],
                 'chat_history_n': [2, 4, 6, 10, 16, 24],
+                'conversation_timeout_s': [5, 8, 10, 15, 20],
+                'conversation_gap_reset_min': [5, 15, 30, 60],
+                'conversation_history_n': [4, 10, 16, 20, 30],
                 'music_source': ['auto', 'jellyfin', 'local']}
 
     outfit_names = []                 # outfit folders found in sprites/outfits (set by the app)
@@ -614,6 +621,7 @@ class Brain(Extras):
         self.menu = None
         self.close_radial()
         self.pile_t.to(0, 18.0, 1.0)
+        self.conversation_close('hidden')   # no dangling dialogue behind the UI
 
     def leave_box(self):
         """she hops off the box back to where she was"""
@@ -637,6 +645,7 @@ class Brain(Extras):
         if on == self.sleeping:
             return
         if on:
+            self.conversation_close('sleep')
             self.close_all()
             if self.mode != 'docked':
                 self.mode = 'docked'
@@ -969,7 +978,12 @@ class Brain(Extras):
                     ('set', 'sassy', t('sassy')),
                     ('set', 'chat_think', t('chat_think')), ('set', 'chat_stream', t('chat_stream')),
                     ('set', 'chat_history_n', t('chat_history_n')),
-                    ('set', 'chat_memory', t('chat_memory')), ('set', 'nlu', t('nlu')),
+                    ('set', 'chat_memory', t('chat_memory')),
+                    ('set', 'conversation_mode', t('conversation_mode')),
+                    ('set', 'conversation_timeout_s', t('conversation_timeout_s')),
+                    ('set', 'conversation_gap_reset_min', t('conversation_gap_reset_min')),
+                    ('set', 'conversation_history_n', t('conversation_history_n')),
+                    ('set', 'nlu', t('nlu')),
                     ('set', 'intents', t('intents'))]
             if self.chat_models:        # the list may have grown stale: a way to look again
                 rows.append(('chat_refresh', None, t('chat_refresh')))
@@ -1127,6 +1141,16 @@ class Brain(Extras):
                 self.requests.append(('recolor',))
             if arg == 'wake_ears':
                 self.requests.append(('wake_set', s[arg]))
+                if not s[arg]:
+                    self.conversation_close('wake off')
+            if arg == 'conversation_mode':
+                # turning the mode off must not leave a follow-up window hanging
+                if not s[arg]:
+                    self.conversation_close('setting')
+                else:
+                    self.conversation.timeout = float(s.get('conversation_timeout_s', 10))
+            if arg == 'conversation_timeout_s':
+                self.conversation.timeout = float(s[arg])
             if arg == 'tap_ears':
                 self.requests.append(('tap_set', s[arg]))
             if arg in ('voice_vol', 'voice_kind') and s[arg]:
@@ -1219,14 +1243,51 @@ class Brain(Extras):
         self.say('pipette_start')
         self.requests.append(('pipette',))
 
+    # ------------------------------------------------------------------ conversation mode
+    def conversation_enabled(self):
+        # the follow-up listener lives inside the wake loop, so there must be a
+        # loop to own the microphone; a dialogue cannot run with wake switched off
+        return (bool(self.settings.get('conversation_mode', False))
+                and bool(self.settings.get('wake_ears', False))
+                and not self.sleeping)
+
+    def conversation_begin(self, source='chat'):
+        """a chat answer is on its way: keep the door open for a follow-up.
+
+        Only chat answers open a dialogue — «громкость 30» must not leave her
+        waiting for a phrase nobody is going to say (hand-off §3.4).
+        """
+        if not self.conversation_enabled():
+            return False
+        return self.conversation.begin(
+            self.now, source,
+            timeout=self.settings.get('conversation_timeout_s', 10))
+
+    def conversation_extend(self, source='chat'):
+        """a phrase arrived inside the window: the dialogue stays open"""
+        return self.conversation.extend(self.now, source)
+
+    def conversation_close(self, reason=''):
+        """close the window and tell the app to release the microphone"""
+        if not self.conversation.close(reason):
+            return False
+        self.requests.append(('conversation_stop',))
+        return True
+
+    def conversation_due(self):
+        return self.conversation.due(self.now)
+
+    def conversation_snapshot(self):
+        return self.conversation.snapshot(self.now)
+
     # ------------------------------------------------------------------ her ears and her chat
-    def heard(self, text, alt=None):
+    def heard(self, text, alt=None, followup=False):
         """the microphone gave its best: text is the phrase, '' for silence, None for no
         ears; alt is what vosk read while whisper read the tape — two ears, one phrase"""
         if not self.listening:
             return
         self.listening = False
-        self.heard_text(text, wake=True, alt=alt)
+        self.heard_text(text, wake=True, alt=alt, followup=followup)
 
     def wake_form(self):
         """her name passed by («юми»): the moth that marks where she hides becomes
@@ -1272,12 +1333,14 @@ class Brain(Extras):
             _mind_log(f'music {music_cmd}')
             self.music_control(music_cmd)
 
-    def heard_text(self, text, wake=False, alt=None, fallback=False):
+    def heard_text(self, text, wake=False, alt=None, fallback=False, followup=False):
         """into her mind, whatever the ears' way was; wake is True when the phrase
         came right after her name («юми ...») or after she asked what you wanted;
-        alt is the other reading (vosk's) when the first one was whisper's;
-        fallback marks a phrase the trained ear did not hear the name of — such a
-        text is only answered when it is clearly meant for her (yumi/addressing.py)"""
+        followup marks a phrase heard in conversation mode — no name was said,
+        the window is simply still open; alt is the other reading (vosk's) when
+        the first one was whisper's; fallback marks a phrase the trained ear did
+        not hear the name of — such a text is only answered when it is clearly
+        meant for her (yumi/addressing.py)"""
         if text is None:                # the ears are not set up (tools/stt_setup.sh)
             self.note_pending = False
             self.say('ears_fail')
@@ -1291,8 +1354,14 @@ class Brain(Extras):
         _mind_log(f'heard {text!r} (vosk: {alt!r}, wake: {wake}, fallback: {fallback})')
         if not text:
             self.note_pending = False
-            self.say('heard_nothing')
+            if followup:
+                self.conversation_close('silence')   # quiet in the window: no scolding
+            else:
+                self.say('heard_nothing')
             return
+        if followup:
+            # a real phrase in the window: the dialogue stays open a little longer
+            self.conversation_extend('voice')
         if stop_command(text):             # «стоп» overrides everything, even her own voice
             self.stop_all()
             return
@@ -1390,13 +1459,22 @@ class Brain(Extras):
                 return
             self.say_text(text, voice=False)   # it is for her: show it, then answer
         _mind_log('chat')
-        # Fall through to normal text processing if music skill is disabled
+        # A long silence means a new dialogue: last week's voice chat must not
+        # dominate this question.  The diary still recalls relevant old lines
+        # (yumi/memory.py), so forgetting the thread here loses no memory.
+        limit, fresh = dialogue.context_window(
+            self.now, self.last_chat_exchange_at, self.conversation.active,
+            self.settings.get('chat_history_n', 10),
+            self.settings.get('conversation_history_n', 20),
+            float(self.settings.get('conversation_gap_reset_min', 15)) * 60.0)
+        if fresh:
+            self.chat_history = []
+        self.last_chat_exchange_at = self.now
         self.chat_history.append({'role': 'user', 'content': text})
-        n = max(2, int(self.settings.get('chat_history_n', 10)))
-        del self.chat_history[:-n]     # the recent turn goes along (Settings → Her mind);
-                                       # the older lines come back through the diary,
-                                       # only those about the same thing (yumi/memory.py)
+        del self.chat_history[:-limit]  # the recent turn goes along; in an active
+                                        # dialogue the window is a little wider
         self.thinking = True
+        self.conversation.waiting_answer = True   # hold the ears until this answer lands
         self.requests.append(('chat_ask', list(self.chat_history)))
 
     def params_report(self, lang='en'):
@@ -1822,9 +1900,12 @@ class Brain(Extras):
             self.talk_until = self.now + typed
         if not reply:
             self.chat_history.pop()     # the question got no answer: do not confuse her later
+            self.conversation_close('chat fail')
             self.say('chat_fail')
             return
         self.chat_history.append({'role': 'assistant', 'content': reply})
+        self.last_chat_exchange_at = self.now
+        self.conversation_begin('chat')
         if self.face and self.now < self.face_until:
             pass
         self.requests.append(('chat_reply_done', reply))
@@ -1842,6 +1923,8 @@ class Brain(Extras):
             self.bubble.pop('stream', None)
         if reply:
             self.chat_history.append({'role': 'assistant', 'content': reply})
+            self.last_chat_exchange_at = self.now
+            self.conversation_begin('chat')
             if self.bubble:
                 typed = self._stream_typed
                 self.bubble['until'] = max(self.now + typed + 2.2 + 0.04 * len(reply),
@@ -1850,6 +1933,7 @@ class Brain(Extras):
             self.requests.append(('chat_reply_done', reply))
         else:
             self.chat_history.pop()
+            self.conversation_close('chat fail')
             self.say('chat_fail')
 
     def replied(self, reply):
@@ -1858,9 +1942,12 @@ class Brain(Extras):
         reply = ' '.join(str(reply or '').split())
         if not reply:
             self.chat_history.pop()     # the question got no answer: do not confuse her later
+            self.conversation_close('chat fail')
             self.say('chat_fail')
             return
         self.chat_history.append({'role': 'assistant', 'content': reply})
+        self.last_chat_exchange_at = self.now
+        self.conversation_begin('chat')
         self.say_text(reply)
 
     def hour_joked(self, payload):
@@ -1930,6 +2017,7 @@ class Brain(Extras):
         self.timer = None
         self.kb_hover = False
         self.requests.clear()              # nothing queued may keep running past the stop
+        self.conversation_close('stop')
         self.requests.append(('stop_all',))
         self.say('stop_all')
 

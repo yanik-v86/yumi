@@ -99,6 +99,9 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
         self.brain.outfit_names = Meta.outfits(config.SPRITES)
         self.wake_on = False             # the wake-word loop is running or not
         self.wake_thread = None
+        self.wake_waiting = False        # /wake is holding the microphone right now
+        self.followup_waiting = False    # a conversation follow-up listen is holding it
+        self._conv_handled = None        # last (id, exchanges) released by _conversation_tick
         self.voice_state = voice_state.VoiceState()  # one source of truth for the mic
         self.wake_set(bool(self.settings.get('wake_ears')))   # «Юми» works out of the box
         self.tap_set(bool(self.settings.get('tap_ears')))     # the diary, too, if it was asked
@@ -139,6 +142,11 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
         """let all her companion services go before she does: the TTS daemon,
         the STT daemon, her music and anything else that outlives her process."""
         self.wake_on = False            # the wake loop stops asking: no ears rise after her
+        b = getattr(self, 'brain', None)
+        if b is not None:
+            b.conversation_close('quit')   # no follow-up can outlive the app
+        if getattr(self, 'wake_waiting', False) or getattr(self, 'followup_waiting', False):
+            threading.Thread(target=ears.stop, daemon=True).start()
         if self.web:
             self.web.stop()
             self.web = None
@@ -328,6 +336,7 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                 and not getattr(self, 'voice_streaming', False)
                 and getattr(self, '_voice_next', 1) == getattr(self, '_voice_seq', 0) + 1):
             b.bubble['until'] = min(b.bubble['until'], b.now + 2.0)
+        self._conversation_tick()
         self.ops = b.scene()
         self.web_tick()
         for w in self.windows:
@@ -354,6 +363,31 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
         self.frame()
         # frame() may have replaced the timer; keep this one only if it is still current
         return self.timer is old
+
+    def _conversation_tick(self):
+        """A chat answer can open the dialogue while the wake loop is still
+        blocked inside ``ears.wake()`` (up to two minutes).  Once she has
+        finished speaking, abort that in-flight wake so the loop can reach its
+        follow-up branch instead of waiting for the old request to time out.
+
+        Once per (window, exchange): the abort is harmless, but repeating it
+        every frame would keep raising the daemon's flag against the next
+        ``Ears.listen()``.  The follow-up listener resets the flag itself, so
+        this only ever interrupts a wake that is genuinely still waiting.
+        """
+        b = self.brain
+        conv = getattr(b, 'conversation', None)
+        if not conv or not conv.active:
+            self._conv_handled = None
+            return
+        if b.thinking or self.talking() or b.now < b.talk_until:
+            return                          # she is still composing or sounding
+        key = (conv.id, conv.exchanges)
+        if self._conv_handled == key:
+            return
+        self._conv_handled = key
+        if getattr(self, 'wake_waiting', False):
+            threading.Thread(target=ears.stop, daemon=True).start()
 
     # ---- requests from the brain
     def handle_requests(self):
@@ -410,6 +444,11 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                     self._vs('wake_resumed')
                 else:
                     self._vs('wake_off')
+            elif kind == 'conversation_stop':
+                # the dialogue was closed (stop, sleep, hide, settings, quit):
+                # let go of a listen that may still be holding the microphone
+                if getattr(self, 'wake_waiting', False) or getattr(self, 'followup_waiting', False):
+                    threading.Thread(target=ears.stop, daemon=True).start()
             elif kind == 'wake_set':
                 self.wake_set(r[1])
             elif kind == 'tap_set':

@@ -233,6 +233,46 @@ class SensesMixin:
             GLib.idle_add(lambda t=text, v=vtxt: self.ev(lambda b: b.heard(t, v)) and False)
         threading.Thread(target=work, daemon=True).start()
 
+    def followup_listen(self, cid):
+        """conversation mode: hear the next phrase without a wake word.
+
+        Called only from the wake-loop thread, so no ``/wake`` can be holding
+        the microphone at the same time.  The TTS is over (the caller checked
+        ``talk_until`` and ``talking()``), so her own self-mute has expired too.
+        Silence closes the dialogue quietly — no «я ничего не услышала» on
+        every pause (hand-off §3.5).
+        """
+        b = self.brain
+        conv = b.conversation
+        secs = float(self.settings.get('conversation_timeout_s', 10))
+        conv.wait_start(b.now, secs)
+        self._vs('followup', 'the answer is over: waiting for your next phrase')
+        ears.unmute()                 # her voice is gone: the ears open at once
+        self.followup_waiting = True
+        try:
+            res = ears.listen(lang=self.settings.get('speech_lang', 'en'), secs=secs,
+                              size=self.settings.get('stt_size', 'small'),
+                              mic=self.settings.get('stt_mic'),
+                              engine=self.settings.get('stt_engine'))
+        finally:
+            self.followup_waiting = False
+        if conv.stale(cid) or not conv.active:
+            return                  # stopped, slept, hid or reset while we listened
+        if not res:
+            GLib.idle_add(lambda: self.ev(
+                lambda br: br.conversation_close('ears')) and False)
+            return
+        text = res.get('text') or ''
+        alt = res.get('vosk') or ''
+        if not text and not alt:
+            GLib.idle_add(lambda: self.ev(
+                lambda br: br.conversation_close('silence')) and False)
+            return
+        self._vs('held', 'processing the follow-up phrase')
+        conv.waiting_answer = True      # the wake loop must not listen again just yet
+        GLib.idle_add(lambda t=text, v=alt: self.ev(
+            lambda br: br.heard_text(t, wake=True, alt=v, followup=True)) and False)
+
     def talking(self):
         """her voice is sounding at this very moment"""
         p = self.voice_proc
@@ -318,20 +358,44 @@ class SensesMixin:
             b = self.brain
             while self.wake_on:
                 time.sleep(0.15)
+                conv = getattr(b, 'conversation', None)
+                if (conv and conv.active and self.settings.get('conversation_mode', False)
+                        and not b.listening):
+                    # One microphone, one owner: for the whole dialogue this loop
+                    # owns the ears.  While she thinks or speaks it holds no /wake
+                    # (so she cannot wake to her own voice); once it is quiet,
+                    # the same loop listens for the next phrase without a name.
+                    if b.thinking or self.talking() or b.now < b.talk_until:
+                        # thinking and speaking are not silence: push the deadline
+                        # forward so a long answer cannot expire its own follow-up
+                        conv.hold(b.now, float(self.settings.get('conversation_timeout_s', 10)))
+                        continue
+                    if getattr(conv, 'waiting_answer', False):
+                        continue            # a phrase is already on its way to her mind
+                    if conv.due(b.now):
+                        GLib.idle_add(lambda: self.ev(
+                            lambda br: br.conversation_close('timeout')) and False)
+                        continue
+                    self.followup_listen(conv.id)
+                    continue
                 if b.listening:
                     continue            # the mic is lent to a click-listen: not ours now
                 self._vs('listening', 'wake', 'listening for the wake word')
-                res = ears.wake(lang=self.settings.get('speech_lang', 'en'),
-                                word=self.settings.get('wake_word', 'юми'), secs=120,
-                                size=self.settings.get('stt_size', 'small'),
-                                mic=self.settings.get('stt_mic'),
-                                sensitivity=self.settings.get('wake_sensitivity', 'normal'),
-                                confirm=self.settings.get('wake_confirm', True),
-                                model_size=self.settings.get('wake_model_size', 'small'),
-                                judge_log=self.settings.get('wake_judge_log', True),
-                                engine=self.settings.get('stt_engine'),
-                                oww_ear=self.settings.get('wake_ear', 'auto'),
-                                hints=self.wake_hints(b))
+                self.wake_waiting = True
+                try:
+                    res = ears.wake(lang=self.settings.get('speech_lang', 'en'),
+                                    word=self.settings.get('wake_word', 'юми'), secs=120,
+                                    size=self.settings.get('stt_size', 'small'),
+                                    mic=self.settings.get('stt_mic'),
+                                    sensitivity=self.settings.get('wake_sensitivity', 'normal'),
+                                    confirm=self.settings.get('wake_confirm', True),
+                                    model_size=self.settings.get('wake_model_size', 'small'),
+                                    judge_log=self.settings.get('wake_judge_log', True),
+                                    engine=self.settings.get('stt_engine'),
+                                    oww_ear=self.settings.get('wake_ear', 'auto'),
+                                    hints=self.wake_hints(b))
+                finally:
+                    self.wake_waiting = False
                 if not self.wake_on:
                     continue            # called off while the daemon was listening
                 if not res:

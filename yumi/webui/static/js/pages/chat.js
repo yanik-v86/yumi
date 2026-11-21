@@ -35,6 +35,54 @@ export function render(view, ctx) {
       ? 'Это то, что она говорит вслух в мире, не ответ в чате.'
       : 'This is what she says aloud in the world, not the chat answer.' }));
 
+  // Conversation mode lives where the talk happens: after a voice answer she
+  // keeps the microphone for the next phrase, so the name need not be repeated.
+  const convState = el('div', { class: 'bubble', text: '…' });
+  const convBtn = el('button', { class: 'btn btn-small', type: 'button', text: '' });
+  const convCard = el('div', { class: 'card' },
+    el('h3', { text: lang() === 'ru' ? 'Диалог без имени' : 'Hands-free talk' }),
+    convState,
+    el('div', { class: 'row', style: { marginTop: '8px' } }, convBtn),
+    el('p', { class: 'card-hint', style: { marginTop: '12px' }, text: lang() === 'ru'
+      ? 'После голосового ответа она послушает продолжение без повтора «Юми». Пауза или «стоп» закроют диалог.'
+      : 'After a voice answer she listens for a follow-up without repeating her name. A pause or “stop” closes the talk.' }));
+
+  function drawConv() {
+    const rt = ctx.status?.runtime || {};
+    const conv = rt.conversation || {};
+    const on = Boolean(ctx.status?.settings?.conversation_mode);
+    convBtn.textContent = on
+      ? (lang() === 'ru' ? 'Выключить' : 'Turn off')
+      : (lang() === 'ru' ? 'Включить' : 'Turn on');
+    convBtn.classList.toggle('btn-primary', !on);
+    if (!on) {
+      convState.textContent = lang() === 'ru'
+        ? 'Выключен: после каждого ответа имя нужно повторять.'
+        : 'Off: say her name again after every answer.';
+    } else if (conv.active) {
+      const secs = conv.remaining
+        ? ` · ${Math.ceil(conv.remaining)} ${lang() === 'ru' ? 'с' : 's'}` : '';
+      convState.textContent = `${lang() === 'ru' ? 'Диалог открыт, ждёт вашу реплику' : 'Talk open, waiting for you'} · ${conv.exchanges || 1}${secs}`;
+    } else {
+      convState.textContent = lang() === 'ru'
+        ? 'Включён: после ответа она слушает следующую фразу.'
+        : 'On: after an answer she listens for your next phrase.';
+    }
+  }
+
+  convBtn.addEventListener('click', async () => {
+    const next = !Boolean(ctx.status?.settings?.conversation_mode);
+    convBtn.disabled = true;
+    try {
+      await ctx.applySettings({ conversation_mode: next });
+      await ctx.refreshStatus();
+    } catch (err) {
+      errToast(err);
+    } finally {
+      convBtn.disabled = false;
+    }
+  });
+
   const prompts = lang() === 'ru'
     ? ['Как ты?', 'Что ты умеешь?', 'Расскажи что-нибудь', 'Помоги с планом на день']
     : ['How are you?', 'What can you do?', 'Tell me something', 'Help me plan the day'];
@@ -131,7 +179,7 @@ export function render(view, ctx) {
       })),
     voiceOut);
 
-  const side = el('div', { class: 'chat-side' }, liveCard, promptCard, askCard, voiceCard);
+  const side = el('div', { class: 'chat-side' }, liveCard, convCard, promptCard, askCard, voiceCard);
 
   const clearBtn = el('button', {
     class: 'btn btn-small btn-danger', type: 'button', text: lang() === 'ru' ? 'Стереть этот чат' : 'Clear this chat',
@@ -312,11 +360,14 @@ export function render(view, ctx) {
 
   const current = ctx.status?.runtime?.bubble;
   if (current) bubble.textContent = current;
+  const offStatus = ctx.onStatus(drawConv);
+  drawConv();
   loadHistory();
   input.focus();
 
   return () => {
     offBubble();
     offChat();
+    offStatus();
   };
 }

@@ -52,6 +52,14 @@ DEFAULT_SETTINGS = {
     'polza_api_key': '',   # Polza.ai API key (get it at polza.ai)
     'chat_history_n': 10,     # how many of her last messages go along with every
                               # new question, so the answer knows the whole turn
+    'conversation_mode': False,   # after a chat answer she keeps listening for the
+                              # next phrase without repeating the wake word;
+                              # silence closes the dialogue (off by default)
+    'conversation_timeout_s': 10,  # seconds of silence before the dialogue closes
+    'conversation_gap_reset_min': 15,  # a pause this long starts a fresh dialogue:
+                              # the old voice chat history is dropped
+    'conversation_history_n': 20,  # messages carried into an active dialogue
+                              # (capped at 30, never smaller than chat_history_n)
     'chat_memory': True,      # she keeps the talks in a sqlite diary and recalls
                               # the older lines about the same thing into the
                               # context (yumi/memory.py)
@@ -382,6 +390,10 @@ UI = {
         'chat_stream': 'Speak while answering',
         'sassy': 'Sassy 18+',
         'chat_history_n': 'Messages in mind', 'chat_memory': 'Recall older talks',
+        'conversation_mode': 'Keep talking without the name',
+        'conversation_timeout_s': 'Seconds before she stops listening',
+        'conversation_gap_reset_min': 'Minutes before a talk starts fresh',
+        'conversation_history_n': 'Messages in an active talk',
         'wake_ears': 'Wake when you say «Yumi»', 'stt_engine': 'Ear for phrases',
         'eng_whisper': 'Whisper', 'eng_nemotron': 'Nemotron 0.6b (fast)',
         'stt_size': 'Whisper ear size', 'e_small': 'Lite (~460 MB)',
@@ -455,6 +467,10 @@ UI = {
         'chat_stream': 'Озвучивать по мере ответа',
         'sassy': 'Дерзкая 18+',
         'chat_history_n': 'Сообщений в памяти', 'chat_memory': 'Помнить разговоры',
+        'conversation_mode': 'Продолжать без повтора имени',
+        'conversation_timeout_s': 'Секунд тишины до конца диалога',
+        'conversation_gap_reset_min': 'Минут до нового разговора',
+        'conversation_history_n': 'Сообщений в активном диалоге',
         'wake_ears': 'Будить, когда скажешь «Юми»', 'stt_engine': 'Ухо для фраз',
         'eng_whisper': 'Whisper', 'eng_nemotron': 'Nemotron 0.6b (быстрое)',
         'stt_size': 'Размер whisper-уха', 'e_small': 'Лёгкая (~460 МБ)',

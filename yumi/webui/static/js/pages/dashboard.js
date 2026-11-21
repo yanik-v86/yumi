@@ -349,11 +349,15 @@ export function render(view, ctx) {
     const stText = {
       watching: ['имя слышит', 'watching'], candidate: ['имя услышано', 'candidate'],
       listening: ['слушает', 'listening'], held_for_answer: ['ждёт ответа', 'held for answer'],
+      awaiting_followup: ['ждёт продолжения', 'waiting for follow-up'],
       paused: ['микрофон на паузе', 'mic paused'], muted: ['заглушено', 'muted'],
       missing: ['нет микрофона', 'no mic'], busy: ['занята', 'busy'], off: ['выключено', 'off'],
     }[vs.state] || [vs.state || '—', vs.state || '—'];
     voiceLine.textContent = `${lang() === 'ru' ? 'микрофон' : 'microphone'}: ${lang() === 'ru' ? stText[0] : stText[1]}`
       + `${vs.owner ? ` · ${vs.owner}` : ''}`;
+    if (runtime.conversation_active) {
+      voiceLine.textContent += ` · ${lang() === 'ru' ? 'диалог без имени' : 'hands-free talk'}`;
+    }
 
     statMode.value.textContent = runtime.mode === 'air'
       ? (lang() === 'ru' ? 'воздух' : 'air')

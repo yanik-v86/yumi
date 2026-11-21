@@ -10,6 +10,8 @@ const CARD_KEYS = {
     'wake_judge_log'],
   voice: ['voice_kind', 'voice_vol', 'tts_ru_speaker', 'tts_en_speaker',
     'tts_pitch', 'tts_ru_model'],
+  talk: ['conversation_mode', 'conversation_timeout_s', 'conversation_gap_reset_min',
+    'conversation_history_n'],
   rest: ['stt_mic', 'stt_echo', 'stt_selfmute', 'name_duck', 'tap_ears', 'timer_sound'],
 };
 const ALL_KEYS = [...new Set(Object.values(CARD_KEYS).flat())];
@@ -89,10 +91,11 @@ export function render(view, ctx) {
   const activationBox = el('div', { class: 'card' });
   const judgeBox = el('div', { class: 'card' });
   const voiceBox = el('div', { class: 'card' });
+  const talkBox = el('div', { class: 'card' });
   const restBox = el('div', { class: 'card', style: { marginTop: '16px' } });
 
   view.append(sectionTitle(say('Активация, судья и голос', 'Activation, judge and voice')));
-  view.append(el('div', { class: 'stack' }, activationBox, judgeBox, voiceBox));
+  view.append(el('div', { class: 'stack' }, activationBox, judgeBox, voiceBox, talkBox));
   view.append(sectionTitle(say('Тонкая настройка', 'Fine tuning')));
   view.append(restBox);
 
@@ -243,6 +246,13 @@ export function render(view, ctx) {
       }));
   }
 
+  function drawTalk() {
+    fill(talkBox, CARD_KEYS.talk,
+      say('4. Диалог без имени', '4. Hands-free talk'),
+      say('После ответа Юми слушает следующую фразу без wake-word; пауза тишины закрывает диалог. Тот же тумблер есть на странице «Разговор».',
+          'After an answer Yumi listens for the next phrase with no wake word; a pause of silence closes the talk. The same switch lives on the Talk page.'));
+  }
+
   function drawRest() {
     restBox.replaceChildren();
     fill(restBox, CARD_KEYS.rest,
@@ -265,11 +275,13 @@ export function render(view, ctx) {
         : say('имя не слышит', 'name listening is off') })));
     if (runtime.sleeping) liveText.push(badge(say('не мешать', 'dnd'), 'amber'));
     if (runtime.listening) liveText.push(badge(say('слушает фразу', 'listening'), 'mint'));
+    if (runtime.conversation_active) liveText.push(badge(say('диалог без имени', 'hands-free talk'), 'mint'));
     if (runtime.busy) liveText.push(badge(say('занята', 'busy'), 'amber'));
     const vs = runtime.voice_state || {};
     const ST = {
       watching: ['имя слышит', 'watching'], candidate: ['имя услышано', 'candidate'],
       listening: ['слушает', 'listening'], held_for_answer: ['ждёт ответа', 'held for answer'],
+      awaiting_followup: ['ждёт продолжения', 'waiting for follow-up'],
       paused: ['на паузе', 'paused'], muted: ['заглушено', 'muted'],
       missing: ['нет микрофона', 'no mic'], busy: ['занята', 'busy'], off: ['выключено', 'off'],
     };
@@ -362,6 +374,7 @@ export function render(view, ctx) {
     drawActivation();
     drawJudge();
     drawVoice();
+    drawTalk();
     drawRest();
   }
 

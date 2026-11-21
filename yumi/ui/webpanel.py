@@ -328,6 +328,10 @@ class PanelMixin:
             'queued': [{'op': j.op, 'src': str(j.src), 'arg': j.arg}
                        for j in (queue.jobs if queue else [])][:20],
         }
+        conv = (b.conversation_snapshot() if hasattr(b, 'conversation_snapshot') else
+                {'active': False, 'source': None, 'since': 0, 'until': 0,
+                 'remaining': 0, 'last_at': 0, 'exchanges': 0, 'timeout': 10,
+                 'waiting_answer': False, 'reason': '', 'id': 0})
         data = {
             'time': time.time(),
             'version': __import__('yumi').__version__,
@@ -358,6 +362,8 @@ class PanelMixin:
                         'pending_permission': (b.permission_snapshot()
                                                if hasattr(b, 'permission_snapshot') else None)},
                 'wake_on': bool(self.wake_on),
+                'conversation': conv,
+                'conversation_active': bool(conv.get('active')),
                 'voice_state': (self.voice_state.snapshot() if hasattr(self, 'voice_state')
                                 else {'state': 'off', 'owner': None, 'generation': 0,
                                       'since': 0, 'reason': '', 'wake_enabled': False,
@@ -399,6 +405,15 @@ class PanelMixin:
             b.requests.append(('recolor',))
         if 'wake_ears' in patch:
             b.requests.append(('wake_set', bool(self.settings.get('wake_ears'))))
+            if not self.settings.get('wake_ears'):
+                b.conversation_close('wake off')
+        if 'conversation_mode' in patch and not self.settings.get('conversation_mode'):
+            b.conversation_close('setting')
+        if 'conversation_timeout_s' in patch:
+            try:
+                b.conversation.timeout = float(self.settings.get('conversation_timeout_s', 10))
+            except (TypeError, ValueError):
+                pass
         if 'tap_ears' in patch:
             b.requests.append(('tap_set', bool(self.settings.get('tap_ears'))))
         if 'pinned' in patch and self.settings.get('pinned'):

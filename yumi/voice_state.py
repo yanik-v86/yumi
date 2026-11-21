@@ -10,8 +10,8 @@ from __future__ import annotations
 import time
 
 STATES = ('watching', 'candidate', 'listening', 'held_for_answer',
-          'paused', 'muted', 'missing', 'busy', 'off')
-OWNERS = ('wake', 'click_listen', 'panel_test', 'tts', None)
+          'awaiting_followup', 'paused', 'muted', 'missing', 'busy', 'off')
+OWNERS = ('wake', 'click_listen', 'panel_test', 'conversation', 'tts', None)
 
 
 class VoiceState:
@@ -74,6 +74,9 @@ class VoiceState:
 
     def held(self, reason='waiting for the answer'):
         return self.set('held_for_answer', 'wake', reason)
+
+    def followup(self, reason='waiting for the next phrase without a wake word'):
+        return self.set('awaiting_followup', 'conversation', reason)
 
     def missing(self, reason='no microphone'):
         return self.set('missing', None, reason)

@@ -207,7 +207,19 @@ pending_permission}`. `confirm: true` (совместимость) или неп
 Ещё три поля снимка: `runtime.voice_state` (состояние микрофона), `runtime.models_check`
 (кэш явной проверки моделей, без хэширования на тике) и `runtime.doctor` (только короткое
 саммари последнего запуска). Полный отчёт живёт в ответе `POST /api/doctor` и в SSE
-`doctor`, в снимок не попадает. История чата хранится как `{messages, rev, ops}`; `rev`
+`doctor`, в снимок не попадает.
+
+Состояние микрофона включает `awaiting_followup` (владелец `conversation`): она ответила
+и ждёт реплику без wake-word. Рядом лежат `runtime.conversation` (снимок
+`{active, source, since, until, remaining, last_at, exchanges, timeout,
+waiting_answer, reason, id}`) и `runtime.conversation_active`. Четыре настройки
+автодиалога — `conversation_mode`, `conversation_timeout_s`,
+`conversation_gap_reset_min`, `conversation_history_n` — живут в секции `mind`;
+выключение режима или wake-word закрывает диалог сразу, а `conversation_timeout_s`
+применяется на ходу. Их тумблер и живой индикатор находятся на странице `chat`
+(`/#/chat`), дубль настроек — на `voice`, индикатор — на `dashboard`. Отдельного
+API-вызова или SSE-события для диалога нет: панель читает тот же снимок статуса,
+что и GTK. История чата хранится как `{messages, rev, ops}`; `rev`
 растёт на каждую операцию, SSE `chat` несёт `{rev, ops:[insert|update|remove|clear]}`,
 а `pages/chat.js` применяет журнал по ревизиям и перезагружает всю историю при пропуске.
 
