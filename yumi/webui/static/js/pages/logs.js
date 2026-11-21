@@ -5,8 +5,11 @@ import {
 
 const LOGS = [
   ['yumi', 'Юми', 'Yumi'],
+  ['mind', 'Мозг', 'Mind'],
   ['judge', 'Судья', 'Judge'],
   ['ears', 'Ушки', 'Ears'],
+  ['stt', 'STT', 'STT'],
+  ['app', 'Приложение', 'App'],
   ['web', 'Панель', 'Panel'],
 ];
 
@@ -22,8 +25,8 @@ export function render(view, ctx) {
   view.append(
     el('h2', { class: 'pagehead', text: lang() === 'ru' ? 'Журналы' : 'Logs' }),
     el('p', { class: 'pagelead', text: lang() === 'ru'
-      ? 'Её собственный лог, дневник ушек, решения судьи и журнал доступа панели.'
-      : 'Her own log, the ears’ diary, the judge’s decisions and the panel audit.' }),
+      ? 'Логи Юми, мозга и запросов в модель, ушек, STT, судьи, приложения и журнал панели.'
+      : 'Yumi, mind and model-request logs, ears, STT, judge, app and panel audit.' }),
   );
 
   const tabs = el('div', { class: 'log-tabs' });
@@ -39,13 +42,16 @@ export function render(view, ctx) {
     onclick: () => {
       auto = !auto;
       autoButton.classList.toggle('btn-on', auto);
+      autoButton.textContent = auto
+        ? (lang() === 'ru' ? 'Слежу' : 'Following')
+        : (lang() === 'ru' ? 'Следить' : 'Follow');
       if (auto) {
         startTimer();
         load(true, true);
       } else {
         stopTimer();
       }
-      toast(auto ? (lang() === 'ru' ? 'Обновляю каждые 4 секунды' : 'Refreshing every 4 seconds')
+      toast(auto ? (lang() === 'ru' ? 'Обновляю каждые 2 секунды' : 'Refreshing every 2 seconds')
         : (lang() === 'ru' ? 'Автообновление выключено' : 'Auto refresh off'), auto ? 'good' : '');
     },
   });
@@ -123,7 +129,7 @@ export function render(view, ctx) {
 
   function startTimer() {
     stopTimer();
-    timer = window.setInterval(() => load(true, false), 4000);
+    timer = window.setInterval(() => load(true, false), 2000);
   }
 
   function stopTimer() {

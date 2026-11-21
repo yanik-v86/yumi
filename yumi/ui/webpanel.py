@@ -655,8 +655,11 @@ class PanelMixin:
     def _web_logs(self, name, lines):
         paths = {
             'yumi': config.STATE_DIR / 'yumi.log',
+            'mind': Path('/tmp/yumi/mind.log'),
             'judge': Path('/tmp/yumi/judge.log'),
             'ears': Path('/tmp/yumi/recogn.txt'),
+            'stt': config.STATE_DIR / 'stt.log',
+            'app': Path('/tmp/yumi/app.log'),
             'web': Path(config.STATE_DIR) / 'web-audit.log',
         }
         path = paths.get(name)

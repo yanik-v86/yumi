@@ -50,8 +50,8 @@ PAGES = [
      'hint': {'en': 'Access, the link, sessions and the audit',
               'ru': 'Доступ, ссылка, сессии и журнал'}},
     {'id': 'logs', 'icon': 'terminal', 'title': {'en': 'Logs', 'ru': 'Журналы'},
-     'hint': {'en': 'Her log, the ears\' diary, the panel audit',
-              'ru': 'Её лог, дневник ушек, журнал панели'}},
+     'hint': {'en': 'Her log, mind, ears, STT, judge, app, panel audit',
+              'ru': 'Её лог, мозг, ушки, STT, судья, приложение, журнал панели'}},
 ]
 
 # which page owns which section
