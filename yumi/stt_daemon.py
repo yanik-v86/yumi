@@ -1677,7 +1677,10 @@ class Ears:
             # reading travels with the phrase as alt, just like on the listen
             # path — «heard … (vosk: …)» in the mind's diary must not be empty
             return {'woke': True, 'text': text, 'alt': vosk_fallback(),
-                    'fallback': bool(fallback_wake)}
+                    'fallback': bool(fallback_wake),
+                    'verdict': {'matched': True, 'reason': str(why)[:120],
+                                'fallback': bool(fallback_wake),
+                                'candidate': str(text)[:200]}}
 
         def vosk_fallback(until=None, slack=0.0):
             """vosk's finals around the wake, while they are fresh (fresh_vosk):

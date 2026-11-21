@@ -6,6 +6,9 @@ import {
 export function render(view, ctx) {
   const lang = () => ctx.lang;
   let sending = false;
+  let lastRev = 0;               // the last chat revision this tab has applied
+  let syncing = false;
+  let pendingOps = [];
 
   view.append(
     el('h2', { class: 'pagehead', text: lang() === 'ru' ? 'Разговор' : 'Talk' }),
@@ -141,8 +144,12 @@ export function render(view, ctx) {
         confirmLabel: lang() === 'ru' ? 'Стереть' : 'Clear', danger: true,
       })) return;
       try {
-        await api.del('/api/chat/history');
-        log.replaceChildren(emptyBox(lang() === 'ru' ? 'Чистый лист' : 'A clean page'));
+        const data = await api.del('/api/chat/history');
+        applyOps(data.ops, data.rev);
+        if (!data.ops?.length) {
+          log.replaceChildren(emptyBox(lang() === 'ru' ? 'Чистый лист' : 'A clean page'));
+          lastRev = Number(data.rev) || 0;
+        }
       } catch (err) { errToast(err); }
     },
   });
@@ -154,37 +161,100 @@ export function render(view, ctx) {
     return log.scrollHeight - log.scrollTop - log.clientHeight < 120;
   }
 
-  function messageNode(role, text, ts) {
+  function messageNode(role, text, ts, id, temp) {
     const node = el('div', { class: `msg ${role}` }, text);
+    node.dataset.text = String(text || '');
+    if (id) node.dataset.id = String(id);
+    if (temp) node.dataset.temp = '1';
     if (ts) node.append(el('span', { class: 'meta', text: fmtClock(ts) }));
     return node;
   }
 
-  function addMessage(role, text, ts = Date.now() / 1000) {
+  function addMessage(role, text, ts = Date.now() / 1000, id = null, temp = false) {
     const stick = nearBottom();
-    log.append(messageNode(role, text, ts));
+    log.append(messageNode(role, text, ts, id, temp));
     if (stick) log.scrollTop = log.scrollHeight;
   }
 
+  function removeTemp(role, text) {
+    for (const node of [...log.children]) {
+      if (node.dataset?.temp === '1' && node.classList.contains(role)
+          && node.dataset.text === String(text || '')) node.remove();
+    }
+  }
+
+  // One SSE op, or a batch returned with an HTTP response.  Revisions make
+  // replay safe: the response and the event stream often carry the same ops.
+  function applyOps(ops, rev) {
+    const batch = Array.isArray(ops) ? ops.slice().sort((a, b) => a.rev - b.rev) : [];
+    if (syncing) {
+      pendingOps.push(...batch);
+      if (rev && rev > lastRev) lastRev = rev;
+      return;
+    }
+    if (batch.length && batch[0].rev > lastRev + 1) {
+      loadHistory();
+      return;
+    }
+    for (const op of batch) {
+      if (!op || !op.rev || op.rev <= lastRev) continue;
+      const m = op.message;
+      if (op.op === 'insert' && m) {
+        removeTemp(m.role, m.text);
+        addMessage(m.role, m.text, m.ts, m.id);
+      } else if (op.op === 'update' && op.id) {
+        const node = [...log.children].find((n) => n.dataset?.id === String(op.id));
+        if (node) {
+          const text = op.patch?.text ?? '';
+          const meta = node.querySelector('.meta')?.textContent || '';
+          node.textContent = text;
+          node.dataset.text = String(text);
+          if (meta) node.append(el('span', { class: 'meta', text: meta }));
+        }
+      } else if (op.op === 'remove' && op.id) {
+        const node = [...log.children].find((n) => n.dataset?.id === String(op.id));
+        if (node) node.remove();
+      } else if (op.op === 'clear') {
+        clear(log);
+        log.append(emptyBox(lang() === 'ru' ? 'Чистый лист' : 'A clean page'));
+      }
+      lastRev = Math.max(lastRev, op.rev);
+    }
+    if (rev && rev > lastRev) {
+      if (!batch.length) loadHistory();
+      else lastRev = rev;
+    }
+  }
+
   async function loadHistory() {
+    if (syncing) return;
+    syncing = true;
     clear(log);
     try {
       const data = await api.get('/api/chat/history');
+      lastRev = Number(data.rev) || 0;
       if (!data.messages?.length) {
         log.append(emptyBox(lang() === 'ru'
           ? 'Пока тихо. Напиши первой — она ответит.'
           : 'Quiet so far. Write first — she will answer.'));
       } else {
-        for (const m of data.messages) addMessage(m.role, m.text, m.ts);
+        for (const m of data.messages) addMessage(m.role, m.text, m.ts, m.id);
         log.scrollTop = log.scrollHeight;
       }
     } catch (err) {
       log.append(emptyBox(err.message));
+    } finally {
+      syncing = false;
+      const queued = pendingOps;
+      pendingOps = [];
+      if (queued.length) applyOps(queued);
     }
   }
 
   async function submit() {
-    const text = input.value.trim();
+    // the server collapses whitespace too; keep the optimistic line identical
+    // so the insert op can replace it instead of drawing the message twice
+    const text = input.value.trim().replace(/\s+/g, ' ');
     if (!text || sending) return;
     sending = true;
     send.disabled = true;
@@ -192,14 +262,19 @@ export function render(view, ctx) {
     input.style.height = '';
     const empty = log.querySelector('.empty');
     if (empty) empty.remove();
-    addMessage('user', text);
+    // optimistic line; the insert op replaces it by its real id/timestamp
+    addMessage('user', text, Date.now() / 1000, null, true);
     const typing = el('div', { class: 'msg assistant typing', text: lang() === 'ru' ? 'думает' : 'thinking' });
     log.append(typing);
     log.scrollTop = log.scrollHeight;
     try {
       const data = await api.post('/api/chat', { text });
       typing.remove();
-      addMessage('assistant', data.reply || (lang() === 'ru' ? '…' : '…'));
+      // SSE may have arrived first; the revision check makes this a safe replay
+      applyOps(data.ops, data.rev);
+      if (!data.ops?.length) {
+        addMessage('assistant', data.reply || (lang() === 'ru' ? '…' : '…'));
+      }
       ctx.refreshStatus();
     } catch (err) {
       typing.remove();
@@ -230,8 +305,9 @@ export function render(view, ctx) {
   const offBubble = ctx.onEvent('bubble', (payload) => {
     bubble.textContent = payload?.text || (lang() === 'ru' ? 'молчит' : 'quiet');
   });
-  const offChat = ctx.onEvent('chat', () => {
-    // another tab answered; the local flow already drew its own message
+  const offChat = ctx.onEvent('chat', (payload) => {
+    // another tab, or this very answer: apply the journal, never draw twice
+    applyOps(payload?.ops, payload?.rev);
   });
 
   const current = ctx.status?.runtime?.bubble;

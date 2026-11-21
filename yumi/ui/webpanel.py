@@ -9,7 +9,8 @@ from pathlib import Path
 
 from gi.repository import Gdk, GLib
 
-from yumi import chat, config, engines, memory, music, notes, pixui, system, tts, webpanel
+from yumi import (chat, config, doctor, ears, engines, memory, models, music,
+                  notes, permission, pixui, system, tts, webpanel)
 from yumi.sprites import ui_colors
 from yumi.webpanel import catalog as webcatalog
 
@@ -21,20 +22,49 @@ class PanelMixin:
 
     # ------------------------------------------------------------------ browser panel
     def load_web_chat(self):
-        """the panel's own conversation, so a browser reload does not lose the talk"""
+        """the panel's own conversation, so a browser reload does not lose the talk.
+
+        New files hold the messages, their revision and a short op journal; the
+        old plain list is still read (and gets message ids) without losing a line.
+        """
         try:
             data = json.loads(self.web_chat_path.read_text())
-            if isinstance(data, list):
-                return [m for m in data if isinstance(m, dict) and m.get('text')][-100:]
         except (OSError, ValueError):
-            pass
-        return []
+            return []
+        messages, rev, ops = [], 0, []
+        if isinstance(data, dict):
+            raw = data.get('messages')
+            if isinstance(raw, list):
+                messages = [m for m in raw if isinstance(m, dict) and m.get('text')][-100:]
+            try:
+                rev = max(0, int(data.get('rev') or 0))
+            except (TypeError, ValueError):
+                rev = 0
+            raw_ops = data.get('ops')
+            if isinstance(raw_ops, list):
+                ops = [o for o in raw_ops
+                       if isinstance(o, dict) and o.get('op') in ('insert', 'update', 'remove', 'clear')][-200:]
+        elif isinstance(data, list):
+            messages = [m for m in data if isinstance(m, dict) and m.get('text')][-100:]
+        if not messages:
+            self.web_chat_rev, self.web_chat_ops = rev, ops
+            return []
+        # every message needs an id: update/remove ops name it, not its position
+        for i, message in enumerate(messages, 1):
+            if not message.get('id'):
+                message['id'] = f'm{i}'
+        op_rev = max((int(o.get('rev') or 0) for o in ops), default=0)
+        self.web_chat_rev = max(rev, op_rev)
+        self.web_chat_ops = ops
+        return messages
 
     def save_web_chat(self):
         try:
             self.web_chat_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.web_chat_path.with_suffix('.tmp')
-            tmp.write_text(json.dumps(self.web_chat[-100:], indent=1, ensure_ascii=False))
+            payload = {'messages': self.web_chat[-100:], 'rev': self.web_chat_rev,
+                       'ops': self.web_chat_ops[-200:]}
+            tmp.write_text(json.dumps(payload, indent=1, ensure_ascii=False))
             try:
                 os.chmod(tmp, 0o600)
             except OSError:
@@ -42,6 +72,66 @@ class PanelMixin:
             tmp.replace(self.web_chat_path)
         except OSError:
             pass
+
+    # ---- chat change journal: one revision per op, published over SSE --------
+    def _web_chat_op(self, op, **fields):
+        """record one mutation under web_chat_lock; returns the SSE op"""
+        self.web_chat_rev += 1
+        entry = {'rev': self.web_chat_rev, 'op': op}
+        entry.update(fields)
+        self.web_chat_ops.append(entry)
+        self.web_chat_ops = self.web_chat_ops[-200:]
+        return entry
+
+    def _web_chat_publish(self, ops):
+        """let every open tab see the same chat change"""
+        if not ops:
+            return
+        web = self.web
+        if not web or not web.running:
+            return
+        try:
+            web.publish('chat', {'rev': self.web_chat_rev, 'ops': ops})
+        except Exception:
+            pass
+
+    def _web_chat_insert(self, message):
+        """append one message and journal the insert (call under web_chat_lock)"""
+        entry = dict(message)
+        entry.setdefault('id', f'm{self.web_chat_rev + 1}')
+        op = self._web_chat_op('insert', message=dict(entry))
+        self.web_chat.append(entry)
+        self.web_chat = self.web_chat[-100:]
+        return op
+
+    def _web_chat_update(self, message_id, patch):
+        """edit one message by id; missing ids are a no-op, not an exception"""
+        op = None
+        with self.web_chat_lock:
+            for message in self.web_chat:
+                if str(message.get('id')) == str(message_id):
+                    changes = {k: str(v)[:8000] for k, v in (patch or {}).items()
+                               if k in ('text',) and isinstance(v, (str, int, float))}
+                    if not changes:
+                        break
+                    message.update(changes)
+                    op = self._web_chat_op('update', id=str(message_id), patch=changes)
+                    self.save_web_chat()
+                    break
+        self._web_chat_publish([op] if op else [])
+        return {'ok': bool(op), 'rev': self.web_chat_rev, 'ops': [op] if op else []}
+
+    def _web_chat_remove(self, message_id):
+        op = None
+        with self.web_chat_lock:
+            before = len(self.web_chat)
+            self.web_chat = [m for m in self.web_chat
+                             if str(m.get('id')) != str(message_id)]
+            if len(self.web_chat) != before:
+                op = self._web_chat_op('remove', id=str(message_id))
+                self.save_web_chat()
+        self._web_chat_publish([op] if op else [])
+        return {'ok': bool(op), 'rev': self.web_chat_rev, 'ops': [op] if op else []}
 
     def web_config_sig(self):
         try:
@@ -264,8 +354,16 @@ class PanelMixin:
                 'music': {'now_playing': self._web_music, 'volume': self._web_volume},
                 'nlu': {'last_intent': getattr(b, 'last_intent', ''),
                         'last_confidence': round(float(getattr(b, 'last_confidence', 0.0)), 3),
-                        'confirm': bool(getattr(b, 'intent_confirm', None))},
+                        'confirm': bool(getattr(b, 'intent_confirm', None)),
+                        'pending_permission': (b.permission_snapshot()
+                                               if hasattr(b, 'permission_snapshot') else None)},
                 'wake_on': bool(self.wake_on),
+                'voice_state': (self.voice_state.snapshot() if hasattr(self, 'voice_state')
+                                else {'state': 'off', 'owner': None, 'generation': 0,
+                                      'since': 0, 'reason': '', 'wake_enabled': False,
+                                      'transitions': []}),
+                'doctor': getattr(self, 'doctor_last', None),
+                'models_check': models.cached(),
                 'tap_ears': bool(s.get('tap_ears')),
                 'voice': dict(engines.status(s), tts_error=tts.last_error),
                 'downloads': self.dl_announced,
@@ -607,12 +705,16 @@ class PanelMixin:
             messages.append({'role': 'system', 'content': note})
         messages.append({'role': 'user', 'content': text})
         reply = chat.ask(s, messages)
+        ops = []
         with self.web_chat_lock:
-            self.web_chat.append({'role': 'user', 'text': text, 'ts': time.time()})
+            ops.append(self._web_chat_insert({'role': 'user', 'text': text, 'ts': time.time()}))
             if reply:
-                self.web_chat.append({'role': 'assistant', 'text': reply, 'ts': time.time()})
-            self.web_chat = self.web_chat[-100:]
+                ops.append(self._web_chat_insert({'role': 'assistant', 'text': reply,
+                                                  'ts': time.time()}))
             self.save_web_chat()
+            rev = self.web_chat_rev
+            history = len(self.web_chat)
+        self._web_chat_publish(ops)
         sassy = bool(s.get('sassy'))
         if s.get('chat_memory', True) and bool(s.get('sassy')) == sassy:
             tag = memory.TAG_SASSY if sassy else None
@@ -623,4 +725,45 @@ class PanelMixin:
             except Exception:
                 pass
         return {'reply': reply or '', 'recalled': note != '',
-                'history': len(self.web_chat)}
+                'history': history, 'rev': rev, 'ops': ops}
+
+    # ---------------------------------------------------------------- voice state
+    def _web_voice_pause(self):
+        """park the microphone from the panel and remember whether wake was on"""
+        self._voice_pause_was_on = bool(self.wake_on)
+        self.wake_pause()
+        if hasattr(self, 'voice_state'):
+            self.voice_state.wake_paused('paused from the panel')
+        return self.voice_state.snapshot() if hasattr(self, 'voice_state') else {}
+
+    def _web_voice_resume(self):
+        """give the microphone back to the wake loop after a panel pause"""
+        was_on = getattr(self, '_voice_pause_was_on', bool(self.wake_on))
+        self.wake_resume(was_on)
+        if hasattr(self, 'voice_state') and not was_on:
+            self.voice_state.wake_off()
+        return self.voice_state.snapshot() if hasattr(self, 'voice_state') else {}
+
+    def _web_voice_released(self):
+        """let go of the microphone entirely (stop the current ear)"""
+        if hasattr(self, 'voice_state'):
+            self.voice_state.missing('released from the panel')
+        return self.voice_state.snapshot() if hasattr(self, 'voice_state') else {}
+
+    # ---------------------------------------------------------------- diagnostics
+    def _web_doctor_done(self, report):
+        """remember only the light summary for the status snapshot / SSE"""
+        summary = report.get('summary', {}) if isinstance(report, dict) else {}
+        self.doctor_last = {
+            'last_run': report.get('started') if isinstance(report, dict) else None,
+            'elapsed': report.get('elapsed') if isinstance(report, dict) else None,
+            'ok': bool(summary.get('ok')),
+            'failed': list(summary.get('failed') or []),
+        }
+        web = self.web
+        if web and web.running:
+            try:
+                web.publish('doctor', self.doctor_last)
+            except Exception:
+                pass
+        return self.doctor_last

@@ -41,6 +41,9 @@ class Bridge:
                          'command': 'foot', 'phrases': []}]
         self.note_items = []
         self.note_id = 0
+        self.chat_items = []
+        self.chat_journal = []
+        self.chat_rev = 0
 
     def file_allowed(self, path):
         try:
@@ -168,6 +171,83 @@ class Bridge:
     def state_action(self, name, payload):
         return {'action': name}
 
+    # ---- the transfer: diagnostics, mic state, permissions, chat ops
+    def doctor(self, sections=None, text=None):
+        return {'started': 1.0, 'elapsed': 0.25,
+                'sections': sections or ['engines'], 'checks': {},
+                'summary': {'ok': True, 'failed': [], 'warnings': []}}
+
+    def models_verify_cached(self):
+        return {'checked': 1.0, 'models': {'oww': {'status': 'ok'}}}
+
+    def models_verify(self):
+        return {'checked': 2.0, 'models': {'oww': {'status': 'ok'}}}
+
+    def models_record(self, names=None):
+        return {'saved': names or ['oww'], 'models': {'oww': {'status': 'ok'}}}
+
+    def voice_state(self):
+        return {'state': 'watching', 'owner': 'wake', 'generation': 3,
+                'since': 1.0, 'reason': '', 'wake_enabled': True, 'transitions': []}
+
+    def voice_pause(self):
+        return {'state': 'paused', 'generation': 4}
+
+    def voice_resume(self):
+        return {'state': 'watching', 'generation': 5}
+
+    def voice_release(self):
+        return {'state': 'missing', 'generation': 6}
+
+    def permission_answer(self, decision, origin='panel'):
+        return {'decided': True, 'decision': decision, 'origin': origin}
+
+    def permissions_list(self):
+        return {'allow': ['/tmp/ok'], 'deny': [], 'path': str(tmp / 'permissions.json')}
+
+    def permissions_clear(self):
+        return {'cleared': True}
+
+    def chat_state(self):
+        return {'messages': list(self.chat_items), 'rev': self.chat_rev}
+
+    def chat_ops(self, since=0):
+        return {'rev': self.chat_rev,
+                'ops': [op for op in self.chat_journal if op['rev'] > since]}
+
+    def chat(self, text):
+        self.chat_rev += 2
+        ops = [
+            {'rev': self.chat_rev - 1, 'op': 'insert',
+             'message': {'id': 'm1', 'role': 'user', 'text': text, 'ts': 1.0}},
+            {'rev': self.chat_rev, 'op': 'insert',
+             'message': {'id': 'm2', 'role': 'assistant', 'text': 'ok', 'ts': 2.0}},
+        ]
+        self.chat_journal.extend(ops)
+        self.chat_items.extend(op['message'] for op in ops)
+        return {'reply': 'ok', 'history': len(self.chat_items),
+                'rev': self.chat_rev, 'ops': ops}
+
+    def chat_message_update(self, message_id, text):
+        self.chat_rev += 1
+        op = {'rev': self.chat_rev, 'op': 'update', 'id': str(message_id),
+              'patch': {'text': str(text)}}
+        self.chat_journal.append(op)
+        return {'ok': True, 'rev': self.chat_rev, 'ops': [op]}
+
+    def chat_message_remove(self, message_id):
+        self.chat_rev += 1
+        op = {'rev': self.chat_rev, 'op': 'remove', 'id': str(message_id)}
+        self.chat_journal.append(op)
+        return {'ok': True, 'rev': self.chat_rev, 'ops': [op]}
+
+    def chat_clear(self):
+        self.chat_rev += 1
+        op = {'rev': self.chat_rev, 'op': 'clear'}
+        self.chat_journal.append(op)
+        self.chat_items = []
+        return {'cleared': True, 'rev': self.chat_rev, 'ops': [op]}
+
     def __getattr__(self, name):
         def stub(*_a, **_k):
             return {} if not name.startswith('files_') else []
@@ -219,10 +299,10 @@ try:
     assert set(config.DEFAULT_SETTINGS) <= keys, set(config.DEFAULT_SETTINGS) - keys
     assert {'web_panel', 'web_panel_host', 'web_panel_port', 'web_panel_open',
             'web_panel_session_hours'} <= keys
-    assert len(schema['pages']) == 13
+    assert len(schema['pages']) == 14
     assert {page['id'] for page in schema['pages']} == {
-        'dashboard', 'chat', 'notes', 'files', 'music', 'voice', 'buttons', 'appearance',
-        'settings', 'memory', 'configs', 'security', 'logs'}
+        'dashboard', 'chat', 'notes', 'files', 'music', 'voice', 'doctor', 'buttons',
+        'appearance', 'settings', 'memory', 'configs', 'security', 'logs'}
     entries = {entry['key']: entry for entry in schema['settings']}
     assert entries['wake_sensitivity']['type'] == 'select'
     assert entries['ui_lang']['type'] == 'select'
@@ -329,6 +409,59 @@ try:
     assert code == 403, 'a confirmation without CSRF must fail'
     code, data, _ = call('POST', '/api/nlu/confirm', {'ok': True}, csrf=csrf)
     assert code == 200 and data['ok'] is True, (code, data)
+
+    # ---- transfer: diagnostics, mic state, permissions and chat ops
+    code, data, _ = call('POST', '/api/doctor', {'sections': ['engines']})
+    assert code == 403, 'doctor without CSRF must fail'
+    code, data, _ = call('POST', '/api/doctor', {'sections': ['engines']}, csrf=csrf)
+    assert code == 200 and data['summary']['ok'] is True, (code, data)
+    code, data, _ = call('GET', '/api/models')
+    assert code == 200 and data['models']['oww']['status'] == 'ok'
+    code, data, _ = call('POST', '/api/models/verify', {}, csrf=csrf)
+    assert code == 200 and data['checked'] == 2.0
+    code, data, _ = call('POST', '/api/models/record', {'names': ['oww']}, csrf=csrf)
+    assert code == 200 and data['saved'] == ['oww']
+
+    code, data, _ = call('GET', '/api/permissions')
+    assert code == 200 and data['allow'] == ['/tmp/ok']
+    code, data, _ = call('POST', '/api/permissions/answer', {'decision': 'deny'})
+    assert code == 403
+    code, data, _ = call('POST', '/api/permissions/answer', {'decision': 'maybe'}, csrf=csrf)
+    assert code == 400
+    code, data, _ = call('POST', '/api/permissions/answer', {'decision': 'always'}, csrf=csrf)
+    assert code == 200 and data['decision'] == 'always', (code, data)
+    code, data, _ = call('POST', '/api/permissions/clear', {}, csrf=csrf)
+    assert code == 200 and data['cleared'] is True
+
+    code, data, _ = call('GET', '/api/voice/state')
+    assert code == 200 and data['state']['state'] == 'watching'
+    code, data, _ = call('POST', '/api/voice/pause', {}, csrf=csrf)
+    assert code == 200 and data['state']['generation'] == 4
+    code, data, _ = call('POST', '/api/voice/resume', {}, csrf=csrf)
+    assert code == 200 and data['state']['generation'] == 5
+    code, data, _ = call('POST', '/api/voice/release', {}, csrf=csrf)
+    assert code == 200 and data['state']['generation'] == 6
+
+    code, data, _ = call('GET', '/api/chat/history')
+    assert code == 200 and data['messages'] == [] and data['rev'] == 0
+    code, data, _ = call('POST', '/api/chat', {'text': 'привет'})
+    assert code == 403, 'chat without CSRF must fail'
+    code, data, _ = call('POST', '/api/chat', {'text': 'привет'}, csrf=csrf)
+    assert code == 200 and [op['op'] for op in data['ops']] == ['insert', 'insert'], (code, data)
+    assert data['rev'] == 2
+    code, data, _ = call('GET', '/api/chat/ops?since=1')
+    assert code == 200 and len(data['ops']) == 1 and data['rev'] == 2
+    code, data, _ = call('GET', '/api/chat/history')
+    assert code == 200 and len(data['messages']) == 2 and data['rev'] == 2
+    code, data, _ = call('POST', '/api/chat/message/update',
+                         {'id': 'm1', 'text': 'правка'}, csrf=csrf)
+    assert code == 200 and data['ops'][0]['op'] == 'update'
+    code, data, _ = call('POST', '/api/chat/message/remove', {'id': 'm2'}, csrf=csrf)
+    assert code == 200 and data['ops'][0]['op'] == 'remove'
+    code, data, _ = call('DELETE', '/api/chat/history', csrf=csrf)
+    assert code == 200 and data['ops'][0]['op'] == 'clear'
+    code, data, _ = call('GET', '/api/chat/history')
+    assert code == 200 and data['messages'] == [] and data['rev'] == 5
 
     code, data, _ = call('PATCH', '/api/settings', {'patch': {'chatter': False}})
     assert code == 403, 'a mutation without CSRF must fail'

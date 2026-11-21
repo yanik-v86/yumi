@@ -378,6 +378,13 @@ def _make_handler(panel):
                 ('GET', '/api/actions'): self._actions_get,
                 ('PUT', '/api/actions'): self._actions_put,
                 ('POST', '/api/nlu/confirm'): self._nlu_confirm,
+                ('POST', '/api/doctor'): self._doctor,
+                ('GET', '/api/models'): self._models_get,
+                ('POST', '/api/models/verify'): self._models_verify,
+                ('POST', '/api/models/record'): self._models_record,
+                ('GET', '/api/permissions'): self._permissions_get,
+                ('POST', '/api/permissions/answer'): self._permissions_answer,
+                ('POST', '/api/permissions/clear'): self._permissions_clear,
                 ('GET', '/api/files/recent'): self._recent,
                 ('GET', '/api/files/shelf'): self._shelf,
                 ('POST', '/api/files/shelf'): self._shelf_change,
@@ -388,7 +395,10 @@ def _make_handler(panel):
                 ('POST', '/api/timer'): self._timer_post,
                 ('POST', '/api/ask'): self._ask,
                 ('GET', '/api/chat/history'): self._chat_history,
+                ('GET', '/api/chat/ops'): self._chat_ops,
                 ('POST', '/api/chat'): self._chat,
+                ('POST', '/api/chat/message/update'): self._chat_message_update,
+                ('POST', '/api/chat/message/remove'): self._chat_message_remove,
                 ('DELETE', '/api/chat/history'): self._chat_clear,
                 ('GET', '/api/memory'): self._memory,
                 ('POST', '/api/memory/clear'): self._memory_clear,
@@ -404,6 +414,10 @@ def _make_handler(panel):
                 ('POST', '/api/voice/speak'): self._voice_speak,
                 ('GET', '/api/voice/engines'): self._voice_engines,
                 ('GET', '/api/voice/mics'): self._voice_mics,
+                ('GET', '/api/voice/state'): self._voice_state_get,
+                ('POST', '/api/voice/pause'): self._voice_pause,
+                ('POST', '/api/voice/resume'): self._voice_resume,
+                ('POST', '/api/voice/release'): self._voice_release,
                 ('POST', '/api/voice/test-wake'): self._voice_test_wake,
                 ('POST', '/api/voice/test'): self._voice_test,
                 ('GET', '/api/security'): self._security,
@@ -582,6 +596,53 @@ def _make_handler(panel):
             panel.publish('actions', {'confirm': ok, **result})
             return self._json(200, {'ok': True, **result})
 
+        # ---------------------------------------------------------------- diagnostics
+        def _doctor(self, _q):
+            body = self._body()
+            sections = body.get('sections')
+            sections = [str(s) for s in sections] if isinstance(sections, list) else None
+            text = str(body.get('text') or '')[:200] or None
+            report = panel.bridge.doctor(sections=sections, text=text)
+            panel.audit(self._ip(), 'doctor', ', '.join(report.get('sections') or []))
+            panel.publish('doctor', report.get('summary') or {})
+            return self._json(200, {'ok': True, **report})
+
+        def _models_get(self, _q):
+            return self._json(200, {'ok': True, **panel.bridge.models_verify_cached()})
+
+        def _models_verify(self, _q):
+            result = panel.bridge.models_verify()
+            panel.audit(self._ip(), 'models-verify', '')
+            return self._json(200, {'ok': True, **result})
+
+        def _models_record(self, _q):
+            body = self._body()
+            names = body.get('names')
+            names = [str(n) for n in names] if isinstance(names, list) else None
+            result = panel.bridge.models_record(names)
+            panel.audit(self._ip(), 'models-record', ', '.join(result.get('saved') or []))
+            return self._json(200, {'ok': True, **result})
+
+        # ---------------------------------------------------------------- permissions
+        def _permissions_get(self, _q):
+            return self._json(200, {'ok': True, **panel.bridge.permissions_list()})
+
+        def _permissions_answer(self, _q):
+            body = self._body()
+            decision = str(body.get('decision') or '').strip().lower()
+            if decision not in ('once', 'always', 'deny', 'yes', 'no'):
+                raise ValueError('decision must be once, always or deny')
+            decision = {'yes': 'once', 'no': 'deny'}.get(decision, decision)
+            result = panel.bridge.permission_answer(decision, 'panel')
+            panel.audit(self._ip(), 'permission', decision)
+            panel.publish('status', panel.bridge.snapshot())
+            return self._json(200, {'ok': True, **result})
+
+        def _permissions_clear(self, _q):
+            result = panel.bridge.permissions_clear()
+            panel.audit(self._ip(), 'permissions-clear', '')
+            return self._json(200, {'ok': True, **result})
+
         def _state(self, name):
             body = self._body()
             result = panel.bridge.state_action(name, body)
@@ -697,16 +758,38 @@ def _make_handler(panel):
                 raise ValueError('a message is needed')
             result = panel.bridge.chat(text)
             panel.audit(self._ip(), 'chat', text[:160])
-            panel.publish('chat', {'reply': result.get('reply', '')})
+            # the app already published the insert ops over SSE; the response
+            # carries them too, for a tab whose event stream was interrupted
             return self._json(200, {'ok': True, **result})
 
         def _chat_history(self, _q):
-            return self._json(200, {'ok': True, 'messages': panel.bridge.chat_history()})
+            state = panel.bridge.chat_state()
+            return self._json(200, {'ok': True, 'messages': state['messages'],
+                                    'rev': state.get('rev', 0)})
+
+        def _chat_ops(self, q):
+            try:
+                since = int((q.get('since') or ['0'])[0])
+            except (TypeError, ValueError):
+                since = 0
+            return self._json(200, {'ok': True, **panel.bridge.chat_ops(since)})
+
+        def _chat_message_update(self, _q):
+            body = self._body()
+            result = panel.bridge.chat_message_update(body.get('id'), body.get('text'))
+            panel.audit(self._ip(), 'chat-update', str(body.get('id') or '')[:80])
+            return self._json(200, {'ok': True, **result})
+
+        def _chat_message_remove(self, _q):
+            body = self._body()
+            result = panel.bridge.chat_message_remove(body.get('id'))
+            panel.audit(self._ip(), 'chat-remove', str(body.get('id') or '')[:80])
+            return self._json(200, {'ok': True, **result})
 
         def _chat_clear(self, _q):
-            panel.bridge.chat_clear()
+            result = panel.bridge.chat_clear()
             panel.audit(self._ip(), 'chat-clear', '')
-            return self._json(200, {'ok': True})
+            return self._json(200, {'ok': True, **result})
 
         # ---------------------------------------------------------------- memory
         def _memory(self, _q):
@@ -830,6 +913,24 @@ def _make_handler(panel):
         def _voice_mics(self, _q):
             # a fresh look at the sound system, for the microphone picker
             return self._json(200, {'ok': True, **panel.bridge.voice_mics()})
+
+        def _voice_state_get(self, _q):
+            return self._json(200, {'ok': True, 'state': panel.bridge.voice_state()})
+
+        def _voice_pause(self, _q):
+            result = panel.bridge.voice_pause()
+            panel.audit(self._ip(), 'voice-pause', '')
+            return self._json(200, {'ok': True, 'state': result})
+
+        def _voice_resume(self, _q):
+            result = panel.bridge.voice_resume()
+            panel.audit(self._ip(), 'voice-resume', '')
+            return self._json(200, {'ok': True, 'state': result})
+
+        def _voice_release(self, _q):
+            result = panel.bridge.voice_release()
+            panel.audit(self._ip(), 'voice-release', '')
+            return self._json(200, {'ok': True, 'state': result})
 
         def _voice_test_wake(self, _q):
             body = self._body()

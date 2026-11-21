@@ -91,6 +91,26 @@ export const api = {
 
   nluConfirm: (ok) => api.post('/api/nlu/confirm', { ok: Boolean(ok) }),
 
+  chatHistory: () => api.get('/api/chat/history'),
+  chatOps: (since = 0) => api.get(`/api/chat/ops?since=${Number(since) || 0}`),
+  chatClear: () => api.del('/api/chat/history'),
+  chatUpdate: (id, text) => api.post('/api/chat/message/update', { id, text }),
+  chatRemove: (id) => api.post('/api/chat/message/remove', { id }),
+
+  doctor: (sections, text) => api.post('/api/doctor', { sections: sections || null, text: text || null }),
+  modelsGet: () => api.get('/api/models'),
+  modelsVerify: () => api.post('/api/models/verify'),
+  modelsRecord: (names) => api.post('/api/models/record', { names: names || null }),
+
+  voiceState: () => api.get('/api/voice/state'),
+  voicePause: () => api.post('/api/voice/pause'),
+  voiceResume: () => api.post('/api/voice/resume'),
+  voiceRelease: () => api.post('/api/voice/release'),
+
+  permissionAnswer: (decision) => api.post('/api/permissions/answer', { decision }),
+  permissionsList: () => api.get('/api/permissions'),
+  permissionsClear: () => api.post('/api/permissions/clear'),
+
   notesList: (params = '') => api.get(`/api/notes${params ? `?${params}` : ''}`),
   noteAdd: (text, title) => api.post('/api/notes', { text, title }),
   noteUpdate: (id, text, title) => api.patch(`/api/notes/${id}`, { text, title }),
@@ -122,7 +142,7 @@ export const api = {
   },
 };
 
-export const EVENTS = ['hello', 'status', 'bubble', 'settings', 'files', 'jobs', 'actions', 'chat', 'notes', 'server'];
+export const EVENTS = ['hello', 'status', 'bubble', 'settings', 'files', 'jobs', 'actions', 'chat', 'notes', 'server', 'doctor'];
 
 export function connectEvents(onEvent, onState) {
   let source = null;

@@ -28,25 +28,34 @@ yumi/
     catalog.py         карта всех настроек, страниц, секций, конфигов, масок
     server.py          ThreadingHTTPServer, роуты API, SSE, статика, аудит
   webui/
-    index.html         оболочка SPA + оверлей входа
+    index.html         оболочка SPA + оверлей входа + баннер разрешения
     static/
       css/app.css      вся пиксельная тема и компоненты
       img/icon.png     иконка панели (фавикон, вход, бренд, герой обзора)
-      js/app.js        сессия, навигация, hash-роутер, живой статус, топбар
+      js/app.js        сессия, навигация, hash-роутер, живой статус, топбар, баннер
       js/api.js        единственное место, где ходят HTTP и SSE
       js/ui.js         DOM-хелперы, иконки, тосты, модалки, контролы настроек
-      js/pages/*.js    13 страниц
-bin/yumi               флаг --web
-yumi/ui/app.py         жизненный цикл панели
+      js/pages/*.js    14 страниц (добавилась doctor.js)
+bin/yumi               флаги --web и --doctor
+yumi/ui/app.py         жизненный цикл панели, ревизия и журнал чата
 yumi/ui/bridge.py      WebBridge — контракт HTTP ↔ приложение
-yumi/config.py         настройки web_panel_* и строки интерфейса
-yumi/brain.py          пункты меню, голосовые команды и подтверждение
+yumi/config.py         настройки web_panel_*, бэкап сломанного settings.json
+yumi/brain.py          пункты меню, голосовые команды и разрешения
+yumi/doctor.py         один отчёт самопроверки для CLI и панели (без GTK)
+yumi/models.py         явные SHA-256 отпечатки моделей, кэш для статуса
+yumi/permission.py     правила ALLOW/ALWAYS/DENY, безопасные пути
+yumi/voice_state.py    единое состояние микрофона (владелец, поколение)
 yumi/nlu.py            распознавание фраз: IntentResult, recognize(), match()
 yumi/entities.py       общие сущности фразы: громкость, время, дата
 yumi/memory.py         хелперы дневника для страницы «Память»
 yumi/notes.py          заметки: sqlite + векторы, голосовые команды, страница «Заметки»
 tests/test_webpanel.py интеграционный тест API и безопасности
 tests/test_notes.py    тест книжки заметок и разбора голосовых фраз
+tests/test_doctor.py   мок-тест отчёта врача и CLI
+tests/test_models.py   запись/сравнение хэшей моделей
+tests/test_permission.py   отказы сильнее согласий, секреты не запоминаются
+tests/test_voice_state.py  переходы состояния микрофона
+tests/test_config_backup.py сломанный settings.json → .bad
 ```
 
 Ключевое правило: `yumi/webpanel/*` **не импортирует GTK**. HTTP-потоки не трогают
@@ -73,17 +82,18 @@ WebBridge (yumi.ui.bridge)  ── GLib.idle_add ──▶  App / Brain / Memory
 | id | русский заголовок | что делает |
 |----|-------------------|------------|
 | `dashboard` | Обзор | портрет, реплика, режим, аптайм, таймер, музыка, очередь файлов, быстрые действия |
-| `chat` | Разговор | чат с умом, история, очистка, «сказать в мир», быстрый старт, живая реплика |
+| `chat` | Разговор | чат с умом, история с ревизией и SSE-операциями Insert/Update/Remove/Clear, «сказать в мир», быстрый старт, живая реплика |
 | `notes` | Заметки | поиск по заметкам, создание и правка, удаление, очистка, запись голосом через `/api/voice/listen` |
 | `files` | Файлы | очередь обработки, drag-and-drop загрузка, недавние, полка, открыть, конвертировать, сжать |
 | `music` | Музыка | текущий трек, play/pause/next/stop, громкость, поиск по Jellyfin/папкам |
-| `voice` | Ушки и голос | карточки «Активация», «Судья фраз», «Голос»: выбор движка, состояние «доступно/нет», проверка имени и фразы вживую, прослушивание TTS; ниже — «закрыть ушки», выбор микрофона из списка звуковой системы, живые индикаторы и остальные настройки ушек/звука |
-| `buttons` | Кнопки | кольцо, порядок, выключенные кнопки, свои команды, добавление и редактирование |
+| `voice` | Ушки и голос | карточки «Активация», «Судья фраз», «Голос»: выбор движка, состояние «доступно/нет», проверка имени и фразы вживую, прослушивание TTS; ниже — «закрыть ушки», выбор микрофона, живое состояние микрофона с кнопками Пауза/Продолжить/Освободить и остальные настройки ушек/звука |
+| `doctor` | Диагностика | один отчёт: движки, микрофоны, модели, имя, TTS и STT; быстрый запуск без микрофона, запись и проверку хэшей моделей, копирование отчёта. То же, что `yumi --doctor` |
+| `buttons` | Кнопки | кольцо, порядок, выключенные кнопки, свои команды, добавление и редактирование; карточка ожидающего разрешения Разово/Всегда/Запретить |
 | `appearance` | Внешний вид | текущая палитра, пипетка, пересборка цветов, наряд, масштаб, другой экран, JSON палитры |
 | `settings` | Настройки | все ключи `settings.json`, сгруппированные по секциям, поиск, сброс, живое применение |
 | `memory` | Память | поиск по дневнику, лимит, строки, удаление 18+ и всей памяти |
 | `configs` | Конфиги | список JSON-файлов, просмотр и редактирование с бэкапами; токен только для чтения |
-| `security` | Безопасность | адрес, токен, сессии, ротация ссылки, настройки доступа, журнал |
+| `security` | Безопасность | адрес, токен, сессии, ротация ссылки, настройки доступа, список и сброс сохранённых разрешений, журнал |
 | `logs` | Журналы | лог Юми, лог ушек, журнал решений, журнал панели, скачивание |
 
 Страница — это модуль `export function render(view, ctx)`, который наполняет `view` и
@@ -133,7 +143,13 @@ ctx.navigate(id)
 | GET/PUT | `/api/config/<name>` | чтение/запись с бэкапом |
 | GET/PUT | `/api/actions` | свои кнопки; PUT сохраняет и поля `id`, `priority`, `requires_confirmation`, `entities` |
 | POST | `/api/actions/<i>/run` | нажать свою кнопку |
-| POST | `/api/nlu/confirm` | `{ok:true|false}` — ответить на отложенную команду с `requires_confirmation`; то же, что «да» / «нет» голосом |
+| POST | `/api/nlu/confirm` | `{ok:true|false}` — старый ответ да/нет на отложенную команду (совместимость) |
+| POST | `/api/doctor` | `{sections?, text?}` — полный отчёт самопроверки; публикует SSE `doctor` |
+| GET | `/api/models` | кэшированная проверка моделей (без хэширования) |
+| POST | `/api/models/verify`, `/api/models/record` | `{names?}` — явная проверка / запись SHA-256 |
+| GET | `/api/permissions` | сохранённые правила allow/deny |
+| POST | `/api/permissions/answer` | `{decision: once|always|deny}` — ответить на ожидающее разрешение; `always` только кликом |
+| POST | `/api/permissions/clear` | стереть все сохранённые правила |
 | POST | `/api/state/<action>` | toggle/show/hide/home/monitor/pipette/recent/shelf/sleep |
 | GET | `/api/files/recent`, `/api/files/shelf` | списки файлов |
 | POST | `/api/files/shelf` | `{path, add}` |
@@ -144,7 +160,11 @@ ctx.navigate(id)
 | GET | `/api/file/preview?path=…` | превью изображения |
 | GET/POST | `/api/timer` | состояние / `{action, seconds}` |
 | POST | `/api/ask` | короткий вопрос уму |
-| GET/POST/DELETE | `/api/chat/history`, `/api/chat` | история, сообщение, очистка |
+| GET | `/api/chat/history` | `{ok, messages, rev}` — старый массив `messages` сохранён, добавилась ревизия |
+| POST | `/api/chat` | `{text}` → `{reply, history, rev, ops}`; insert-опубликуется и в SSE, и в ответе |
+| GET | `/api/chat/ops?since=<rev>` | журнал операций после ревизии, для догоняющей вкладки |
+| POST | `/api/chat/message/update`, `/api/chat/message/remove` | `{id, text?}` / `{id}` — операции update / remove |
+| DELETE | `/api/chat/history` | `{cleared, rev, ops:[clear]}` — чистит и публикует clear |
 | GET | `/api/memory` | `?q=&limit=` |
 | POST | `/api/memory/clear` | `{tag}` (`all`, `sassy`) |
 | GET | `/api/notes` | `?q=&limit=` — список или поиск по заметкам |
@@ -156,6 +176,8 @@ ctx.navigate(id)
 | POST | `/api/music/play`, `/api/music/control` | play/pause/next/stop/volume |
 | GET | `/api/voice/engines` | наличие oww/vosk/whisper/nemotron/TTS, список голосов и моделей |
 | GET | `/api/voice/mics` | свежий список микрофонов звуковой системы (заодно обновляет меню ушек) |
+| GET | `/api/voice/state` | одно состояние микрофона: state/owner/generation/reason/wake_enabled/transitions |
+| POST | `/api/voice/pause`, `/api/voice/resume`, `/api/voice/release` | забрать микрофон у wake-цикла, вернуть его, полностью отпустить |
 | POST | `/api/voice/listen` | `{seconds?, engine?}` — записать фразу выбранным судьёй |
 | POST | `/api/voice/test-wake` | `{seconds?, ear?}` — проверить имя выбранным ухом |
 | POST | `/api/voice/test` | `{text?, lang?}` — синхронизировать профиль и озвучить пробу текущим голосом |
@@ -165,24 +187,38 @@ ctx.navigate(id)
 | POST | `/api/security/link` | показать ссылку с токеном (только POST + CSRF) |
 | GET | `/api/audit` | хвост журнала панели |
 | GET | `/api/logs?source=&lines=` | логи |
-| GET | `/api/events` | SSE: hello/status/bubble/settings/files/jobs/actions/chat/notes/server |
+| GET | `/api/events` | SSE: hello/status/bubble/settings/files/jobs/actions/chat/notes/server/doctor |
 | GET | `/api/tools/time|weather|joke|params` | мелкие инструменты |
 
 Важно: `/api/security/link` намеренно **не** отдаёт токен по GET, чтобы он не попал в
 историю, referer или кэш. Фронтенд показывает его только после явного нажатия.
 
-Голосовые команды в снимке: `runtime.nlu` — `{last_intent, last_confidence, confirm}`.
-`confirm: true` означает, что Юми ждёт ответа на «Запустить?»; страница «Кнопки» показывает
-в этом случае две кнопки и вызывает `/api/nlu/confirm`. Настройка `nlu_confidence`
+Голосовые команды в снимке: `runtime.nlu` — `{last_intent, last_confidence, confirm,
+pending_permission}`. `confirm: true` (совместимость) или непустой `pending_permission`
+означают, что Юми ждёт ответа на «Запустить?»; страница «Кнопки» показывает Разово/Всегда/
+Запретить и вызывает `/api/permissions/answer`, а оболочка дополнительно показывает баннер
+на любой странице. `pending_permission` содержит только id, цель, текст, options и secret —
+не сырое действие и не слоты. Настройка `nlu_confidence`
 (тип `range`, 0.5–1.0, шаг 0.05, по умолчанию 0.6) живёт в секции `mind` и применяется
 на каждой фразе без перезапуска. Новые поля кнопки (`id`, `priority`,
 `requires_confirmation`, `entities`) проходят через `_clean_actions()` в `ui/webpanel.py` —
 он же используется и при записи `actions.json` из конфигов, и при PUT `/api/actions`.
 
+Ещё три поля снимка: `runtime.voice_state` (состояние микрофона), `runtime.models_check`
+(кэш явной проверки моделей, без хэширования на тике) и `runtime.doctor` (только короткое
+саммари последнего запуска). Полный отчёт живёт в ответе `POST /api/doctor` и в SSE
+`doctor`, в снимок не попадает. История чата хранится как `{messages, rev, ops}`; `rev`
+растёт на каждую операцию, SSE `chat` несёт `{rev, ops:[insert|update|remove|clear]}`,
+а `pages/chat.js` применяет журнал по ревизиям и перезагружает всю историю при пропуске.
+
 `WebBridge` (см. `yumi/ui/bridge.py`) — контракт между HTTP и приложением:
 `snapshot, configs, config_get, config_save, actions_get, actions_save, action_run,
-confirm_action, apply_settings, state_action, files_recent, files_shelf, shelf_change, files_open,
-job_add, jobs_cancel, timer_get, timer, ask, chat, chat_history, chat_clear,
+confirm_action, apply_settings, doctor, models_verify_cached, models_verify, models_record,
+state_action, files_recent, files_shelf, shelf_change, files_open,
+job_add, jobs_cancel, timer_get, timer, ask, chat, chat_history, chat_state, chat_ops,
+chat_message_update, chat_message_remove, chat_clear,
+voice_state, voice_pause, voice_resume, voice_release,
+permission_answer, permissions_list, permissions_clear,
 memory_recent, memory_search, memory_clear, notes_list, notes_search, notes_get,
 notes_add, notes_update, notes_delete, notes_clear, music_status, music_search,
 music_play, music_control, voice_listen(seconds, engine), voice_stop, voice_speak,
@@ -246,6 +282,10 @@ tools_*, logs`.
   панели: подставленный в `?path=` посторонний путь получает 403.
 - `webpanel.json` нельзя сохранить через API: токен меняется только на странице
   «Безопасность» (POST + CSRF).
+- Разрешение «всегда» принимается только кликом и только для безопасной цели: голосом
+  доступны «разово» и «запретить», а путь с ключом/паролем не запоминается вовсе. Отказ
+  сильнее согласия, закрытие всплывашки — отказ. В снимок попадает только публичная часть
+  вопроса, без action/слотов.
 - Аудит: `~/.local/state/yumi/web-audit.log`, JSON-строки, все мутации и входы.
 - Фронтенд нигде не вставляет HTML из данных: только `createElement`/`textContent`.
 
@@ -261,10 +301,16 @@ tools_*, logs`.
 
 ## 7. Данные, бэкапы, журналы
 
-- Настройки: `~/.config/yumi/settings.json`.
+- Настройки: `~/.config/yumi/settings.json`. Сломанный JSON откладывается в
+  `settings.json.bad` и не перезаписывается (как это уже делал `load_actions`).
 - Доступ к панели: `~/.config/yumi/webpanel.json` (`0600`).
+- Разрешения: `~/.config/yumi/permissions.json` — списки `allow` / `deny` для «всегда».
+- Отпечатки моделей: `~/.config/yumi/model_hashes.json`, создаются только кнопкой
+  «Запомнить хэши»; старые файлы без хэшей читаются как `unknown`.
 - Бэкапы конфигов: `~/.config/yumi/backups/<name>-<timestamp>.json`, не больше 20 на файл.
 - Состояние: `~/.local/state/yumi/state.json`.
+- Чат панели: `~/.local/state/yumi/web-chat.json` (`0600`) — `{messages, rev, ops}`. Старые
+  файлы-массивы читаются и получают id сообщений без потери истории.
 - Дневник: `~/.local/state/yumi/yumi.db`.
 - Аудит панели: `~/.local/state/yumi/web-audit.log`.
 - Лог приложения: `~/.local/state/yumi/yumi.log`.
@@ -280,6 +326,11 @@ tools_*, logs`.
 cd /home/nikolas/Projects/yumi
 
 python3 tests/test_webpanel.py
+python3 tests/test_doctor.py
+python3 tests/test_models.py
+python3 tests/test_permission.py
+python3 tests/test_voice_state.py
+python3 tests/test_config_backup.py
 python3 tests/test_memory_jokes.py
 python3 tests/test_chat.py
 python3 tests/test_phrases.py
@@ -288,8 +339,15 @@ python3 tests/test_music_text.py
 python3 tests/test_nlu.py
 python3 tests/test_arbiter.py
 python3 tests/test_tts.py
+python3 tests/test_voice_intent.py
 
-python3 -m py_compile yumi/webpanel/*.py yumi/ui/*.py yumi/config.py yumi/brain.py yumi/memory.py yumi/notes.py
+# или все standalone-скрипты сразу (старые тесты зовут sys.exit(0),
+# поэтому pytest пока падает на этапе сбора — это не регрессия панели):
+for f in tests/test_*.py; do python3 "$f" || echo "FAIL $f"; done
+
+python3 -m py_compile yumi/webpanel/*.py yumi/ui/*.py yumi/config.py yumi/brain.py \
+  yumi/doctor.py yumi/models.py yumi/permission.py yumi/voice_state.py \
+  yumi/ears.py yumi/stt_daemon.py yumi/memory.py yumi/notes.py
 for f in yumi/webui/static/js/*.js yumi/webui/static/js/pages/*.js; do
   node --input-type=module --check < "$f" || echo "FAIL $f"
 done
@@ -297,8 +355,12 @@ bash -n bin/yumi
 ```
 
 `tests/test_webpanel.py` поднимает настоящий сервер на свободном порту и проверяет:
-покрытие схемы, вход по токену, cookie и CSRF, лимит попыток, logout, PATCH настроек,
-ссылку и ротацию, статику и защиту от path traversal.
+покрытие схемы (14 страниц), вход по токену, cookie и CSRF, лимит попыток, logout,
+PATCH настроек, ссылку и ротацию, статику и защиту от path traversal, а также новые
+роуты диагностики, моделей, разрешений, состояния микрофона и журнала чата (включая
+отказ без CSRF). Отдельные скрипты проверяют чистую логику без GTK: врача с моками
+ушек/голоса, хэши моделей, правила разрешений, машину состояния микрофона и бэкап
+сломанного `settings.json`.
 
 Визуальная проверка без GTK: можно поднять `Panel` с заглушкой-мостом (см. пример в
 истории работы) и обойти все `#/…` в браузере. При этом надо помнить, что заглушка
@@ -325,10 +387,13 @@ bash -n bin/yumi
 
 ## 10. Статус
 
-Готово и проверено: сервер, авторизация, CSRF, схема настроек, все 13 страниц
-(включая «Заметки» с поиском и записью голосом),
-пиксельная тема с двумя breakpoint'ами, живые события, бэкапы, аудит, флаг `--web`,
-интеграционные тесты. Дополнительно проверено в headless-Chromium: все страницы
+Готово и проверено: сервер, авторизация, CSRF, схема настроек, все 14 страниц
+(включая «Заметки» с поиском и записью голосом и новую «Диагностику»),
+пиксельная тема с двумя breakpoint'ами, живые события, бэкапы, аудит, флаги `--web` и
+`--doctor`, интеграционные тесты. Добавлены: единый doctor,
+явное состояние микрофона, ALLOW/ALWAYS/DENY с «отказ сильнее согласия», вердикт пробуждения,
+проверка целостности моделей, журнал операций чата с ревизией и бэкап сломанного
+`settings.json`. Дополнительно проверено в headless-Chromium: все страницы
 отрисовываются без исключений и неудачных запросов, переключение языка перестраивает
 оболочку и текущую страницу, PATCH настроек, чат, память и выдача ссылки работают.
 

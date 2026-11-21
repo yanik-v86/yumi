@@ -21,34 +21,53 @@ export function render(view, ctx) {
 
   function drawConfirm() {
     const nlu = ctx.status?.runtime?.nlu || {};
-    if (!nlu.confirm) {
+    const pending = nlu.pending_permission;
+    if (!pending && !nlu.confirm) {
       confirmBox.replaceChildren();
       confirmBox.hidden = true;
       return;
     }
     confirmBox.hidden = false;
-    const answer = async (ok) => {
+    const decide = async (decision) => {
       try {
-        await api.nluConfirm(ok);
-        toast(ok ? (lang() === 'ru' ? 'Запустила' : 'Ran')
-          : (lang() === 'ru' ? 'Отменила' : 'Cancelled'), 'good');
+        if (pending) await api.permissionAnswer(decision);
+        else await api.nluConfirm(decision !== 'deny');   // an older app: once/deny only
+        toast(decision === 'deny'
+          ? (lang() === 'ru' ? 'Отменила' : 'Cancelled')
+          : (lang() === 'ru' ? 'Разрешила' : 'Allowed'), 'good');
         await ctx.refreshStatus();
+        drawConfirm();
       } catch (err) { errToast(err); }
     };
-    confirmBox.replaceChildren(
+    const labels = {
+      once: [lang() === 'ru' ? 'Разово' : 'Allow once', 'btn-primary'],
+      always: [lang() === 'ru' ? 'Всегда' : 'Always', ''],
+      deny: [lang() === 'ru' ? 'Запретить' : 'Deny', 'btn-danger'],
+    };
+    const options = pending?.options || ['once', 'deny'];
+    const buttons = options.map((key) => {
+      const [caption, cls] = labels[key] || [key, ''];
+      return el('button', {
+        class: `btn btn-small ${cls}`.trim(), type: 'button', text: caption,
+        title: key === 'always' ? (lang() === 'ru'
+          ? 'Навсегда — только кликом' : 'Always needs a deliberate click') : '',
+        onclick: () => decide(key),
+      });
+    });
+    const rows = [
       el('h3', { text: lang() === 'ru' ? 'Подтверди команду' : 'Confirm the command' }),
-      el('p', { class: 'card-hint', text: nlu.last_intent || '' }),
-      el('div', { class: 'row' },
-        el('button', {
-          class: 'btn btn-small btn-primary', type: 'button',
-          text: lang() === 'ru' ? 'Запустить' : 'Run',
-          onclick: () => answer(true),
-        }),
-        el('button', {
-          class: 'btn btn-small', type: 'button',
-          text: lang() === 'ru' ? 'Отменить' : 'Cancel',
-          onclick: () => answer(false),
-        })));
+      el('p', { class: 'card-hint', text: pending?.text || nlu.last_intent || '' }),
+    ];
+    if (pending?.target) {
+      rows.push(el('p', { class: 'card-hint', text: `${lang() === 'ru' ? 'Что сделает' : 'About to run'}: ${pending.target}` }));
+    }
+    if (pending?.secret) {
+      rows.push(el('p', { class: 'card-hint',
+        text: lang() === 'ru' ? 'Это похоже на ключ или пароль — навсегда нельзя.'
+          : 'This looks like a key or a password — no permanent allow.' }));
+    }
+    rows.push(el('div', { class: 'row' }, ...buttons));
+    confirmBox.replaceChildren(...rows);
   }
 
   const offStatus = ctx.onStatus ? ctx.onStatus(drawConfirm) : null;

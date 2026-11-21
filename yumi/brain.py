@@ -20,6 +20,7 @@ from . import chat
 from . import entities
 from . import nlu
 from . import notes
+from . import permission as permissions
 from .config import RING_SLOTS, UI, tr
 from .extras import Extras
 from .sprites import ARCHIVES, DOCS, KIND_COLOR, SWATCHES, swatch_hex
@@ -274,7 +275,8 @@ class Brain(Extras):
         self.thinking = False           # the question is away at Ollama
         self.chat_streaming = False     # the mind is answering in a stream right now
         self.note_pending = False       # she asked «what should I write down?»: the next phrase is a note
-        self.intent_confirm = None      # a command with requires_confirmation waits for «да» / «yes»
+        self.pending_permission = None  # a command with requires_confirmation waits for an answer
+        self._permission_id = 0
         self.last_intent = ''           # the last voice command's id, for the browser panel
         self.last_confidence = 0.0      # and how sure the match was
         self.chat_models = []           # installed Ollama models, for the settings row
@@ -604,6 +606,8 @@ class Brain(Extras):
         self.say('home')
 
     def close_all(self):
+        if self.pending_permission:          # closing the popup is a refusal
+            self.answer_permission('deny', 'voice')
         if self.pile:
             self.leave_box()
         self.pile = None
@@ -1292,18 +1296,21 @@ class Brain(Extras):
         if stop_command(text):             # «стоп» overrides everything, even her own voice
             self.stop_all()
             return
-        if self.intent_confirm:            # the next word answers «Run it?»
-            said = nlu.normalize(text)
-            if any(t in CONFIRM_YES for t in said):
-                pending = self.intent_confirm
-                self.intent_confirm = None
-                self._voice_run(pending['action'], pending['slots'])
+        if self.pending_permission:       # the next word answers «Run it?»
+            said = set(nlu.normalize(text))
+            decisions = []
+            if said & CONFIRM_NO:
+                decisions.append('deny')
+            if said & CONFIRM_YES:
+                decisions.append('once')
+            extra = permissions.spoken_answer(text)
+            if extra:
+                decisions.append(extra)
+            decision = permissions.negative_wins(decisions)
+            if decision:
+                self.answer_permission(decision, 'voice')
                 return
-            if any(t in CONFIRM_NO for t in said):
-                self.intent_confirm = None
-                self.say_text(tr(self.settings, 'confirm_no'))
-                return
-            self.intent_confirm = None     # an unrelated phrase: ask it anew below
+            self.pending_permission = None  # an unrelated phrase: ask it anew below
         if self.note_pending:              # she just asked what to write down
             self.note_pending = False
             if self.settings.get('notes_voice', True):
@@ -1460,19 +1467,73 @@ class Brain(Extras):
         if speak:
             self.say_text(speak)
 
-    def _voice_confirm_web(self, ok):
-        """the browser panel answering «Run it?» — the same pending command as
-        the spoken «да» / «нет»; True when something was really decided"""
-        if not self.intent_confirm:
-            return False
-        pending = self.intent_confirm
-        self.intent_confirm = None
-        if ok:
-            self._voice_run(pending['action'], pending['slots'])
-            self.say_text(tr(self.settings, 'confirm_yes'))
-        else:
+    # ---- permissions: ALLOW once / ALWAYS (click only) / DENY ----------------
+    @property
+    def intent_confirm(self):
+        """the old {'action', 'slots', 'text'} view, for older callers"""
+        p = self.pending_permission
+        if not p:
+            return None
+        return {'action': p.get('action'), 'slots': p.get('slots'), 'text': p.get('text')}
+
+    @intent_confirm.setter
+    def intent_confirm(self, value):
+        if value is None:
+            self.pending_permission = None
+        elif isinstance(value, dict) and 'action' in value:
+            self.permission_ask(value['action'], value.get('slots') or {},
+                                value.get('text') or '')
+
+    def permission_ask(self, action, slots, text, origin='voice'):
+        """open one question.  A secret target never offers the ALWAYS option."""
+        target = str(action.get('url') or action.get('command') or text or '')[:300]
+        kind = 'url' if action.get('url') else 'button'
+        secret = permissions.is_secret(target)
+        self._permission_id += 1
+        self.pending_permission = {
+            'id': self._permission_id, 'kind': kind, 'target': target,
+            'origin': origin, 'text': str(text or '')[:200],
+            'options': ['once', 'deny'] if secret else ['once', 'always', 'deny'],
+            'created': time.time(), 'secret': secret,
+            'action': action, 'slots': slots,
+        }
+        return self.pending_permission
+
+    def permission_snapshot(self):
+        """the public view for /api/status — never the raw action or its slots"""
+        p = self.pending_permission
+        if not p:
+            return None
+        return {k: p.get(k) for k in ('id', 'kind', 'target', 'origin', 'text',
+                                      'options', 'created', 'secret')}
+
+    def answer_permission(self, decision, origin='panel'):
+        """decide the open question.  ALWAYS needs a deliberate click and a safe
+        target; a spoken 'always' is never accepted.  True when something changed."""
+        p = self.pending_permission
+        if not p:
+            return {'decided': False, 'reason': 'nothing pending'}
+        if decision not in ('once', 'always', 'deny'):
+            return {'decided': False, 'reason': 'unknown decision'}
+        if decision == 'always' and (origin != 'panel'
+                                     or 'always' not in (p.get('options') or [])
+                                     or p.get('secret')):
+            return {'decided': False, 'reason': 'always needs a click and a safe target'}
+        self.pending_permission = None
+        if decision == 'always':
+            permissions.remember(p['target'], 'allow')
+        if decision == 'deny':
             self.say_text(tr(self.settings, 'confirm_no'))
-        return True
+            return {'decided': True, 'decision': 'deny'}
+        self._voice_run(p['action'], p['slots'])
+        if decision == 'once' and origin == 'panel':
+            # the spoken path keeps the action's own «speak» line as its bubble
+            self.say_text(tr(self.settings, 'confirm_yes'))
+        return {'decided': True, 'decision': decision}
+
+    def _voice_confirm_web(self, ok):
+        """the old browser button: once / deny on the pending command"""
+        return bool(self.answer_permission('once' if ok else 'deny', 'panel')['decided'])
 
     def voice_intent(self, text, alt=''):
         """the user's own voice commands: the «phrases» and «keywords» written
@@ -1504,8 +1565,12 @@ class Brain(Extras):
                   f'(score {hit.confidence:.2f})')
         self.set_face('happy', 1.5)
         slots = self._voice_slots(hit)
-        if action.get('requires_confirmation') and not self.intent_confirm:
-            self.intent_confirm = {'action': action, 'slots': slots, 'text': text}
+        if action.get('requires_confirmation') and not self.pending_permission:
+            target = str(action.get('url') or action.get('command') or text or '')
+            if permissions.allowed(target):    # a saved ALWAYS: no need to ask again
+                self._voice_run(action, slots)
+                return True
+            self.permission_ask(action, slots, text)
             self.say_text(tr(self.settings, 'confirm_ask'))
             self.listening = True
             self.requests.append(('listen', 15))
@@ -1861,7 +1926,7 @@ class Brain(Extras):
         self._stream_spoken = ''
         self.listening = False
         self.note_pending = False
-        self.intent_confirm = None
+        self.pending_permission = None
         self.timer = None
         self.kb_hover = False
         self.requests.clear()              # nothing queued may keep running past the stop

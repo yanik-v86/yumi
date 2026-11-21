@@ -266,6 +266,31 @@ export function render(view, ctx) {
     if (runtime.sleeping) liveText.push(badge(say('не мешать', 'dnd'), 'amber'));
     if (runtime.listening) liveText.push(badge(say('слушает фразу', 'listening'), 'mint'));
     if (runtime.busy) liveText.push(badge(say('занята', 'busy'), 'amber'));
+    const vs = runtime.voice_state || {};
+    const ST = {
+      watching: ['имя слышит', 'watching'], candidate: ['имя услышано', 'candidate'],
+      listening: ['слушает', 'listening'], held_for_answer: ['ждёт ответа', 'held for answer'],
+      paused: ['на паузе', 'paused'], muted: ['заглушено', 'muted'],
+      missing: ['нет микрофона', 'no mic'], busy: ['занята', 'busy'], off: ['выключено', 'off'],
+    };
+    const stText = ST[vs.state] || [vs.state || '—', vs.state || '—'];
+    liveText.push(el('div', { class: 'row', style: { justifyContent: 'flex-start', gap: '8px' } },
+      el('span', { class: 'card-hint', text: say('состояние:', 'state:') }),
+      badge(lang() === 'ru' ? stText[0] : stText[1], 'mint'),
+      el('span', { class: 'card-hint', text: `#${vs.generation || 0}${vs.owner ? ` · ${vs.owner}` : ''}` })));
+    const micBtn = (label, action) => el('button', {
+      class: 'btn btn-small', type: 'button', text: label,
+      onclick: async () => {
+        try {
+          await action();
+          await ctx.refreshStatus();
+        } catch (err) { errToast(err); }
+      },
+    });
+    liveText.push(el('div', { class: 'row', style: { marginTop: '4px' } },
+      micBtn(say('Пауза', 'Pause'), api.voicePause),
+      micBtn(say('Продолжить', 'Resume'), api.voiceResume),
+      micBtn(say('Освободить', 'Release'), api.voiceRelease)));
     if (unavailable.length) {
       liveText.push(el('div', { class: 'card-hint', text: `${say('недоступно', 'unavailable')}: ${unavailable.join(', ')}` }));
     }

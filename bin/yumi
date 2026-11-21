@@ -1,6 +1,6 @@
 #!/bin/sh
 # Yumi, a sleepy pixel-art moth girl for Wayland desktops.
-#   yumi [--toggle|--pipette|--home|--recent|--sleep|--monitor|--web|--quit|--ask "фраза"|--version|--help]
+#   yumi [--toggle|--pipette|--home|--recent|--sleep|--monitor|--web|--quit|--ask "фраза"|--doctor|--version|--help]
 # Flags go straight to the running Yumi over D-Bus (fast) and start her if she is not running.
 # She runs on her own (closing the terminal does not close her); --foreground keeps her attached.
 DIR="$(dirname "$(dirname "$(readlink -f "$0")")")"   # @DIR@ (make install puts the real path here)
@@ -23,6 +23,11 @@ case "$1" in
         PHRASE=$(printf '%s' "$2" | sed "s/'/\\\\'/g")
         gdbus call --session --dest "$APP" --object-path "$OBJ" \
             --method org.gtk.Actions.Activate ask "['$PHRASE']" "{}" >/dev/null 2>&1 && exit 0
+        ;;
+    --doctor)
+        # local self-test: no GTK, no D-Bus; a browser equivalent lives on the
+        # Diagnostics page of the web panel (same report, same sections)
+        exec python3 -c "import sys; sys.path.insert(0, '$DIR'); from yumi.doctor import cli; raise SystemExit(cli())" "$@"
         ;;
     --version|-v)
         exec python3 -c "import sys; sys.path.insert(0, '$DIR'); import yumi; print('yumi', yumi.__version__)"

@@ -562,15 +562,41 @@ The waiting hears nothing else: everything is computed on the spot, offline.
 
 | Path | What |
 | --- | --- |
-| `~/.config/yumi/settings.json` | settings |
+| `~/.config/yumi/settings.json` | settings (a broken one is kept as `settings.json.bad`) |
 | `~/.config/yumi/actions.json` | your round buttons |
 | `~/.config/yumi/palette.json` | optional colors from your theming script |
+| `~/.config/yumi/permissions.json` | saved ALLOW/DENY rules for buttons that ask first |
+| `~/.config/yumi/model_hashes.json` | recorded model fingerprints for the integrity check |
 | `~/.cache/yumi/tts/` | her real voice: the daemon's port and her cached lines |
 | `~/.cache/yumi/stt/` | her ears: the daemon's port |
 | `~/.local/state/yumi/state.json` | where she sits, her shelf, picked colors |
+| `~/.local/state/yumi/web-chat.json` | browser chat history with a revision and an op journal |
 | `~/.local/state/yumi/yumi.log` | what she printed (errors go here when she runs in the background) |
 
 `YUMI_SCALE=2 yumi` draws her twice as big (integer pixel scale).
+
+## Self-check, mic state and permissions
+
+- **`yumi --doctor`** runs one structured self-test in the terminal: engines, microphones,
+  model integrity, wake word, TTS and a spoken control phrase heard back by STT. It prints
+  verdicts and timings, returns a non-zero code when a check fails, and never prints tokens
+  or private file contents. The same report is available in the browser on the
+  **Diagnostics** page (a quick run skips the microphone checks). You can pass section names,
+  for example `yumi --doctor engines models`.
+- **Model integrity** is explicit: model files are not hashed on every status tick. On the
+  Diagnostics page, “Record hashes” saves SHA-256 fingerprints to
+  `~/.config/yumi/model_hashes.json`; “Verify models” compares them. A missing model is
+  reported, but only a *changed* model is a failure. An unrecorded model is `unknown`.
+- **One microphone state** is shown on Overview and Ears & voice: watching, candidate,
+  listening, held for answer, paused, muted, missing, busy or off, with an owner and a
+  generation number. Pause / Resume / Release from the panel parks the mic and gives it
+  back to the wake loop safely.
+- **Permissions for buttons with `requires_confirmation`:** the answer is now
+  **Allow once / Always / Deny**. `Always` is click-only (a spoken “always” is never
+  accepted) and is refused for anything that looks like a key, token or password store.
+  Saved rules are listed and can be cleared on the Security page. A spoken refusal wins
+  over a spoken “yes”, and closing the popup counts as a denial. The old
+  `intent_confirm` / yes-no panel buttons still work.
 
 ## The browser panel
 
@@ -581,9 +607,11 @@ The waiting hears nothing else: everything is computed on the spot, offline.
 - **Signing in:** Yumi prints a link with a one-time token (`http://127.0.0.1:8765/?t=…`).
   It is exchanged for an HttpOnly session. You can rotate the token on the Security page
   without signing out the tabs that are already open.
-- **What is inside:** overview, talk, notes, files, music, ears and voice, buttons, look,
-  every setting, memory, config files, security and logs. Changes apply live and are
-  saved to the same files the desktop Yumi uses.
+- **What is inside:** overview, talk, notes, files, music, ears and voice, diagnostics,
+  buttons, look, every setting, memory, config files, security and logs. Changes apply
+  live and are saved to the same files the desktop Yumi uses. The chat uses a revision
+  and Insert/Update/Remove/Clear ops over SSE, so two tabs stay in sync and a missed
+  event triggers a full resync.
 - **Network:** it listens on `127.0.0.1` only by default. `0.0.0.0` exposes it to the LAN;
   do that only with a strong token and a firewall. There is no HTTPS yet.
 - **Data:** the token and signing secret live in `~/.config/yumi/webpanel.json` (mode
@@ -621,6 +649,9 @@ catches the pointer.
   (`app.py` is the application, `overlay.py` the window, `painter.py` cairo,
   `senses.py` her ears and voice, `webpanel.py`/`bridge.py` the browser panel)
 - `yumi/brain.py`: all of her behaviour, pure Python (draw ops out, no GTK)
+- `yumi/doctor.py`: the self-test report shared by `yumi --doctor` and Diagnostics
+- `yumi/models.py`: explicit model fingerprints and the cached integrity check
+- `yumi/permission.py`, `yumi/voice_state.py`: pure rules for permissions and the mic state
 - `yumi/extras.py`: gaze, petting, napping, health breaks, tour, outfits, custom buttons
 - `yumi/phrases.py`: her lines in English and Russian
 - `yumi/voice.py`: her 8-bit voice

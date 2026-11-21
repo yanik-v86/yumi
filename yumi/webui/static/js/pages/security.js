@@ -11,6 +11,7 @@ export function render(view, ctx) {
   let status = ctx.status || {};
   let security = null;
   let revealed = '';
+  let permissions = null;
 
   view.append(
     el('h2', { class: 'pagehead', text: lang() === 'ru' ? 'Безопасность' : 'Security' }),
@@ -90,6 +91,33 @@ export function render(view, ctx) {
     el('div', { class: 'row' }, linkInput, revealButton, copyButton),
     el('div', { class: 'row', style: { marginTop: '8px' } }, rotateButton, linkNote));
   view.append(linkCard);
+
+  // ---------------------------------------------------------------- permissions
+  const permissionBox = el('div', {});
+  const clearPerms = el('button', {
+    class: 'btn btn-danger btn-small', type: 'button',
+    text: lang() === 'ru' ? 'Сбросить разрешения' : 'Clear permissions',
+    onclick: async () => {
+      if (!await confirmDialog({
+        title: lang() === 'ru' ? 'Сбросить все «всегда»?' : 'Clear all “always” rules?',
+        message: lang() === 'ru'
+          ? 'Юми снова будет спрашивать перед каждым таким действием.'
+          : 'Yumi will ask again before every such action.',
+        confirmLabel: lang() === 'ru' ? 'Сбросить' : 'Clear', danger: true,
+      })) return;
+      try {
+        await api.permissionsClear();
+        toast(lang() === 'ru' ? 'Разрешения сброшены' : 'Permissions cleared', 'good');
+        await loadPermissions();
+      } catch (err) { errToast(err); }
+    },
+  });
+  view.append(sectionTitle(lang() === 'ru' ? 'Разрешения на действия' : 'Action permissions', clearPerms));
+  view.append(el('div', { class: 'card', style: { marginTop: '14px' } },
+    el('p', { class: 'card-hint', text: lang() === 'ru'
+      ? '«Всегда» можно дать только кликом и только для безопасных целей. Голосом — только «разово» или «запретить».'
+      : '“Always” can only be granted by a click and only for safe targets. By voice: once or deny.' }),
+    permissionBox));
 
   // ---------------------------------------------------------------- audit
   const auditBox = el('div', {});
@@ -206,6 +234,35 @@ export function render(view, ctx) {
     auditBox.replaceChildren(table);
   }
 
+  function drawPermissions() {
+    const allow = permissions?.allow || [];
+    const deny = permissions?.deny || [];
+    if (!allow.length && !deny.length) {
+      permissionBox.replaceChildren(emptyBox(lang() === 'ru'
+        ? 'Сохранённых правил нет.' : 'No saved rules.'));
+      return;
+    }
+    const rows = [];
+    for (const key of ['allow', 'deny']) {
+      const items = permissions?.[key] || [];
+      for (const item of items) {
+        rows.push(el('div', { class: 'row', style: { justifyContent: 'flex-start', gap: '8px' } },
+          badge(key, key === 'allow' ? 'mint' : 'red'),
+          el('span', { class: 'card-hint', text: String(item) })));
+      }
+    }
+    permissionBox.replaceChildren(...rows);
+  }
+
+  async function loadPermissions() {
+    try {
+      permissions = await api.permissionsList();
+      drawPermissions();
+    } catch (err) {
+      errToast(err);
+    }
+  }
+
   async function load() {
     try {
       security = await api.get('/api/security');
@@ -228,6 +285,7 @@ export function render(view, ctx) {
   drawWarnings();
   drawPanel();
   load();
+  loadPermissions();
 
   return () => { offStatus(); };
 }

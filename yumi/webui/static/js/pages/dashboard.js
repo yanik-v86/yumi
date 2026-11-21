@@ -20,12 +20,14 @@ export function render(view, ctx) {
   // ---------------------------------------------------------------- hero
   const bubble = el('div', { class: 'bubble', text: '…' });
   const stateLine = el('div', { class: 'state-line', text: lang() === 'ru' ? 'подключаюсь…' : 'connecting…' });
+  const voiceLine = el('div', { class: 'state-line', text: '' });
   const heroFace = el('div', { class: 'hero-art' }, el('img', { src: '/art/icon', alt: '', width: 128, height: 128 }));
   const hero = el('div', { class: 'hero card pixel-frame' },
     heroFace,
     el('div', {},
       el('h1', { text: lang() === 'ru' ? 'Юми' : 'Yumi' }),
       stateLine,
+      voiceLine,
       bubble));
   view.append(hero);
 
@@ -343,6 +345,15 @@ export function render(view, ctx) {
         : runtime.listening ? (lang() === 'ru' ? 'слушает' : 'listening')
           : where;
     stateLine.textContent = `${mode} · ${mood} · ${fmtUptime(status.uptime)}`;
+    const vs = runtime.voice_state || {};
+    const stText = {
+      watching: ['имя слышит', 'watching'], candidate: ['имя услышано', 'candidate'],
+      listening: ['слушает', 'listening'], held_for_answer: ['ждёт ответа', 'held for answer'],
+      paused: ['микрофон на паузе', 'mic paused'], muted: ['заглушено', 'muted'],
+      missing: ['нет микрофона', 'no mic'], busy: ['занята', 'busy'], off: ['выключено', 'off'],
+    }[vs.state] || [vs.state || '—', vs.state || '—'];
+    voiceLine.textContent = `${lang() === 'ru' ? 'микрофон' : 'microphone'}: ${lang() === 'ru' ? stText[0] : stText[1]}`
+      + `${vs.owner ? ` · ${vs.owner}` : ''}`;
 
     statMode.value.textContent = runtime.mode === 'air'
       ? (lang() === 'ru' ? 'воздух' : 'air')

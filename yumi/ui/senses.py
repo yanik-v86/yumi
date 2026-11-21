@@ -212,6 +212,7 @@ class SensesMixin:
         The mic opens only when she is done talking: her own line must not be heard"""
         def work():
             b = self.brain
+            self._vs('listening', 'click_listen', 'waiting for your phrase')
             for _ in range(80):             # at most ~8 s: her line is not that long
                 if not b.listening:
                     return                  # clicked again while she was talking: called off
@@ -228,6 +229,7 @@ class SensesMixin:
                               engine=self.settings.get('stt_engine'))
             text = res.get('text') if isinstance(res, dict) else res
             vtxt = res.get('vosk', '') if isinstance(res, dict) else ''
+            self._vs('held', 'processing the heard phrase')
             GLib.idle_add(lambda t=text, v=vtxt: self.ev(lambda b: b.heard(t, v)) and False)
         threading.Thread(target=work, daemon=True).start()
 
@@ -292,16 +294,25 @@ class SensesMixin:
         (yumi/addressing.py) or the fallback would not know it"""
         return addressing.hints_from(getattr(b, 'custom', None))
 
+    def _vs(self, method, *args):
+        """publish a voice-state transition on the GTK thread (safe from any worker)"""
+        try:
+            GLib.idle_add(lambda: getattr(self.voice_state, method)(*args) and False)
+        except Exception:
+            pass
+
     def wake_set(self, on):
         """the wake word: while it is on, a loop keeps the daemon listening for her name
         and, the moment it passes by, the phrase that follows goes straight to her mind"""
         self.wake_on = bool(on)
         if not self.wake_on:
+            self._vs('wake_off')
             if self.wake_thread:            # a /wake may still be waiting: let it off the mic
                 threading.Thread(target=ears.stop, daemon=True).start()
             return
         if self.wake_thread:
             return
+        self._vs('wake_on')
 
         def work():
             b = self.brain
@@ -309,6 +320,7 @@ class SensesMixin:
                 time.sleep(0.15)
                 if b.listening:
                     continue            # the mic is lent to a click-listen: not ours now
+                self._vs('listening', 'wake', 'listening for the wake word')
                 res = ears.wake(lang=self.settings.get('speech_lang', 'en'),
                                 word=self.settings.get('wake_word', 'юми'), secs=120,
                                 size=self.settings.get('stt_size', 'small'),
@@ -320,14 +332,19 @@ class SensesMixin:
                                 engine=self.settings.get('stt_engine'),
                                 oww_ear=self.settings.get('wake_ear', 'auto'),
                                 hints=self.wake_hints(b))
-                if not self.wake_on or not res:
-                    continue            # called off or the ears are away
+                if not self.wake_on:
+                    continue            # called off while the daemon was listening
+                if not res:
+                    self._vs('missing', 'the ears are away')
+                    continue            # the ears are away
                 if res.get('stop'):
                     # «стоп» overrides everything: even mid-word, asleep or thinking
                     GLib.idle_add(lambda: self.ev(lambda b: b.stop_all()) and False)
                     continue
                 if not res.get('woke'):
                     continue            # quiet: nobody called her name
+                self._vs('candidate')
+                self._vs('held', 'wake word heard: waiting for the phrase')
                 tail = res.get('text') or ''
                 alt = res.get('alt') or ''  # the stop ear's reading, the other ear
                 fb = bool(res.get('fallback'))   # the name from vosk, not from the trained ear
@@ -372,6 +389,7 @@ class SensesMixin:
         loop and wait for its daemon window to close (True if it was running)"""
         was_on = bool(self.wake_on)
         self.wake_set(False)
+        self._vs('wake_paused')
         t = self.wake_thread
         if t and t.is_alive():
             t.join(timeout)
@@ -387,6 +405,7 @@ class SensesMixin:
             self.wake_thread = None
         self.wake_on = True
         self.wake_set(True)
+        self._vs('wake_resumed')
 
     def tap_set(self, on):
         """the ears' diary: while it is on, the daemon records everything the ears hear

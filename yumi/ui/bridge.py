@@ -3,7 +3,8 @@ import threading
 import time
 from pathlib import Path
 
-from yumi import chat, config, ears, engines, files, jobs, memory, music, notes, system, tts
+from yumi import (chat, config, doctor as doctor_mod, ears, engines, files, jobs,
+                  memory, models, music, notes, permission, system, tts)
 
 
 class WebBridge:
@@ -47,6 +48,53 @@ class WebBridge:
 
     def apply_settings(self, patch):
         return self._on(lambda: self.app._web_apply_settings(patch), 60)
+
+    # ---- diagnostics and explicit model checks
+    def doctor(self, sections=None, text=None):
+        """one full self-test with the wake loop parked; the audio calls run on
+        the HTTP thread so the GTK loop stays free (only pause/resume hop over)"""
+        report = self._ears_exclusive(lambda: doctor_mod.run(
+            self.app.settings, sections=sections, roundtrip_text=text))
+        self._on(lambda: self.app._web_doctor_done(report))
+        return report
+
+    def models_verify(self):
+        """explicit SHA-256 check (never called on a status tick); cached for status"""
+        return models.verify_cached(force=True)
+
+    def models_verify_cached(self):
+        """the last cached model check (cheap, safe for a GET)"""
+        return models.cached()
+
+    def models_record(self, names=None):
+        """trust the model copies that are here now, then refresh the cached check"""
+        result = models.record(names)
+        result['models'] = models.verify_cached(force=True)['models']
+        return result
+
+    # ---- voice state
+    def voice_state(self):
+        return self._on(lambda: self.app.voice_state.snapshot())
+
+    def voice_pause(self):
+        return self._on(self.app._web_voice_pause)
+
+    def voice_resume(self):
+        return self._on(self.app._web_voice_resume)
+
+    def voice_release(self):
+        self.voice_stop()
+        return self._on(self.app._web_voice_released)
+
+    # ---- permissions
+    def permission_answer(self, decision, origin='panel'):
+        return self._on(lambda: self.app.brain.answer_permission(decision, origin))
+
+    def permissions_list(self):
+        return permission.snapshot()
+
+    def permissions_clear(self):
+        return {'ok': bool(permission.clear())}
 
     # ---- world actions
     def state_action(self, name, payload):
@@ -193,14 +241,38 @@ class WebBridge:
         return self.app._web_chat(text)
 
     def chat_history(self):
+        """the old, plain list — kept for callers that only want the messages"""
         with self.app.web_chat_lock:
             return list(self.app.web_chat)
+
+    def chat_state(self):
+        """messages + revision, for GET /api/chat/history"""
+        with self.app.web_chat_lock:
+            return {'messages': list(self.app.web_chat), 'rev': self.app.web_chat_rev}
+
+    def chat_ops(self, since=0):
+        """ops newer than `since`, so a tab that missed SSE can catch up"""
+        try:
+            since = max(0, int(since or 0))
+        except (TypeError, ValueError):
+            since = 0
+        with self.app.web_chat_lock:
+            return {'rev': self.app.web_chat_rev,
+                    'ops': [dict(op) for op in self.app.web_chat_ops if op['rev'] > since]}
+
+    def chat_message_update(self, message_id, text):
+        return self.app._web_chat_update(message_id, {'text': text})
+
+    def chat_message_remove(self, message_id):
+        return self.app._web_chat_remove(message_id)
 
     def chat_clear(self):
         with self.app.web_chat_lock:
             self.app.web_chat = []
+            op = self.app._web_chat_op('clear')
             self.app.save_web_chat()
-        return {'cleared': True}
+        self.app._web_chat_publish([op])
+        return {'cleared': True, 'rev': op['rev'], 'ops': [op]}
 
     def memory_recent(self, limit=50):
         return memory.recent(limit, hide_sassy=not self.app.settings.get('sassy'))

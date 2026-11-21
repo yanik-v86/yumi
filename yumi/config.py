@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
@@ -170,8 +171,17 @@ class Store(dict):
             data = json.loads(self.path.read_text())
             if isinstance(data, dict):
                 self.update(data)
-        except (OSError, ValueError):
+            elif self.path.exists():
+                raise ValueError('not a JSON object')
+        except OSError:
             pass
+        except ValueError:                 # like load_actions(): never overwrite a broken file
+            try:
+                self.path.replace(self.path.with_name(self.path.name + '.bad'))
+                print(f'yumi: {self.path.name} was broken, kept as {self.path.name}.bad',
+                      file=sys.stderr)
+            except OSError:
+                pass
 
     def save(self):
         try:

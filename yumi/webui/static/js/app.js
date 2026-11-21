@@ -11,6 +11,7 @@ const PAGES = {
   files: './pages/files.js',
   music: './pages/music.js',
   voice: './pages/voice.js',
+  doctor: './pages/doctor.js',
   buttons: './pages/buttons.js',
   appearance: './pages/appearance.js',
   settings: './pages/settings.js',
@@ -153,6 +154,43 @@ function syncMicChoices(mics, current) {
   if (current) entry.choice_labels[String(current)] = entry.choice_labels[String(current)] || current;
 }
 
+// a pending permission must be visible from every page, not just Buttons
+let permBannerKey = '';
+function updatePermBanner() {
+  const box = document.getElementById('perm-banner');
+  if (!box) return;
+  const p = state.status?.runtime?.nlu?.pending_permission;
+  if (!p) {
+    box.hidden = true;
+    box.replaceChildren();
+    permBannerKey = '';
+    return;
+  }
+  const key = String(p.id || '');
+  if (key === permBannerKey && !box.hidden) return;
+  permBannerKey = key;
+  box.hidden = false;
+  const decide = async (decision) => {
+    try {
+      await api.permissionAnswer(decision);
+      await refreshStatus();
+    } catch (err) { errToast(err); }
+  };
+  const buttons = (p.options || ['once', 'deny']).map((key) => el('button', {
+    class: `btn btn-small ${key === 'deny' ? 'btn-danger' : key === 'once' ? 'btn-primary' : ''}`.trim(),
+    type: 'button',
+    text: key === 'once' ? (state.lang === 'ru' ? 'Разово' : 'Allow once')
+      : key === 'always' ? (state.lang === 'ru' ? 'Всегда' : 'Always')
+        : (state.lang === 'ru' ? 'Запретить' : 'Deny'),
+    onclick: () => decide(key),
+  }));
+  box.replaceChildren(
+    el('strong', { text: state.lang === 'ru' ? 'Юми просит разрешения' : 'Yumi asks permission' }),
+    el('span', { text: (p.text || '') + (p.target ? ` · ${p.target}` : '') }),
+    ...buttons,
+  );
+}
+
 function setStatus(next, { light = false } = {}) {
   if (!next) return;
   if (!state.status) {
@@ -173,6 +211,7 @@ function setStatus(next, { light = false } = {}) {
   }
   updateChips();
   updateSide();
+  updatePermBanner();
   notifyStatus();
 }
 

@@ -241,7 +241,8 @@ def wake(lang='ru', word='юми', secs=20, size='small', mic=None,
     """wait for the wake word (say «Юми» and she is all ears): a dict
     {'woke': bool, 'text': what came after the word, '' when it was said alone,
      'alt': what the stop ear read around the name — the other reading,
-     'fallback': the name came from vosk rather than the trained ear},
+     'fallback': the name came from vosk rather than the trained ear,
+     'verdict': {'matched', 'reason', 'fallback'}},
     or None when the ears cannot work at all. A manual listen takes the mic over.
     hints are the user's own phrases/keywords from actions.json: the fallback
     router uses them to know a custom button's wish."""
@@ -268,10 +269,18 @@ def wake(lang='ru', word='юми', secs=20, size='small', mic=None,
             data = json.loads(r.read().decode())
     except (urllib.error.URLError, OSError, ValueError):
         return None
+    verdict = data.get('verdict') if isinstance(data.get('verdict'), dict) else None
+    if verdict is None:                 # an older daemon: build a small verdict here
+        verdict = {
+            'matched': bool(data.get('woke')),
+            'reason': ('stop_command' if data.get('stop')
+                       else 'matched' if data.get('woke') else 'no wake in this window'),
+            'fallback': bool(data.get('fallback')),
+        }
     return {'woke': bool(data.get('woke')), 'text': str(data.get('text') or ''),
             'alt': str(data.get('alt') or ''),
             'fallback': bool(data.get('fallback')),
-            'stop': bool(data.get('stop'))}
+            'stop': bool(data.get('stop')), 'verdict': verdict}
 
 
 def tap(on, lang='ru', size='small', mic=None):

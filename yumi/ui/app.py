@@ -10,7 +10,7 @@ from pathlib import Path
 from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk
 from gi.repository import Gtk4LayerShell as LayerShell
 
-from yumi import config, ears, files, jobs, memory, music, system, tts
+from yumi import config, ears, files, jobs, memory, music, system, tts, voice_state
 from yumi.brain import Brain
 from yumi.phrases import Speech
 from yumi.sprites import Meta, palette_delta, palette_from_hue
@@ -51,8 +51,11 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
         self._web_volume = None
         self._web_bubble = ''
         self._web_status_at = 0.0
+        self.doctor_last = None         # last diagnostics summary for the panel/status
         self.web_chat_path = config.STATE_DIR / 'web-chat.json'
         self.web_chat_lock = threading.Lock()
+        self.web_chat_rev = 0           # revision of the browser chat (for SSE ops)
+        self.web_chat_ops = []          # a short journal: insert / update / remove / clear
         self.web_chat = self.load_web_chat()
         ask_type = GLib.VariantType.new('s')
         for name in ACTIONS + (ASK,):
@@ -96,6 +99,7 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
         self.brain.outfit_names = Meta.outfits(config.SPRITES)
         self.wake_on = False             # the wake-word loop is running or not
         self.wake_thread = None
+        self.voice_state = voice_state.VoiceState()  # one source of truth for the mic
         self.wake_set(bool(self.settings.get('wake_ears')))   # «Юми» works out of the box
         self.tap_set(bool(self.settings.get('tap_ears')))     # the diary, too, if it was asked
         music.apply_settings(self.settings)   # her mpd, or the server's (music_server)
@@ -402,6 +406,10 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                 self.listen_ears(r[1])
             elif kind == 'listen_stop':
                 threading.Thread(target=ears.stop, daemon=True).start()
+                if self.wake_on:
+                    self._vs('wake_resumed')
+                else:
+                    self._vs('wake_off')
             elif kind == 'wake_set':
                 self.wake_set(r[1])
             elif kind == 'tap_set':
