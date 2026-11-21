@@ -498,6 +498,12 @@ class SensesMixin:
             # (UnboundLocalError — every question died before the answer)
             hist = list(history)
             user_text = str(hist[-1].get('content') or '')   # the question just asked
+            sassy = bool(s.get('sassy'))
+            tag = memory.TAG_SASSY if sassy else None
+            use_stream = bool(s.get('chat_stream', True))
+            if use_stream:
+                GLib.idle_add(lambda: self.ev(lambda b: b.reply_stream_begin()) and False)
+
             # the diary: older lines about the same thing join the question, the
             # talks about other things stay out of the way (yumi/memory.py)
             if s.get('chat_memory', True):
@@ -508,11 +514,8 @@ class SensesMixin:
                     note = ''
                 if note:
                     hist.append({'role': 'system', 'content': note})
-            sassy = bool(s.get('sassy'))
             prompt = chat.system_prompt(lang, sassy)
             full = [{'role': 'system', 'content': prompt}] + hist
-            tag = memory.TAG_SASSY if sassy else None
-            use_stream = bool(s.get('chat_stream', True))
 
             if not use_stream:
                 reply = chat.ask(s, full)
@@ -525,8 +528,6 @@ class SensesMixin:
                         pass
                 GLib.idle_add(lambda: self.ev(lambda b: b.replied(reply)) and False)
                 return
-
-            GLib.idle_add(lambda: self.ev(lambda b: b.reply_stream_begin()) and False)
             reply_parts = []
             try:
                 for chunk in chat.ask_stream(s, full):
