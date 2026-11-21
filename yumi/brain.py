@@ -1678,6 +1678,16 @@ class Brain(Extras):
         """
         self.thinking = False
         if not report.get('ok'):
+            # nothing found is not a broken player: say so plainly
+            query = str(report.get('query') or '').strip()
+            count = int(report.get('count') or 0)
+            track = report.get('track') or ('', '')
+            if count <= 0 and not any(track) and report.get('kind') in ('song', 'artist', 'album', 'random', 'play'):
+                if query:
+                    self.say('music_not_found', query=query)
+                else:
+                    self.say('music_empty')
+                return
             self.say('music_no_way')
             return
         track = report.get('track') or ('', '')
