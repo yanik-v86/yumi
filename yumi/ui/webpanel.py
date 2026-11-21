@@ -809,12 +809,16 @@ class PanelMixin:
         sassy = bool(s.get('sassy'))
         if s.get('chat_memory', True) and bool(s.get('sassy')) == sassy:
             tag = memory.TAG_SASSY if sassy else None
-            try:
-                memory.remember('user', text, s, tag=tag)
-                if reply:
-                    memory.remember('assistant', reply, s, tag=tag)
-            except Exception:
-                pass
+
+            def _remember():
+                try:
+                    memory.remember('user', text, s, tag=tag)
+                    if reply:
+                        memory.remember('assistant', reply, s, tag=tag)
+                except Exception:
+                    pass
+
+            threading.Thread(target=_remember, daemon=True).start()
         return {'reply': reply or '', 'recalled': note != '',
                 'history': history_len, 'rev': rev, 'ops': ops}
 

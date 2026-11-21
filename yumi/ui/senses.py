@@ -519,14 +519,16 @@ class SensesMixin:
 
             if not use_stream:
                 reply = chat.ask(s, full)
-                if s.get('chat_memory', True) and bool(s.get('sassy')) == sassy:
-                    try:
-                        memory.remember('user', user_text, s, tag=tag)
-                        if reply:
-                            memory.remember('assistant', reply, s, tag=tag)
-                    except Exception:
-                        pass
                 GLib.idle_add(lambda: self.ev(lambda b: b.replied(reply)) and False)
+                if s.get('chat_memory', True) and bool(s.get('sassy')) == sassy:
+                    def _remember():
+                        try:
+                            memory.remember('user', user_text, s, tag=tag)
+                            if reply:
+                                memory.remember('assistant', reply, s, tag=tag)
+                        except Exception:
+                            pass
+                    threading.Thread(target=_remember, daemon=True).start()
                 return
             reply_parts = []
             try:
@@ -539,17 +541,19 @@ class SensesMixin:
                 pass
 
             reply = ' '.join(''.join(reply_parts).split())
-            if s.get('chat_memory', True) and bool(s.get('sassy')) == sassy and reply:
-                try:
-                    memory.remember('user', user_text, s, tag=tag)
-                    memory.remember('assistant', reply, s, tag=tag)
-                except Exception:
-                    pass
-
             if reply:
                 GLib.idle_add(lambda: self.ev(lambda b: b.reply_stream_end()) and False)
             else:
                 GLib.idle_add(lambda: self.ev(lambda b: b.reply_stream_fail()) and False)
+
+            if s.get('chat_memory', True) and bool(s.get('sassy')) == sassy and reply:
+                def _remember():
+                    try:
+                        memory.remember('user', user_text, s, tag=tag)
+                        memory.remember('assistant', reply, s, tag=tag)
+                    except Exception:
+                        pass
+                threading.Thread(target=_remember, daemon=True).start()
         threading.Thread(target=work, daemon=True).start()
 
     def weather_ask(self, ask):
