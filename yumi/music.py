@@ -341,9 +341,9 @@ def play_query(kind, query='', settings=None):
 
     tracks = res.get('tracks') or []
     report['source'] = res.get('source', 'local')
+    asked = str(query or '').strip()
 
-    if not tracks and kind in ('song', 'artist', 'album') \
-            and str(query or '').strip():
+    if not tracks and kind in ('song', 'artist', 'album') and asked:
         # nothing was found under the name as the ears heard it: the tags may
         # be latin while the words were said in Russian — her mind spells the
         # name the way the covers do, and the whole chain is asked again
@@ -353,9 +353,31 @@ def play_query(kind, query='', settings=None):
         except Exception:
             fixed = ''
         if fixed:
+            asked = fixed
             res = library.resolve(settings or {}, kind, fixed)
             tracks = res.get('tracks') or []
             report['source'] = res.get('source', report['source'])
+
+    if kind == 'song' and tracks and asked:
+        # "включи рамштайн" is a song wish in words but an artist in meaning:
+        # when the name matches the artist far more than the titles, play the
+        # artist's songs instead of one accidental title match
+        words = library._tokens(asked)
+        if words:
+            def _hit(field, t):
+                hay = ' '.join(library._tokens(t.get(field, '')))
+                return all(w in hay for w in words)
+            artist_hits = sum(1 for t in tracks if _hit('artist', t))
+            title_hits = sum(1 for t in tracks if _hit('title', t))
+            if artist_hits >= max(1, len(tracks) * 0.6) and title_hits <= len(tracks) * 0.3:
+                res_a = library.resolve(settings or {}, 'artist', asked)
+                a_tracks = res_a.get('tracks') or []
+                if a_tracks:
+                    kind = 'artist'
+                    report['kind'] = 'artist'
+                    res = res_a
+                    tracks = a_tracks
+                    report['source'] = res.get('source', report['source'])
 
     if kind == 'play':
         if report['source'] != 'local':   # jellyfin or the server: a queue of
