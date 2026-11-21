@@ -22,6 +22,15 @@ DEFAULT_URL = 'http://127.0.0.1:11434'
 POLZA_MODEL = 'deepseek/deepseek-v4-flash'
 
 
+def _log(msg):
+    """short timestamped line in /tmp/yumi/mind.log: model requests, no bodies"""
+    try:
+        with open('/tmp/yumi/mind.log', 'a', encoding='utf-8') as f:
+            f.write(f'{time.strftime("%H:%M:%S")} chat: {msg}\n')
+    except OSError:
+        pass
+
+
 def _provider(settings):
     return str(settings.get('chat_provider') or 'ollama')
 
@@ -292,33 +301,49 @@ def _polza_stream(resp):
 
 def ask_stream(settings, history, timeout=90):
     """a reply as a stream of text chunks; yields nothing when it did not work out"""
-    if _provider(settings) == 'polza.ai' and not str(settings.get('polza_api_key') or '').strip():
+    prov = _provider(settings)
+    model = settings.get('chat_model') or (POLZA_MODEL if prov == 'polza.ai' else DEFAULT_MODEL)
+    if prov == 'polza.ai' and not str(settings.get('polza_api_key') or '').strip():
+        _log(f'ask_stream skipped: polza.ai key is empty, model={model}')
         return          # no key: Polza.ai would hang or refuse, she says so at once
+    _log(f'ask_stream -> {prov} model={model} url={_url(settings)} msgs={len(history or [])} timeout={timeout}s')
     try:
-        if _provider(settings) == 'polza.ai':
+        if prov == 'polza.ai':
             resp = _polza_chat(settings, history, timeout, stream=True)
+            _log(f'ask_stream <- {prov} stream opened')
             yield from _polza_stream(resp)
         else:
             resp = _ollama_chat(settings, history, timeout, stream=True)
+            _log(f'ask_stream <- {prov} stream opened')
             yield from _ollama_stream(resp)
-    except (urllib.error.URLError, OSError, ValueError):
+        _log(f'ask_stream done {prov} model={model}')
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        _log(f'ask_stream error {prov} model={model}: {e}')
         return
 
 
 def ask(settings, history, timeout=90):
     """one reply for the conversation `history` ([{role, content}, ...], user last);
     the reply text, or '' if it did not work out"""
-    if _provider(settings) == 'polza.ai' and not str(settings.get('polza_api_key') or '').strip():
+    prov = _provider(settings)
+    model = settings.get('chat_model') or (POLZA_MODEL if prov == 'polza.ai' else DEFAULT_MODEL)
+    if prov == 'polza.ai' and not str(settings.get('polza_api_key') or '').strip():
+        _log(f'ask skipped: polza.ai key is empty, model={model}')
         return ''          # no key: Polza.ai would hang or refuse, she says so at once
+    _log(f'ask -> {prov} model={model} url={_url(settings)} msgs={len(history or [])} timeout={timeout}s')
     try:
-        if _provider(settings) == 'polza.ai':
+        if prov == 'polza.ai':
             data = _polza_chat(settings, history, timeout)
             msg = (data.get('choices') or [{}])[0].get('message') or {}
-            return _strip_think(' '.join(str(msg.get('content') or '').split()))
-        data = _ollama_chat(settings, history, timeout)
-    except (urllib.error.URLError, OSError, ValueError):
+            reply = _strip_think(' '.join(str(msg.get('content') or '').split()))
+        else:
+            data = _ollama_chat(settings, history, timeout)
+            reply = _strip_think(' '.join(str((data.get('message') or {}).get('content') or '').split()))
+        _log(f"ask <- {prov} model={model} ok={'yes' if reply else 'empty'}")
+        return reply
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        _log(f'ask error {prov} model={model}: {e}')
         return ''
-    return _strip_think(' '.join(str((data.get('message') or {}).get('content') or '').split()))
 
 
 def summarize(settings, title, text, lang='en', timeout=15):
@@ -467,13 +492,16 @@ def weather_when(text):
 def _one_shot(settings, user, tokens, lang='en', timeout=90, temp=None, system=None):
     """one reply for one user line, no conversation behind it (the hour joke, a joke, ...);
     the reply text, or '' when the mind is out of reach"""
-    if _provider(settings) == 'polza.ai' and not str(settings.get('polza_api_key') or '').strip():
+    prov = _provider(settings)
+    model = settings.get('chat_model') or (POLZA_MODEL if prov == 'polza.ai' else DEFAULT_MODEL)
+    if prov == 'polza.ai' and not str(settings.get('polza_api_key') or '').strip():
+        _log(f'one_shot skipped: polza.ai key is empty, model={model}')
         return ''          # no key: Polza.ai would hang or refuse, she says so at once
-    options = {'num_predict': tokens} if _provider(settings) != 'polza.ai' else {'max_tokens': tokens}
+    options = {'num_predict': tokens} if prov != 'polza.ai' else {'max_tokens': tokens}
     if temp is not None:
         options['temperature'] = temp      # the jokes and the hour lines want a loose hand
     req_body = {
-        'model': settings.get('chat_model') or (POLZA_MODEL if _provider(settings) == 'polza.ai' else DEFAULT_MODEL),
+        'model': model,
         'messages': [
             {'role': 'system', 'content': system or system_prompt(lang, bool(settings.get('sassy')))},
             {'role': 'user', 'content': user}
@@ -481,13 +509,14 @@ def _one_shot(settings, user, tokens, lang='en', timeout=90, temp=None, system=N
         'stream': False,
         'options': options,
     }
-    if temp is not None and _provider(settings) == 'polza.ai':
+    if temp is not None and prov == 'polza.ai':
         req_body['temperature'] = temp     # the openai-style body carries it on top
-    if _provider(settings) != 'polza.ai':
+    if prov != 'polza.ai':
         req_body['think'] = _think(settings)    # off: the joke comes right away
     body = json.dumps(req_body).encode()
+    _log(f'one_shot -> {prov} model={model} url={_url(settings)} timeout={timeout}s')
     try:
-        if _provider(settings) == 'polza.ai':
+        if prov == 'polza.ai':
             headers = {'Content-Type': 'application/json',
                        'Authorization': 'Bearer ' + str(settings.get('polza_api_key') or '')}
             req = urllib.request.Request(_url(settings) + '/chat/completions', data=body,
@@ -495,14 +524,18 @@ def _one_shot(settings, user, tokens, lang='en', timeout=90, temp=None, system=N
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 data = json.loads(r.read().decode())
             msg = (data.get('choices') or [{}])[0].get('message') or {}
-            return _strip_think(' '.join(str(msg.get('content') or '').split()))
-        req = urllib.request.Request(_url(settings) + '/api/chat', data=body,
-                                     headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = json.loads(r.read().decode())
-    except (urllib.error.URLError, OSError, ValueError):
+            reply = _strip_think(' '.join(str(msg.get('content') or '').split()))
+        else:
+            req = urllib.request.Request(_url(settings) + '/api/chat', data=body,
+                                         headers={'Content-Type': 'application/json'})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = json.loads(r.read().decode())
+            reply = _strip_think(' '.join(str((data.get('message') or {}).get('content') or '').split()))
+        _log(f"one_shot <- {prov} model={model} ok={'yes' if reply else 'empty'}")
+        return reply
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        _log(f'one_shot error {prov} model={model}: {e}')
         return ''
-    return _strip_think(' '.join(str((data.get('message') or {}).get('content') or '').split()))
 
 
 def music_name(settings, kind, query, timeout=15):
