@@ -57,6 +57,7 @@ English · [Русский](README.ru.md)
   there (the default is «Anapa», while `""` looks wherever the computer stands).
   Ask «кто играет» or «что за трек» («who plays», «what's playing») and she names the artist
   and the track that is sounding — from any MPRIS player (vlc, spotify, a browser) or her own library.
+  Say «Юми, лайк» ("Yumi, like") and she adds the playing track to favorites.
   Say «включи песню …», «включи что-нибудь» or «включи исполнителя …» and she finds it and plays it:
   from Jellyfin when you are home, from her own folders when you are not.
 - English and Russian, picked from your system language.
@@ -479,6 +480,15 @@ fast but may turn a rare word into «бапушки» instead of «Пушкин�
 `stt_crosscheck` (on, **Compare both ears**). When the primary ear and Vosk's stop ear disagree,
 the mind sees both readings and picks the sensible one; `/tmp/yumi/mind.log` gets a
 `crosscheck: ...` line beside `heard`.
+
+Voice input no longer pays for STT after the listening window: `stt_early_read` (on,
+**Settings → Her ears → Read ahead while listening**) starts reading the tape as soon as
+your voice dies down, while the `phrase_tail_ms` quiet is still running. By the time the
+phrase ends, the words are ready instead of a second full read. Speech that resumes
+invalidates that early reading; a failed read falls back to the ordinary one. You can
+shorten the wait further with `phrase_tail_ms` (1200 ms by default, **Quiet before the
+phrase ends**), which now applies without restarting the ears; too small a value can cut
+a phrase short at a pause between words.
 
 The phrase after the name is read from the tape, not from Vosk's passing stream: how many
 seconds to take is `wake_read_s` (4 s by default, **Settings → Her ears → Phrase window after

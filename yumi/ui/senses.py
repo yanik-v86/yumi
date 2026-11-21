@@ -572,6 +572,13 @@ class SensesMixin:
             GLib.idle_add(lambda: self.ev(lambda b: b.said_now_playing(playing)) and False)
         threading.Thread(target=work, daemon=True).start()
 
+    def music_like(self):
+        """«лайк»: the current track is marked as favorite away from her main thread"""
+        def work():
+            report = music.like_playing(self.settings)
+            GLib.idle_add(lambda: self.ev(lambda b: b.said_music_liked(report)) and False)
+        threading.Thread(target=work, daemon=True).start()
+
     def music_search(self, payload):
         """«включи песню ...»: the libraries are asked away from her main thread
         (a search walks the network and her folders, then the queue is built),

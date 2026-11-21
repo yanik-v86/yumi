@@ -100,6 +100,7 @@ const ICON_PATHS = {
   arrowUp: 'M12 20 V4 M6 10 L12 4 L18 10',
   arrowDown: 'M12 4 V20 M6 14 L12 20 L18 14',
   more: 'M5 12 H5.1 M12 12 H12.1 M19 12 H19.1',
+  heart: 'M12 21 C12 21 3 14 3 8.5 A4.5 4.5 0 0 1 12 6 A4.5 4.5 0 0 1 21 8.5 C21 14 12 21 12 21 Z',
 };
 
 const SVG_NS = 'http://www.w3.org/2000/svg';

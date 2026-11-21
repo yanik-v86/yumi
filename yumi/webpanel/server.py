@@ -409,6 +409,7 @@ def _make_handler(panel):
                 ('GET', '/api/music/search'): self._music_search,
                 ('POST', '/api/music/play'): self._music_play,
                 ('POST', '/api/music/control'): self._music_control,
+                ('POST', '/api/music/like'): self._music_like,
                 ('POST', '/api/voice/listen'): self._voice_listen,
                 ('POST', '/api/voice/stop'): self._voice_stop,
                 ('POST', '/api/voice/speak'): self._voice_speak,
@@ -883,6 +884,13 @@ def _make_handler(panel):
             body = self._body()
             result = panel.bridge.music_control(str(body.get('cmd') or ''))
             panel.audit(self._ip(), 'music', body.get('cmd'))
+            return self._json(200, {'ok': True, **result})
+
+        def _music_like(self, _q):
+            result = panel.bridge.music_like()
+            track = result.get('track') or {}
+            name = ' — '.join(x for x in (track.get('artist'), track.get('title')) if x)
+            panel.audit(self._ip(), 'music-like', name or result.get('reason'))
             return self._json(200, {'ok': True, **result})
 
         # ---------------------------------------------------------------- voice

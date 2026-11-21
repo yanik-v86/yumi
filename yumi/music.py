@@ -11,6 +11,7 @@ Dependencies: mpc (for MPD), playerctl (for MPRIS players)
 Optional: mpd for playing her own library
 """
 
+import json
 import os
 import random
 import re
@@ -291,6 +292,9 @@ def play_tracks(tracks):
             elif t.get('path'):
                 _mpc('add', _mpd_path(t['path']))
         if (_mpc('playlist').stdout or '').strip():
+            # the first track in the queue is the one we announce: random must
+            # not pick another, or what she says and what plays diverge
+            _mpc('random', 'off')
             _mpc('play')
             if is_mpd_playing():
                 return True
@@ -500,6 +504,69 @@ def now_playing():
                 title = Path(file_).stem
                 return '', title
     return None
+
+
+def _jellyfin_item_id(file_or_url):
+    m = re.search(r'/Audio/([0-9a-fA-F]+)/stream', str(file_or_url or ''))
+    return m.group(1) if m else ''
+
+
+def like_playing(settings=None):
+    """Add the track that is playing right now to favorites.
+
+    Jellyfin tracks are marked favorite on the server; local tracks are kept in
+    ~/.local/share/yumi/favorites.json. Returns a report dict for the UI/voice.
+    """
+    report = {'ok': False, 'track': None, 'source': None, 'reason': 'nothing'}
+    artist, title, file_ = '', '', ''
+    if _mpd_ready():
+        r = _mpc('current', '-f', '%artist%\t%title%\t%file%')
+        if r is not None and r.returncode == 0:
+            artist, _, rest = (r.stdout or '').strip().partition('\t')
+            title, _, file_ = rest.partition('\t')
+    if not file_:
+        np = now_playing()
+        if np:
+            report['track'] = np
+            report['reason'] = 'unsupported'
+        return report
+
+    if not title:
+        title = Path(file_).stem
+    report['track'] = (artist, title)
+
+    jid = _jellyfin_item_id(file_)
+    if jid:
+        try:
+            from . import library
+            jf = library.Jellyfin(settings or {})
+            if jf.favorite(jid, True):
+                report['ok'] = True
+                report['source'] = 'jellyfin'
+                return report
+        except Exception:
+            pass
+        report['reason'] = 'jellyfin'
+        report['source'] = 'jellyfin'
+        return report
+
+    try:
+        fav = Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local/share') / 'yumi' / 'favorites.json'
+        fav.parent.mkdir(parents=True, exist_ok=True)
+        items = []
+        if fav.exists():
+            items = json.loads(fav.read_text(encoding='utf-8'))
+            if not isinstance(items, list):
+                items = []
+        entry = {'artist': artist, 'title': title, 'path': str(file_)}
+        if not any(str(it.get('path')) == entry['path'] for it in items if isinstance(it, dict)):
+            items.append(entry)
+            fav.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding='utf-8')
+        report['ok'] = True
+        report['source'] = 'local'
+    except Exception:
+        report['reason'] = 'local'
+    return report
 
 
 def service_start():

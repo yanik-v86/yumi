@@ -334,8 +334,18 @@ class WebBridge:
                            'track': {'artist': track[0], 'title': track[1]} if track else None}}
 
     def music_control(self, cmd):
+        if cmd == 'like':
+            return {**self.music_like(), 'cmd': cmd, 'volume': music.read_volume()}
         ok = music.music_control(cmd)
         return {'ok': bool(ok), 'cmd': cmd, 'volume': music.read_volume()}
+
+    def music_like(self):
+        report = music.like_playing(self.app.settings)
+        track = report.get('track')
+        return {'ok': bool(report.get('ok')),
+                'reason': report.get('reason'),
+                'source': report.get('source'),
+                'track': {'artist': track[0], 'title': track[1]} if track else None}
 
     def voice_listen(self, seconds, engine=None):
         """one phrase through the chosen judge; the background wake loop is paused

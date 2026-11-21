@@ -134,6 +134,15 @@ assert m('что включи музыку') == 'play'           # a verb nearby
 assert m('что выключи музыку') is None            # the stray «что» is a stranger to the parser
 assert m('не включай песню крылья') is None       # «не» is the opposite of a wish
 
+# «лайк»: mark the current track as favorite
+assert m('лайк') == 'like'
+assert m('юми лайк') == 'like'
+assert m('поставь лайк') == 'like'
+assert m('лайкни') == 'like'
+assert m('добавь в избранное') == 'like'
+assert m('like') == 'like'
+assert m('add to favorites') == 'like'            # "favorite" is a strong like word
+
 # a lone number after the name is a volume wish too (Brain.heard_text, wake=True)
 assert brain.bare_volume('30') == 30
 assert brain.bare_volume('тридцать') == 30

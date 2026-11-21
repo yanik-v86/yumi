@@ -477,6 +477,8 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                     pass
             elif kind == 'music_who':
                 self.music_who()
+            elif kind == 'music_like':
+                self.music_like()
             elif kind == 'music_search':
                 self.music_search(r[1])
             elif kind == 'stop_all':

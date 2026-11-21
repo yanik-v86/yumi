@@ -154,6 +154,7 @@ class Jellyfin:
             out.append({'title': it.get('Name') or '',
                         'artist': who,
                         'album': it.get('Album') or '',
+                        'id': it.get('Id', ''),
                         'url': f'{self.base}/Audio/{it.get("Id")}/stream'
                                f'?api_key={self.token}&static=true',
                         'source': 'jellyfin'})
@@ -196,6 +197,44 @@ class Jellyfin:
         if not self.auth():
             return []
         return self._items({'SortBy': 'Random'}, limit)
+
+    def _user_id(self):
+        """the user whose favorites we touch: known after login, looked up once
+        when an api key is used instead"""
+        if self.uid:
+            return self.uid
+        if not self.auth():
+            return ''
+        r = self._get('/Users')
+        users = r if isinstance(r, list) else []
+        if users:
+            self.uid = str(users[0].get('Id') or '')
+        return self.uid
+
+    def favorite(self, item_id, liked=True):
+        """mark a library item as favorite (or remove it). Returns True when the
+        server accepted the change, False when it could not be reached or refused.
+        """
+        item_id = str(item_id or '').strip()
+        if not item_id or not self.auth():
+            return False
+        uid = self._user_id()
+        if not uid:
+            return False
+        path = f'/Users/{urllib.parse.quote(uid)}/FavoriteItems/{urllib.parse.quote(item_id)}'
+        params = urllib.parse.urlencode({'api_key': self.token})
+        url = self.base + path + '?' + params
+        headers = {'X-Emby-Authorization': _CLIENT, 'Authorization': _CLIENT}
+        if liked:
+            r = _json(url, data=b'', headers=headers)
+        else:
+            req = urllib.request.Request(url, headers=headers, method='DELETE')
+            try:
+                with urllib.request.urlopen(req, timeout=4) as resp:
+                    r = json.loads(resp.read().decode('utf-8', 'replace') or '{}')
+            except (OSError, urllib.error.URLError, ValueError):
+                r = None
+        return bool(r) if liked else r is not None
 
 
 class Local:

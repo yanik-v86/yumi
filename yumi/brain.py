@@ -1678,6 +1678,25 @@ class Brain(Extras):
         else:
             self.say('music_who_artist', artist=artist)
 
+    def said_music_liked(self, report):
+        """the current track was (or was not) added to favorites; she says what happened"""
+        self.thinking = False
+        report = report or {}
+        track = report.get('track') or ('', '')
+        artist, title = (track + ('', ''))[:2]
+        if report.get('ok'):
+            if artist and title:
+                self.say('music_like', artist=artist, title=title)
+            elif title:
+                self.say('music_like_title', title=title)
+            else:
+                self.say('music_like', artist=artist or '', title=title or '?')
+            return
+        if report.get('reason') == 'nothing':
+            self.say('music_like_none')
+        else:
+            self.say('music_like_fail')
+
     def said_music_found(self, report):
         """the library answered the search: she names what she found and plays,
         or misses the name kindly (report is the dict play_query came back with)
@@ -2043,11 +2062,16 @@ class Brain(Extras):
         Args:
             cmd: One of 'play', 'pause', 'play_pause', 'next', 'previous',
                  'stop', 'who' (кто играет: she names the artist and the track),
+                 'like' (лайк: adds the current track to favorites),
                  'volume_up', 'volume_down', 'volume N' (10..100)
         """
         if cmd == 'who':               # the player is asked away from her main thread
             self.thinking = True
             self.requests.append(('music_who',))
+            return
+        if cmd == 'like':              # the favorite is marked away from her main thread
+            self.thinking = True
+            self.requests.append(('music_like',))
             return
         if cmd == 'play':              # «включи музыку»: the library that is awake —
             self.thinking = True       # Jellyfin when home, her folders away from it
@@ -3133,6 +3157,11 @@ MUSIC_PLAY = frozenset((
 MUSIC_PAUSE = frozenset(('пауза', 'паузу', 'приостанови', 'приостановить', 'pause'))
 MUSIC_STOP_ANY = frozenset(('стоп', 'стопи', 'останови', 'остановить', 'stop'))
 MUSIC_STOP_MUSIC = frozenset(('выключи', 'выключить', 'выключать', 'выруби', 'выруб'))
+MUSIC_LIKE_STRONG = frozenset(('лайк', 'лайкни', 'лайкнуть', 'залайкай', 'лайкнись',
+                                'избранное', 'избранного', 'избранном',
+                                'favorite', 'favorites', 'favourite', 'favourites'))
+MUSIC_LIKE_WEAK = frozenset(('like', 'liked', 'heart'))
+MUSIC_LIKE = MUSIC_LIKE_STRONG | MUSIC_LIKE_WEAK
 MUSIC_NEXT = ('переключи', 'переключить', 'next', 'skip')
 MUSIC_WHO_ASK = frozenset(('кто', 'что', 'какая', 'какой', 'чей',
                            'what', "what's", 'whats', 'who', 'which'))
@@ -3153,7 +3182,7 @@ VOLUME_WORD = entities.VOLUME_WORD         # one dictionary for the rules and th
 VOLUME_NUMBERS = entities.VOLUME_NUMBERS
 VOLUME_ONES = entities.VOLUME_ONES
 MUSIC_KNOWN = (MUSIC_WORDS | MUSIC_FILLERS | MUSIC_PLAY | MUSIC_PAUSE
-               | MUSIC_STOP_ANY | MUSIC_STOP_MUSIC | set(MUSIC_NEXT)
+               | MUSIC_STOP_ANY | MUSIC_STOP_MUSIC | MUSIC_LIKE | set(MUSIC_NEXT)
                | VOLUME_UP | VOLUME_DOWN | VOLUME_WORD | set(VOLUME_NUMBERS)
                | {'следующ', 'предыдущ', 'дальше', 'назад', 'turn', 'off', 'on'})
 VERB_ALL = (MUSIC_PLAY | MUSIC_PAUSE | MUSIC_STOP_MUSIC
@@ -3343,6 +3372,10 @@ def music_control_text(text, lang='en', guess=False):
                 return f'volume {n}'
     if _verbs(toks, MUSIC_PAUSE):
         return 'pause'
+    if any(t in MUSIC_LIKE_STRONG for t in toks):
+        return 'like'
+    if any(t in MUSIC_LIKE_WEAK for t in toks) and not (_verbs(toks, MUSIC_PLAY) and strangers()):
+        return 'like'
     if _next_track_words(toks):
         return 'next'
     if _next_words(toks):              # «дальше», when it is not «продолжай дальше»

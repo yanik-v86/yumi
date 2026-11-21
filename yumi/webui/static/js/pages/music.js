@@ -54,9 +54,28 @@ export function render(view, ctx) {
     }, icon(iconName, 16), el('span', { text: label }));
   }
 
+  const likeButton = el('button', {
+    class: 'btn', type: 'button', title: lang() === 'ru' ? 'Лайк' : 'Like',
+    onclick: async () => {
+      try {
+        const data = await api.post('/api/music/like');
+        if (data.ok) {
+          const track = data.track;
+          const name = track ? [track.artist, track.title].filter(Boolean).join(' — ') : '';
+          toast(name ? (lang() === 'ru' ? `В избранном: ${name}` : `Liked: ${name}`) : (lang() === 'ru' ? 'В избранном' : 'Liked'), 'good');
+        } else if (data.reason === 'nothing') {
+          toast(lang() === 'ru' ? 'Ничего не играет' : 'Nothing is playing', 'warn');
+        } else {
+          toast(lang() === 'ru' ? 'Не получилось добавить в избранное' : 'Could not like track', 'warn');
+        }
+      } catch (err) { errToast(err); }
+    },
+  }, icon('heart', 16), el('span', { text: lang() === 'ru' ? 'Лайк' : 'Like' }));
+
   controls.append(
     transportButton('previous', 'prev', lang() === 'ru' ? 'Назад' : 'Prev'),
     transportButton('play_pause', 'play', lang() === 'ru' ? 'Играть' : 'Play'),
+    likeButton,
     transportButton('next', 'next', lang() === 'ru' ? 'Дальше' : 'Next'),
     transportButton('stop', 'stop', lang() === 'ru' ? 'Стоп' : 'Stop'),
   );
