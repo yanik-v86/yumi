@@ -767,7 +767,7 @@ class PanelMixin:
                     with self.web_chat_lock:
                         entry = {'role': 'assistant', 'text': assistant_text, 'ts': time.time()}
                         ins_op = self._web_chat_insert(entry)
-                        assistant_id = entry.get('id')
+                        assistant_id = str((ins_op.get('message') or {}).get('id') or '')
                         self.save_web_chat()
                         ops.append(ins_op)
                     self._web_chat_publish([ins_op])
