@@ -64,9 +64,29 @@ class WebBridge:
                               for k in ('status', 'id', 'score', 'quality', 'ms', 'joined_id')
                               if k in data['speaker']}
         if isinstance(data.get('profiles'), list):
-            out['profiles'] = [
-                {k: str(p[k])[:160] for k in ('id', 'label', 'source') if k in p}
-                for p in data['profiles'] if isinstance(p, dict)]
+            profs = []
+            for p in data['profiles']:
+                if not isinstance(p, dict):
+                    continue
+                row = {k: str(p[k])[:160] for k in ('id', 'label', 'source') if k in p}
+                info = p.get('info')
+                if isinstance(info, dict) and info:
+                    row['info'] = {k: str(v)[:256] for k, v in info.items()
+                                   if isinstance(k, str) and isinstance(v, str) and v}
+                profs.append(row)
+            out['profiles'] = profs
+        if isinstance(data.get('profile'), dict):
+            p = data['profile']
+            row = {k: str(p[k])[:160] for k in ('id', 'label', 'source') if k in p}
+            info = p.get('info')
+            if isinstance(info, dict) and info:
+                row['info'] = {k: str(v)[:256] for k, v in info.items()
+                               if isinstance(k, str) and isinstance(v, str) and v}
+            out['profile'] = row
+        if 'text' in data and isinstance(data['text'], str):
+            out['text'] = data['text'][:2000]
+        if 'created' in data:
+            out['created'] = bool(data['created'])
         return out
 
     def speaker_status(self):
@@ -78,8 +98,16 @@ class WebBridge:
 
     def speaker_acquaintance(self):
         """guided voice registration: Yumi speaks intro, then records a voiceprint"""
-        self._on(lambda: self.app.speaker_action('speaker_acquaintance'))
-        return {'ok': True, 'started': True}
+        def start():
+            b = self.app.brain
+            cur = getattr(b, '_speaker_current', None)
+            if isinstance(cur, dict) and cur.get('id') and cur.get('status') == 'known':
+                label = cur.get('label') or b._voice_label(cur.get('id')) or str(cur.get('id'))
+                b.say('acquaintance_already', label=label)
+                return {'ok': True, 'started': False, 'already': True, 'label': label}
+            b.acquaintance_begin()
+            return {'ok': True, 'started': True}
+        return self._on(start)
 
     def speaker_test(self):
         return self._speaker_public(self._ears_exclusive(ears.speaker_test))

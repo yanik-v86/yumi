@@ -319,8 +319,20 @@ def speaker_status():
     return speaker_request('status')
 
 
-def speaker_enroll():
-    return speaker_request('enroll', {})
+def speaker_enroll(label=None, info=None, secs=None, lang=None):
+    payload = {}
+    if label:
+        payload['label'] = str(label)[:64]
+    if isinstance(info, dict) and info:
+        payload['info'] = info
+    if secs is not None:
+        try:
+            payload['secs'] = float(secs)
+        except (TypeError, ValueError):
+            pass
+    if lang:
+        payload['lang'] = str(lang)[:8]
+    return speaker_request('enroll', payload)
 
 
 def speaker_test():
@@ -329,6 +341,15 @@ def speaker_test():
 
 def speaker_rename(pid, label):
     return speaker_request('rename', {'id': str(pid), 'label': str(label)})
+
+
+def speaker_update(pid, label=None, info=None):
+    payload = {'id': str(pid)}
+    if label:
+        payload['label'] = str(label)[:64]
+    if isinstance(info, dict) and info:
+        payload['info'] = info
+    return speaker_request('update', payload)
 
 
 def speaker_delete(pid):

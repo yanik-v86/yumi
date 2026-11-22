@@ -35,7 +35,8 @@
 - `Brain.acquaintance_begin(again=False)`:
   - останавливает активное listen, если было;
   - закрывает меню/радиал;
-  - произносит `acquaintance_intro` или `acquaintance_again`;
+  - если текущий говорящий уже известен (`_speaker_current.status == known`) — говорит `acquaintance_already` с именем и **останавливает знакомство**;
+  - иначе произносит `acquaintance_intro` или `acquaintance_again`;
   - ставит запрос `('speaker_acquaintance', None)`.
 - В `heard_text()` команда перехватывается до fallback/chat:
 
@@ -68,22 +69,34 @@ Guard от конфликта с туром: «покажи/показать/о�
   2. выставляет фазу `waiting_tts` в `runtime.acquaintance` и публикует status;
   3. ждёт тишину TTS;
   4. перед записью выставляет `recording`, показывает bubble `Слушаю, говори...` / `Listening, speak now...` (`voice=False`) и face `listening`;
-  5. вызывает `ears.speaker_enroll()`;
+  5. вызывает `ears.speaker_enroll(secs=15, lang=speech_lang)` — запись ~15с, чтобы пользователь назвал имя, город, музыку, работу и хобби;
   6. после записи выставляет `processing`, показывает bubble `Запись закончена, обрабатываю...` (`voice=False`, face `think`);
-  7. возобновляет wake, озвучивает результат, выставляет `done`/`error`.
+  7. если слепок уже есть (`created == False`) — не извлекает данные, говорит `acquaintance_already` и останавливает знакомство;
+  8. если новый слепок — извлекает из транскрипта `name/city/music/work/hobbies/about` через `chat.ask`, обновляет профиль через `ears.speaker_update`, ставит имя профиля;
+  9. возобновляет wake, озвучивает результат, выставляет `done`/`error`.
 - Результат:
-  - успех: `acquaintance_ok` с `{label}`;
+  - новый профиль: `acquaintance_ok` с `{label}`;
+  - слепок уже есть: `acquaintance_already` с `{label}`, знакомство останавливается;
   - нет модели: `acquaintance_nomodel`;
   - другая ошибка/плохая запись: `acquaintance_fail`.
 - В конце `_speaker_action_done()` вызывается `self.web_sync_soon()`, чтобы веб-панель получила свежий status/speaker snapshot.
 
 Это переиспользует существующий backend enroll, не дублируя хранение embedding.
 
-### 3.4 Веб-панель
+### 3.4 Профиль пользователя (голос + данные)
+
+Файлы: `yumi/speaker.py`, `yumi/stt_daemon.py`, `yumi/ears.py`, `yumi/ui/senses.py`, `yumi/ui/webpanel.py`
+
+- Профиль голоса (`speakers.json`, schema v2) хранит `info`: `name`, `city`, `music`, `work`, `hobbies`, `about` (без embeddings в API).
+- При знакомстве Юми просит назвать имя, город, музыку, работу и хобби; транскрипт берётся из записи enrollment, LLM (`chat.ask`) извлекает поля, профиль обновляется.
+- Если голосовой слепок уже существует (dedup/`created == False` или текущий говорящий уже известен), Юми говорит `acquaintance_already` с именем и останавливает знакомство.
+- Web snapshot/bridge отдают `profiles[].info`; страница «Ушки и голос» показывает данные выбранного профиля.
+
+### 3.5 Веб-панель
 
 Файлы: `yumi/ui/bridge.py`, `yumi/webpanel/server.py`, `yumi/webui/static/js/api.js`, `yumi/webui/static/js/pages/voice.js`
 
-- Bridge: `speaker_acquaintance()` вызывает GTK `app.speaker_action('speaker_acquaintance')` и возвращает `{ok: True, started: True}`.
+- Bridge: `speaker_acquaintance()` проверяет уже известного говорящего; если известен — возвращает `{ok, started:false, already:true, label}`. Иначе запускает `brain.acquaintance_begin()` и возвращает `{ok, started:true}`.
 - Server: `POST /api/speaker/acquaintance` с CSRF+audit.
 - API: `api.speakerAcquaintance()`.
 - Voice page: кнопка «Познакомиться» / "Get acquainted" запускает guided flow, показывает подсказку и делает явный polling `ctx.refreshStatus()` ~20 секунд. UI читает `runtime.acquaintance.phase` и показывает сигналы: ожидание TTS, 🔴 запись, запись закончена/обработка, готово/ошибка.
@@ -91,7 +104,7 @@ Guard от конфликта с туром: «покажи/показать/о�
 
 Важно: web endpoint асинхронный по смыслу. Он возвращает `started`, а не готовый профиль. Итог определяется polling'ом статуса и фазой `runtime.acquaintance`; для более чистого UX можно добавить отдельное SSE событие завершения.
 
-### 3.5 Строки/тексты
+### 3.6 Строки/тексты
 
 Файл: `yumi/config.py`
 
@@ -106,7 +119,7 @@ Guard от конфликта с туром: «покажи/показать/о�
 
 RU/EN тексты подобраны так, чтобы Юми объясняла действие простыми словами.
 
-### 3.6 Тесты
+### 3.7 Тесты
 
 Файлы: `tests/test_webpanel.py`, `tests/test_acquaintance.py`
 
@@ -186,13 +199,18 @@ RU/EN тексты подобраны так, чтобы Юми объяснял
 ## 8. Файлы, затронутые реализацией
 
 - `yumi/config.py` — строки знакомства.
-- `yumi/brain.py` — детектор команды, guard конфликта с туром, `acquaintance_begin()`, меню, heard_text.
+- `yumi/phrases.py` — TTS фразы знакомства/уже знакомы.
+- `yumi/brain.py` — детектор команды, guard конфликта с туром, `acquaintance_begin()` с проверкой уже известного голоса, меню, heard_text.
 - `yumi/ui/app.py` — обработка `speaker_acquaintance` request.
-- `yumi/ui/senses.py` — ожидание тишины TTS, guided enroll, сообщения результата, `web_sync_soon()`.
-- `yumi/ui/bridge.py` — `speaker_acquaintance()`.
+- `yumi/ui/senses.py` — ожидание тишины TTS, запись 15с, извлечение профиля из транскрипта, update профиля, фазы, `web_sync_soon()`.
+- `yumi/ui/bridge.py` — `speaker_acquaintance()` (already/started), профили с info.
+- `yumi/ui/webpanel.py` — `runtime.acquaintance` и profile info в snapshot.
 - `yumi/webpanel/server.py` — route/handler.
 - `yumi/webui/static/js/api.js` — `speakerAcquaintance()`.
-- `yumi/webui/static/js/pages/voice.js` — кнопка «Познакомиться» + polling итога.
+- `yumi/webui/static/js/pages/voice.js` — кнопка «Познакомиться», polling фаз, already, отображение info профиля.
+- `yumi/speaker.py` — schema v2, `info` профиля, `update_info/profile`.
+- `yumi/stt_daemon.py` — `/speaker/enroll` принимает secs/lang/info, возвращает text/created/profile; `/speaker/update`.
+- `yumi/ears.py` — `speaker_enroll`/`speaker_update` с параметрами.
 - `tests/test_webpanel.py` — stub + route tests.
 - `tests/test_acquaintance.py` — unit/mock tests.
 - `README.md`, `README.ru.md` — краткое упоминание.

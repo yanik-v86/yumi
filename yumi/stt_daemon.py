@@ -1135,7 +1135,7 @@ def speaker_voice(pcm, text='', join=False, wake=False, hints=()):
 
 
 def speaker_record(secs=4.0, lang='ru'):
-    """Record one phrase for a manual enroll/check; (speaker field, model error).
+    """Record one phrase for a manual enroll/check; (speaker field, model error, vec, text).
 
     The manual buttons work even while the daily gate is off: they are how you
     teach her a voice before switching the gate on.
@@ -1144,23 +1144,24 @@ def speaker_record(secs=4.0, lang='ru'):
     try:
         from yumi import speaker as profiles, speaker_sherpa
     except ImportError:
-        return _speaker_field(), 'no speaker module', None
+        return _speaker_field(), 'no speaker module', None, ''
     if not speaker_sherpa.available():
-        return _speaker_field(), (speaker_sherpa.model_info().get('error') or 'no model'), None
+        return _speaker_field(), (speaker_sherpa.model_info().get('error') or 'no model'), None, ''
     res = Handler.ears.listen(lang, secs, quiet=min(6.0, secs), size='small')
     if not res or not res.get('pcm'):
-        return _speaker_field(), 'nothing was heard', None
+        return _speaker_field(), 'nothing was heard', None, str((res or {}).get('text') or '')
     pcm = res['pcm']
+    text = str(res.get('text') or '')
     ms = int(len(pcm) / (RATE * 2.0) * 1000)
     quality = ms >= tune['min_ms'] and bool(speaker_sherpa.quality(pcm, tune['min_ms']))
     if not quality:
-        return _speaker_field('unknown', ms=ms), 'not enough clear voice', None
+        return _speaker_field('unknown', ms=ms), 'not enough clear voice', None, text
     vec = speaker_sherpa.embedding(pcm, tune['min_ms'])
     if vec is None:
-        return _speaker_field(ms=ms), 'the voice could not be read', None
+        return _speaker_field(ms=ms), 'the voice could not be read', None, text
     found = profiles.verify(vec, tune['threshold'])
     field = _speaker_field(found['status'], found['id'], found['score'], True, ms)
-    return field, None, vec
+    return field, None, vec, text
 
 
 def stop_mush(text, spellings=()):
@@ -2715,7 +2716,7 @@ class Handler(BaseHTTPRequestHandler):
         """Voice-profile management; the daemon binds 127.0.0.1 only."""
         path = urllib.parse.urlparse(self.path).path
         if path not in ('/speaker/enroll', '/speaker/test',
-                        '/speaker/rename', '/speaker/delete'):
+                        '/speaker/rename', '/speaker/delete', '/speaker/update'):
             return self._json({'error': 'no such path'}, 404)
         body = self._body()
         try:
@@ -2726,19 +2727,40 @@ class Handler(BaseHTTPRequestHandler):
             if not speaker_sherpa.available():
                 return self._json({'ok': False, 'error': speaker_sherpa.model_info().get('error')
                                    or 'speaker model is not available'})
-            field, error, vec = speaker_record()
+            secs = body.get('secs', 4.0)
+            try:
+                secs = min(20.0, max(2.0, float(secs)))
+            except (TypeError, ValueError):
+                secs = 4.0
+            lang = str(body.get('lang') or 'ru')[:8]
+            field, error, vec, text = speaker_record(secs=secs, lang=lang)
             if error:
-                return self._json({'ok': False, 'error': error, 'speaker': field})
+                return self._json({'ok': False, 'error': error, 'speaker': field, 'text': text})
             if path == '/speaker/enroll':
-                pid = profiles.enroll(vec, source='manual')
-                return self._json({'ok': bool(pid), 'id': pid, 'profiles': profiles.list()})
-            return self._json({'ok': True, 'speaker': field, 'id': field['id']})
+                info = body.get('info') if isinstance(body.get('info'), dict) else None
+                label = body.get('label')
+                if isinstance(info, dict) and not label:
+                    label = info.get('name')
+                before_ids = {p['id'] for p in profiles.list()}
+                pid = profiles.enroll(vec, label=label, source='manual', info=info)
+                profile = profiles.profile(pid) if pid else None
+                created = bool(pid) and pid not in before_ids
+                return self._json({'ok': bool(pid), 'id': pid, 'text': text, 'created': created,
+                                   'profile': profile, 'profiles': profiles.list()})
+            return self._json({'ok': True, 'speaker': field, 'id': field['id'], 'text': text})
         pid = str(body.get('id') or '')
         if path == '/speaker/rename':
-            ok = profiles.rename(pid, body.get('label'))
+            info = body.get('info') if isinstance(body.get('info'), dict) else None
+            label = body.get('label')
+            ok = profiles.update_info(pid, info or {}, label=label) if (info or label) else profiles.rename(pid, label)
+        elif path == '/speaker/update':
+            info = body.get('info') if isinstance(body.get('info'), dict) else {}
+            label = body.get('label')
+            ok = profiles.update_info(pid, info, label=label)
         else:
             ok = profiles.delete(pid)
-        return self._json({'ok': bool(ok), 'profiles': profiles.list()})
+        profile = profiles.profile(pid) if pid else None
+        return self._json({'ok': bool(ok), 'profile': profile, 'profiles': profiles.list()})
 
     def log_message(self, *_a):         # the log stays for real problems
         pass

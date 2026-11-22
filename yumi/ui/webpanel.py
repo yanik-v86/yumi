@@ -295,8 +295,13 @@ class PanelMixin:
             snap = dict(self.brain.speaker_snapshot())
         except Exception:                   # an older Brain: still give the panel a shape
             try:
-                profiles = [{'id': str(p.get('id') or ''), 'label': str(p.get('label') or '')}
-                            for p in (speaker.snapshot(reload=True).get('profiles') or [])]
+                profiles = []
+                for p in (speaker.snapshot(reload=True).get('profiles') or []):
+                    row = {'id': str(p.get('id') or ''), 'label': str(p.get('label') or '')}
+                    info = p.get('info')
+                    if isinstance(info, dict) and info:
+                        row['info'] = {k: str(v)[:256] for k, v in info.items() if isinstance(v, str) and v}
+                    profiles.append(row)
             except Exception:
                 profiles = []
             snap = {'enabled': bool(self.settings.get('speaker_verify', False)),

@@ -338,16 +338,24 @@ export function render(view, ctx) {
           if (p === 'waiting_tts') return say('Юми договаривает подсказку…', 'Yumi is finishing her prompt…');
           if (p === 'recording') return say('🔴 Идёт запись: говори обычным голосом.', '🔴 Recording: speak in your normal voice.');
           if (p === 'processing') return say('Запись закончена, обрабатываю голос…', 'Recording finished, processing the voice…');
-          if (p === 'done') return say('Знакомство завершено.', 'Acquaintance finished.');
+          if (p === 'done') return acq?.already
+            ? say(`Мы уже знакомы, ${acq.label || 'друг'}!`, `We already know each other, ${acq.label || 'friend'}!`)
+            : say('Знакомство завершено.', 'Acquaintance finished.');
           if (p === 'error') return say('Знакомство не получилось. Проверь микрофон и модель.', 'Acquaintance failed. Check microphone and model.');
           return say('Юми начинает знакомство…', 'Yumi is starting the acquaintance…');
         };
         setNotice(say('Юми начинает знакомство: послушай её подсказку и скажи фразу обычным голосом.',
           'Yumi is starting the acquaintance: listen to her prompt and say a phrase in your normal voice.'));
         try {
-          await api.speakerAcquaintance();
+          const res = await api.speakerAcquaintance();
+          if (res?.already) {
+            const name = res.label || '';
+            setNotice(say(`Мы уже знакомы${name ? ', ' + name : ''}!`,
+              `We already know each other${name ? ', ' + name : ''}!`));
+            return;
+          }
           const before = new Set((status.runtime?.speaker?.profiles || []).map((p) => p.id));
-          for (let i = 0; i < 40; i++) {  // ~20s: TTS + 4s record + processing
+          for (let i = 0; i < 80; i++) {  // ~40s: TTS + 15s record + extraction + processing
             await new Promise((r) => setTimeout(r, 500));
             await ctx.refreshStatus();
             status = ctx.status || status;
@@ -356,11 +364,17 @@ export function render(view, ctx) {
             const profiles = status.runtime?.speaker?.profiles || [];
             const added = profiles.find((p) => !before.has(p.id));
             if (acq.phase === 'done') {
+              if (acq.already) {
+                const name = acq.label || '';
+                setNotice(say(`Мы уже знакомы${name ? ', ' + name : ''}!`,
+                  `We already know each other${name ? ', ' + name : ''}!`));
+                return;
+              }
               if (added?.id) {
                 speakerPick = added.id;
                 speakerName = labelNow(added.id);
               }
-              const name = added?.id ? labelNow(added.id) : '';
+              const name = added?.id ? labelNow(added.id) : (acq.label || '');
               setNotice(name
                 ? say(`Готово: ${name}. Теперь можно нажать «Проверить голос».`,
                   `Done: ${name}. Now you can press “Check a voice”.`)
@@ -476,6 +490,27 @@ export function render(view, ctx) {
     speakerBox.append(el('div', { class: 'row', style: { marginTop: '8px' } },
       change(say('Переименовать', 'Rename'), (id, next) => api.speakerRename(id, next), true),
       change(say('Удалить', 'Delete'), (id) => api.speakerDelete(id))));
+    const infoBox = el('div', { class: 'card-hint', style: { marginTop: '10px', whiteSpace: 'pre-wrap' } });
+    const renderInfo = () => {
+      const p = profiles.find((x) => x.id === speakerPick);
+      const info = p?.info && typeof p.info === 'object' ? p.info : {};
+      const rows = [
+        ['name', say('Имя', 'Name')],
+        ['city', say('Город', 'City')],
+        ['music', say('Музыка', 'Music')],
+        ['work', say('Работа', 'Work')],
+        ['hobbies', say('Хобби', 'Hobbies')],
+        ['about', say('О себе', 'About')],
+      ].filter(([k]) => String(info[k] || '').trim());
+      infoBox.textContent = rows.length
+        ? rows.map(([k, label]) => `${label}: ${info[k]}`).join('\n')
+        : say('Нет данных профиля — нажми «Познакомиться», чтобы Юми узнала тебя.',
+              'No profile details yet — press “Get acquainted” so Yumi can learn about you.');
+    };
+    renderInfo();
+    const origPickerOnChange = picker.onchange;
+    picker.onchange = (ev) => { origPickerOnChange(ev); renderInfo(); };
+    speakerBox.append(infoBox);
     speakerBox.append(speakerOut);
   }
 

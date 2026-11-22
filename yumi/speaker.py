@@ -18,11 +18,13 @@ from pathlib import Path
 
 from yumi import config
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA = frozenset((1, 2))
 DEFAULT_THRESHOLD = 0.65
 DEFAULT_MIN_MS = 1200
 DEDUP_SCORE = 0.95          # a second enroll of the same voice updates the profile
 SOURCES = frozenset(('wake', 'join', 'manual'))
+PROFILE_INFO_KEYS = ('name', 'city', 'music', 'work', 'hobbies', 'about')
 
 try:                                    # an already installed numpy is enough
     import numpy as _np
@@ -99,7 +101,7 @@ class SpeakerStore:
             if not isinstance(data, dict):
                 raise ValueError('not an object')
             version = data.get('version', SCHEMA_VERSION)
-            if version != SCHEMA_VERSION:
+            if version not in SUPPORTED_SCHEMA:
                 raise ValueError('unsupported schema')
             entries = data.get('profiles', [])
             if not isinstance(entries, builtins.list):
@@ -129,6 +131,19 @@ class SpeakerStore:
         except OSError:
             pass
 
+    def _clean_info(self, item):
+        info = {}
+        raw = item.get('info')
+        src = raw if isinstance(raw, dict) else item
+        for k in PROFILE_INFO_KEYS:
+            v = src.get(k)
+            if v is None:
+                continue
+            text = str(v).strip()[:256]
+            if text:
+                info[k] = text
+        return info
+
     def _clean(self, item):
         if not isinstance(item, dict):
             return None
@@ -138,7 +153,7 @@ class SpeakerStore:
         pid = str(item.get('id') or '').strip()[:64]
         if not pid:
             pid = 'spk_' + uuid.uuid4().hex[:8]
-        return {
+        profile = {
             'id': pid,
             'label': str(item.get('label') or 'Голос')[:64],
             'embedding': vec,
@@ -147,6 +162,10 @@ class SpeakerStore:
             'source': str(item.get('source') or 'manual')
                       if item.get('source') in SOURCES else 'manual',
         }
+        info = self._clean_info(item)
+        if info:
+            profile['info'] = info
+        return profile
 
     def save(self):
         """Atomic write, in the same style as config.save_settings / save_actions."""
@@ -193,11 +212,12 @@ class SpeakerStore:
             return {'status': 'known', 'id': pid, 'score': round(score, 4)}
         return {'status': 'unknown', 'id': None, 'score': round(score, 4)}
 
-    def enroll(self, embedding, label=None, source='wake'):
+    def enroll(self, embedding, label=None, source='wake', info=None):
         """Add a profile, or refresh an existing one at DEDUP_SCORE and above."""
         vec = _vector(embedding)
         if vec is None:
             return None
+        clean_info = self._clean_info(info) if isinstance(info, dict) else {}
         pid, score = self._best(vec)
         if pid and score >= DEDUP_SCORE:
             profile = next(p for p in self.profiles if p['id'] == pid)
@@ -205,27 +225,69 @@ class SpeakerStore:
             profile['updated_at'] = _now()
             if label:
                 profile['label'] = str(label)[:64]
+            if clean_info:
+                cur = profile.get('info') if isinstance(profile.get('info'), dict) else {}
+                cur.update(clean_info)
+                profile['info'] = cur
             self.save()
             return pid
         pid = self._next_id()
         stamp = _now()
-        self.profiles.append({
+        profile = {
             'id': pid,
             'label': str(label or f'Голос {len(self.profiles) + 1}')[:64],
             'embedding': vec,
             'created_at': stamp,
             'updated_at': stamp,
             'source': source if source in SOURCES else 'manual',
-        })
+        }
+        if clean_info:
+            profile['info'] = clean_info
+        self.profiles.append(profile)
         self.save()
         return pid
 
     # ---- management
     def list(self):
         """Public list: labels and ids, never embeddings."""
-        return [{'id': p['id'], 'label': p['label'], 'source': p['source'],
-                 'created_at': p['created_at'], 'updated_at': p['updated_at']}
-                for p in self.profiles]
+        out = []
+        for p in self.profiles:
+            row = {'id': p['id'], 'label': p['label'], 'source': p['source'],
+                   'created_at': p['created_at'], 'updated_at': p['updated_at']}
+            info = p.get('info')
+            if isinstance(info, dict) and info:
+                row['info'] = dict(info)
+            out.append(row)
+        return out
+
+    def profile(self, pid):
+        for p in self.profiles:
+            if p['id'] == pid:
+                out = {'id': p['id'], 'label': p['label'], 'source': p['source'],
+                       'created_at': p['created_at'], 'updated_at': p['updated_at']}
+                info = p.get('info')
+                if isinstance(info, dict) and info:
+                    out['info'] = dict(info)
+                return out
+        return None
+
+    def update_info(self, pid, info, label=None):
+        if not isinstance(info, dict):
+            return False
+        clean_info = self._clean_info(info)
+        if not clean_info and not label:
+            return False
+        for profile in self.profiles:
+            if profile['id'] == pid:
+                if clean_info:
+                    cur = profile.get('info') if isinstance(profile.get('info'), dict) else {}
+                    cur.update(clean_info)
+                    profile['info'] = cur
+                if label:
+                    profile['label'] = str(label)[:64]
+                profile['updated_at'] = _now()
+                return self.save()
+        return False
 
     def rename(self, pid, label):
         text = str(label or '').strip()[:64]

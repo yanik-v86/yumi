@@ -1,4 +1,6 @@
 """Her voice, ears, wake word and the minds she asks (a mixin for App)."""
+import json
+import re
 import sys
 import threading
 import time
@@ -525,13 +527,55 @@ class SensesMixin:
             time.sleep(0.1)
         return False
 
-    def _acquaintance_set(self, phase, action=None):
+    def _extract_acquaintance_info(self, text):
+        """Pull name/city/music/work/hobbies from a free-form acquaintance transcript."""
+        text = ' '.join(str(text or '').split()).strip()
+        if not text:
+            return {}
+        settings = getattr(self.brain, 'settings', {}) or {}
+        prompt = (
+            'Extract user profile fields from this self-introduction. '
+            'Return ONLY a JSON object with keys: '
+            'name, city, music, work, hobbies, about. '
+            'Use empty string for unknown fields. Keep values short. '
+            'The "about" field may contain one short extra detail if present.\n\n'
+            f'Text: {text}'
+        )
+        try:
+            reply = chat.ask(settings, [{'role': 'user', 'content': prompt}], timeout=20)
+        except Exception:
+            reply = ''
+        info = {}
+        if reply:
+            # try to find JSON in reply
+            m = re.search(r'\{[\s\S]*\}', reply)
+            if m:
+                try:
+                    data = json.loads(m.group(0))
+                    if isinstance(data, dict):
+                        for k in ('name', 'city', 'music', 'work', 'hobbies', 'about'):
+                            v = data.get(k)
+                            if isinstance(v, str) and v.strip():
+                                info[k] = v.strip()[:256]
+                except Exception:
+                    pass
+        if not info:
+            info['about'] = text[:256]
+        return info
+
+    def _acquaintance_set(self, phase, action=None, **extra):
+        cur = getattr(self, 'acquaintance', {}) or {}
         self.acquaintance = {
             'active': phase in ('waiting_tts', 'recording', 'processing'),
             'phase': str(phase),
-            'action': action or getattr(self, 'acquaintance', {}).get('action'),
+            'action': action or cur.get('action'),
             'at': time.time(),
         }
+        for k in ('label', 'already', 'error'):
+            if k in extra:
+                self.acquaintance[k] = extra[k]
+            elif k in cur and phase not in ('waiting_tts',):
+                self.acquaintance[k] = cur[k]
         web = getattr(self, 'web', None)
         if web and getattr(web, 'running', False):
             try:
@@ -562,7 +606,24 @@ class SensesMixin:
                     GLib.idle_add(rec_start)
                     time.sleep(0.15)  # let UI publish before blocking record
                 if action in ('speaker_enroll', 'speaker_acquaintance'):
-                    result = ears.speaker_enroll()
+                    lang = str(getattr(self.brain, 'settings', {}).get('speech_lang', 'ru') or 'ru')
+                    secs = 15.0 if action == 'speaker_acquaintance' else 4.0
+                    result = ears.speaker_enroll(secs=secs, lang=lang)
+                    if action == 'speaker_acquaintance' and isinstance(result, dict) and result.get('ok'):
+                        if result.get('created', True):
+                            text = str(result.get('text') or '').strip()
+                            info = self._extract_acquaintance_info(text)
+                            spk_id = result.get('id')
+                            if spk_id and info:
+                                upd = ears.speaker_update(spk_id, label=info.get('name'), info=info)
+                                if isinstance(upd, dict) and upd.get('ok'):
+                                    result['profile'] = upd.get('profile') or result.get('profile')
+                                    result['profiles'] = upd.get('profiles') or result.get('profiles')
+                                    if info.get('name'):
+                                        result['label'] = info['name']
+                            result['extracted_info'] = info
+                        else:
+                            result['extracted_info'] = {}
                 elif action == 'speaker_test':
                     result = ears.speaker_test()
                 elif action == 'speaker_delete':
@@ -587,7 +648,15 @@ class SensesMixin:
                 self._speaker_action_done(action, result, pid)
                 if action == 'speaker_acquaintance':
                     ok = isinstance(result, dict) and bool(result.get('ok'))
-                    self._acquaintance_set('done' if ok else 'error', action)
+                    label = ''
+                    already = False
+                    if isinstance(result, dict):
+                        profile = result.get('profile') if isinstance(result.get('profile'), dict) else {}
+                        label = str(profile.get('label') or result.get('label') or '')
+                        already = (not result.get('created', True)) if ok else False
+                    err = '' if ok else str((result or {}).get('error') or '')
+                    self._acquaintance_set('done' if ok else 'error', action,
+                                           label=label, already=already, error=err)
                 return False
             GLib.idle_add(done)
 
@@ -608,12 +677,18 @@ class SensesMixin:
             return
         if action in ('speaker_enroll', 'speaker_acquaintance'):
             pid = result.get('id') or pid
-            label = next((p.get('label') for p in (result.get('profiles') or [])
-                          if p.get('id') == pid), None) or str(pid or '')
+            profile = result.get('profile') if isinstance(result.get('profile'), dict) else {}
+            label = (profile.get('label')
+                     or next((p.get('label') for p in (result.get('profiles') or [])
+                              if p.get('id') == pid), None)
+                     or str(pid or ''))
             b._speaker_remember({'status': 'known', 'id': pid, 'score': 1.0,
                                  'joined_id': None})
-            b.say('acquaintance_ok' if action == 'speaker_acquaintance' else 'speaker_ready',
-                  label=label)
+            if action == 'speaker_acquaintance' and not result.get('created', True):
+                b.say('acquaintance_already', label=label)
+            else:
+                b.say('acquaintance_ok' if action == 'speaker_acquaintance' else 'speaker_ready',
+                      label=label)
         elif action == 'speaker_test':
             field = result.get('speaker') or {}
             if field.get('id'):

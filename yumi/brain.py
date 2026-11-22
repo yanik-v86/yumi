@@ -1395,8 +1395,13 @@ class Brain(Extras):
         """what the panel may see: profiles, participants, the last voice, no vectors"""
         try:
             from . import speaker as voices
-            profiles = [{'id': str(p.get('id') or ''), 'label': str(p.get('label') or '')}
-                        for p in (voices.snapshot(reload=True).get('profiles') or [])]
+            profiles = []
+            for p in (voices.snapshot(reload=True).get('profiles') or []):
+                row = {'id': str(p.get('id') or ''), 'label': str(p.get('label') or '')}
+                info = p.get('info')
+                if isinstance(info, dict) and info:
+                    row['info'] = {k: str(v)[:256] for k, v in info.items() if isinstance(v, str) and v}
+                profiles.append(row)
         except Exception:                   # noqa: BLE001 - a status call must never throw
             profiles = []
         conv = self.conversation.snapshot(self.now)
@@ -1451,6 +1456,11 @@ class Brain(Extras):
         self.note_pending = False
         self.menu = None
         self.close_radial()
+        cur = getattr(self, '_speaker_current', None)
+        if isinstance(cur, dict) and cur.get('id') and cur.get('status') == 'known':
+            label = cur.get('label') or self._voice_label(cur.get('id')) or str(cur.get('id'))
+            self.say('acquaintance_already', label=label)
+            return
         self.say('acquaintance_again' if again else 'acquaintance_intro')
         self.requests.append(('speaker_acquaintance', None))
 

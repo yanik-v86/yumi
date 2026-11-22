@@ -119,7 +119,7 @@ def test_speaker_acquaintance_action_path_mock(monkeypatch):
         def wake_resume(self, was_on): calls.append(('resume', was_on))
         def web_sync_soon(self): calls.append(('sync',))
 
-    monkeypatch.setattr(senses.ears, 'speaker_enroll', lambda: {'ok': True, 'id': 'spk_01', 'profiles': [{'id': 'spk_01', 'label': 'Голос 1'}]})
+    monkeypatch.setattr(senses.ears, 'speaker_enroll', lambda **_kw: {'ok': True, 'id': 'spk_01', 'created': True, 'profiles': [{'id': 'spk_01', 'label': 'Голос 1'}]})
     # run GLib.idle_add callbacks immediately
     monkeypatch.setattr(senses.GLib, 'idle_add', lambda fn, *a: fn(*a) or False)
 
@@ -169,7 +169,7 @@ def test_acquaintance_fail_on_noisy_or_short_voice(monkeypatch):
         def web_sync_soon(self): calls.append(('sync',))
 
     monkeypatch.setattr(senses.ears, 'speaker_enroll',
-                        lambda: {'ok': False, 'error': 'not enough clear voice'})
+                        lambda **_kw: {'ok': False, 'error': 'not enough clear voice'})
     monkeypatch.setattr(senses.GLib, 'idle_add', lambda fn, *a: fn(*a) or False)
     f = Fake(); f.speaker_action('speaker_acquaintance')
     for _ in range(50):
@@ -207,7 +207,7 @@ def test_acquaintance_nomodel(monkeypatch):
         def web_sync_soon(self): pass
 
     monkeypatch.setattr(senses.ears, 'speaker_enroll',
-                        lambda: {'ok': False, 'error': 'speaker model is not available'})
+                        lambda **_kw: {'ok': False, 'error': 'speaker model is not available'})
     monkeypatch.setattr(senses.GLib, 'idle_add', lambda fn, *a: fn(*a) or False)
     f = Fake(); f.speaker_action('speaker_acquaintance')
     for _ in range(50):
@@ -243,3 +243,100 @@ def test_wait_voice_quiet_blocks_until_tts_drains():
     dt = time.time() - t0
     assert ok is True
     assert dt >= 0.25
+
+
+def test_acquaintance_begin_skips_if_already_known():
+    b = brain()
+    b._speaker_current = {'id': 'spk_1', 'label': 'Николас', 'status': 'known', 'score': 0.9}
+    b.requests.clear()
+    b.acquaintance_begin()
+    kinds = [r[0] for r in b.requests]
+    assert 'speaker_acquaintance' not in kinds, b.requests
+    text = str((b.bubble or {}).get('text') or '').lower()
+    assert 'знаком' in text or 'николас' in text.lower(), b.bubble
+
+
+def test_acquaintance_already_known_on_dedup(monkeypatch):
+    import time
+    from yumi.ui import senses
+
+    calls = []
+    class FakeBrain:
+        now = 0.0; talk_until = 0.0
+        _speaker_current = None; _speaker_last_event = ''; _pending_speaker = None
+        settings = {'speech_lang': 'ru'}
+        conversation = type('C', (), {'add_participant': staticmethod(lambda *_: None),
+                                      'remove_participant': staticmethod(lambda *_: None),
+                                      'clear_participants': staticmethod(lambda *_: None)})()
+        def _speaker_remember(self, spk): calls.append(('remember', spk.get('id')))
+        def say(self, event, **kw): calls.append(('say', event, kw.get('label'))); return True
+        def say_text(self, text, **kw): calls.append(('say_text', text)); return True
+        def set_face(self, face, ttl=None): pass
+        def _voice_label(self, pid): return str(pid)
+
+    class Fake(senses.SensesMixin):
+        brain = FakeBrain()
+        voice_queue = []; _voice_ready = {}; voice_pending = 0; voice_streaming = False
+        def wake_pause(self): return True
+        def wake_resume(self, was_on): calls.append(('resume', was_on))
+        def web_sync_soon(self): calls.append(('sync',))
+
+    monkeypatch.setattr(senses.ears, 'speaker_enroll',
+                        lambda **_kw: {'ok': True, 'id': 'spk_01', 'created': False,
+                                       'profile': {'id': 'spk_01', 'label': 'Николас'},
+                                       'profiles': [{'id': 'spk_01', 'label': 'Николас'}]})
+    monkeypatch.setattr(senses.GLib, 'idle_add', lambda fn, *a: fn(*a) or False)
+    f = Fake(); f.speaker_action('speaker_acquaintance')
+    for _ in range(50):
+        if ('resume', True) in calls: break
+        time.sleep(0.02)
+    assert ('say', 'acquaintance_already', 'Николас') in calls, calls
+    assert f.acquaintance['phase'] == 'done'
+    assert f.acquaintance.get('already') is True
+
+
+def test_acquaintance_extracts_profile_info(monkeypatch):
+    import time
+    from yumi.ui import senses
+
+    calls = []
+    class FakeBrain:
+        now = 0.0; talk_until = 0.0
+        _speaker_current = None; _speaker_last_event = ''; _pending_speaker = None
+        settings = {'speech_lang': 'ru'}
+        conversation = type('C', (), {'add_participant': staticmethod(lambda *_: None),
+                                      'remove_participant': staticmethod(lambda *_: None),
+                                      'clear_participants': staticmethod(lambda *_: None)})()
+        def _speaker_remember(self, spk): calls.append(('remember', spk.get('id')))
+        def say(self, event, **kw): calls.append(('say', event, kw.get('label'))); return True
+        def say_text(self, text, **kw): calls.append(('say_text', text)); return True
+        def set_face(self, face, ttl=None): pass
+        def _voice_label(self, pid): return str(pid)
+
+    class Fake(senses.SensesMixin):
+        brain = FakeBrain()
+        voice_queue = []; _voice_ready = {}; voice_pending = 0; voice_streaming = False
+        def wake_pause(self): return True
+        def wake_resume(self, was_on): calls.append(('resume', was_on))
+        def web_sync_soon(self): pass
+
+    monkeypatch.setattr(senses.ears, 'speaker_enroll',
+                        lambda **_kw: {'ok': True, 'id': 'spk_01', 'created': True,
+                                       'text': 'Меня зовут Николас, живу в Ялте, слушаю рок, работаю программистом, хобби шахматы',
+                                       'profile': {'id': 'spk_01', 'label': 'Голос 1'},
+                                       'profiles': [{'id': 'spk_01', 'label': 'Голос 1'}]})
+    monkeypatch.setattr(senses.chat, 'ask',
+                        lambda *a, **k: '{"name":"Николас","city":"Ялта","music":"рок","work":"программист","hobbies":"шахматы","about":""}')
+    def fake_update(pid, label=None, info=None):
+        calls.append(('update', pid, label, info))
+        return {'ok': True, 'profile': {'id': pid, 'label': label, 'info': info},
+                'profiles': [{'id': pid, 'label': label, 'info': info}]}
+    monkeypatch.setattr(senses.ears, 'speaker_update', fake_update)
+    monkeypatch.setattr(senses.GLib, 'idle_add', lambda fn, *a: fn(*a) or False)
+
+    f = Fake(); f.speaker_action('speaker_acquaintance')
+    for _ in range(50):
+        if ('resume', True) in calls: break
+        time.sleep(0.02)
+    assert any(c[0] == 'update' and c[2] == 'Николас' and c[3].get('city') == 'Ялта' for c in calls), calls
+    assert ('say', 'acquaintance_ok', 'Николас') in calls, calls
