@@ -7,7 +7,53 @@ import time
 
 from gi.repository import GLib
 
-from yumi import addressing, chat, config, ears, memory, music, notes, system, tts, voice
+from yumi import addressing, chat, config, ears, memory, music, notes, speaker as voices, system, tts, voice
+
+
+_PROFILE_FIELD_STOP = frozenset((
+    'я', 'и', 'а', 'но', 'живу', 'работаю', 'работает', 'увлекаюсь', 'хобби',
+    'музыку', 'люблю', 'город', 'в', 'во', 'на', 'где', 'что', 'как', 'мой',
+    'моё', 'мое', 'мне', 'из', 'по', 'с', 'со', 'это', 'был', 'была',
+    'and', 'but', 'i', 'live', 'work', 'my', 'hobby', 'music', 'in', 'is',
+))
+
+
+def _first_profile_field(value):
+    """The first 1–3 words of a captured field, before the next field starts."""
+    out = []
+    for word in str(value or '').split():
+        clean = word.strip('.,!?;:—-«»"\'')
+        if clean.lower() in _PROFILE_FIELD_STOP:
+            break
+        if clean:
+            out.append(clean)
+        if len(out) == 3:
+            break
+    return ' '.join(out)[:64]
+
+
+def local_profile_fields(text):
+    """A modest RU/EN fallback for «меня зовут …» when the mind is offline.
+
+    The guided interview asks for a name and a city first; those two are easy
+    to read without an LLM.  Without this, a missing API key left the profile
+    labelled «Голос 1» and she later said «Тебя зовут Голос 1».
+    """
+    low = ' '.join(str(text or '').lower().split())
+    if not low:
+        return {}
+    out = {}
+    m = re.search(r'(?:меня\s+зовут|зовут\s+меня|my\s+name\s+is|i\s+am|im|this\s+is|это)\s+([^,.!?;]+)', low)
+    if m:
+        name = _first_profile_field(m.group(1))
+        if name and not voices.is_generic_label(name):
+            out['name'] = name[:1].upper() + name[1:]
+    m = re.search(r'(?:я\s+живу\s+в\s+(?:городе\s+)?|живу\s+в\s+(?:городе\s+)?|город\s+|i\s+live\s+in\s+|live\s+in\s+)([^,.!?;]+)', low)
+    if m:
+        city = _first_profile_field(m.group(1))
+        if city:
+            out['city'] = city[:1].upper() + city[1:]
+    return out
 
 
 class SensesMixin:
@@ -49,6 +95,10 @@ class SensesMixin:
         self.voice_id = bid
         if not blips and not text:
             return
+        # one whole line is being prepared.  The acquaintance recording waits
+        # for this count to clear: otherwise it starts while her introduction
+        # is still being synthesized and the instruction is cut off mid-word.
+        self.voice_pending += 1
         path = config.CACHE_DIR / f'voice{bid % 3}.wav'
         real = bool(text) and self.settings.get('voice_kind') == 'tts'
 
@@ -60,10 +110,18 @@ class SensesMixin:
                 try:
                     config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
                     voice.render(blips, path, seed=bid, end_pitch=end_pitch, volume=volume)
+                    p = path
                 except OSError:
-                    return
-                p = path
-            GLib.idle_add(lambda: self.voice_start(p, bid) and False)
+                    p = None
+
+            def ready():
+                try:
+                    if p:
+                        self.voice_start(p, bid)
+                finally:
+                    self.voice_pending = max(0, self.voice_pending - 1)
+                return False
+            GLib.idle_add(ready)
         threading.Thread(target=work, daemon=True).start()
 
     def speak_stream(self, text, bid, volume=0.5):
@@ -510,7 +568,19 @@ class SensesMixin:
 
     # ---- voice profiles from the in-world menu (the panel uses the same daemon routes)
     def _wait_voice_quiet(self, timeout=8.0):
-        """wait until TTS/blips finish so the mic records the user, not Yumi"""
+        """wait until TTS/blips finish so the mic records the user, not Yumi
+
+        A whole line from speak() is not in voice_queue: it lives in
+        voice_pending while it is synthesized and in voice_proc while it
+        sounds.  Without both checks the enrollment mic opened a fraction of a
+        second after the «Nazovi svoyo imya...» request and swallowed her own
+        introduction — the user heard her speech skip and never learned what
+        to say.
+        """
+        def sounding():
+            p = getattr(self, 'voice_proc', None)
+            return bool(p) and p.poll() is None
+
         deadline = time.time() + max(0.5, float(timeout))
         quiet = 0
         while time.time() < deadline:
@@ -518,7 +588,7 @@ class SensesMixin:
             ready = getattr(self, '_voice_ready', None) or {}
             pending = int(getattr(self, 'voice_pending', 0) or 0)
             streaming = bool(getattr(self, 'voice_streaming', False))
-            if not q and not ready and not pending and not streaming:
+            if not q and not ready and not pending and not streaming and not sounding():
                 quiet += 1
                 if quiet >= 3:          # ~0.3s of real silence
                     return True
@@ -559,6 +629,11 @@ class SensesMixin:
                                 info[k] = v.strip()[:256]
                 except Exception:
                     pass
+        if voices.is_generic_label(info.get('name')):
+            info.pop('name', None)
+        for key, value in local_profile_fields(text).items():
+            if not info.get(key):
+                info[key] = value
         if not info:
             info['about'] = text[:256]
         return info
@@ -595,7 +670,9 @@ class SensesMixin:
         def work():
             try:
                 if action == 'speaker_acquaintance':
-                    self._wait_voice_quiet(timeout=10.0)
+                    # the introduction is a long line: let her finish saying
+                    # what to tell us before the microphone starts recording
+                    self._wait_voice_quiet(timeout=45.0)
                     def rec_start():
                         self._acquaintance_set('recording', action)
                         b = self.brain
@@ -610,20 +687,21 @@ class SensesMixin:
                     secs = 15.0 if action == 'speaker_acquaintance' else 4.0
                     result = ears.speaker_enroll(secs=secs, lang=lang)
                     if action == 'speaker_acquaintance' and isinstance(result, dict) and result.get('ok'):
-                        if result.get('created', True):
-                            text = str(result.get('text') or '').strip()
-                            info = self._extract_acquaintance_info(text)
-                            spk_id = result.get('id')
-                            if spk_id and info:
-                                upd = ears.speaker_update(spk_id, label=info.get('name'), info=info)
-                                if isinstance(upd, dict) and upd.get('ok'):
-                                    result['profile'] = upd.get('profile') or result.get('profile')
-                                    result['profiles'] = upd.get('profiles') or result.get('profiles')
-                                    if info.get('name'):
-                                        result['label'] = info['name']
-                            result['extracted_info'] = info
-                        else:
-                            result['extracted_info'] = {}
+                        text = str(result.get('text') or '').strip()
+                        info = self._extract_acquaintance_info(text) if text else {}
+                        spk_id = result.get('id')
+                        name = str(info.get('name') or '').strip()
+                        if spk_id and info:
+                            upd = ears.speaker_update(spk_id, label=name or None, info=info)
+                            if isinstance(upd, dict) and upd.get('ok'):
+                                result['profile'] = upd.get('profile') or result.get('profile')
+                                result['profiles'] = upd.get('profiles') or result.get('profiles')
+                        if name:
+                            result['label'] = name
+                        result['extracted_info'] = info
+                        # A deduped profile with no name yet still needs the
+                        # interview: learning the name is a success, not «already».
+                        result['name_learned'] = bool(name)
                 elif action == 'speaker_test':
                     result = ears.speaker_test()
                 elif action == 'speaker_delete':
@@ -652,8 +730,10 @@ class SensesMixin:
                     already = False
                     if isinstance(result, dict):
                         profile = result.get('profile') if isinstance(result.get('profile'), dict) else {}
-                        label = str(profile.get('label') or result.get('label') or '')
-                        already = (not result.get('created', True)) if ok else False
+                        label = str(result.get('label') or profile.get('label') or '')
+                        if voices.is_generic_label(label):
+                            label = ''
+                        already = ok and not result.get('created', True) and not result.get('name_learned')
                     err = '' if ok else str((result or {}).get('error') or '')
                     self._acquaintance_set('done' if ok else 'error', action,
                                            label=label, already=already, error=err)
@@ -678,17 +758,32 @@ class SensesMixin:
         if action in ('speaker_enroll', 'speaker_acquaintance'):
             pid = result.get('id') or pid
             profile = result.get('profile') if isinstance(result.get('profile'), dict) else {}
-            label = (profile.get('label')
+            name = str((result.get('extracted_info') or {}).get('name') or '').strip()
+            label = (name
+                     or profile.get('label')
                      or next((p.get('label') for p in (result.get('profiles') or [])
                               if p.get('id') == pid), None)
                      or str(pid or ''))
+            label = '' if voices.is_generic_label(label) else str(label).strip()
             b._speaker_remember({'status': 'known', 'id': pid, 'score': 1.0,
                                  'joined_id': None})
-            if action == 'speaker_acquaintance' and not result.get('created', True):
-                b.say('acquaintance_already', label=label)
+            ru = str(b.settings.get('speech_lang', 'ru')) == 'ru'
+            if action == 'speaker_acquaintance':
+                if not result.get('created', True) and not name:
+                    if label:
+                        b.say('acquaintance_already', label=label)
+                    else:
+                        b.say_text('Мы уже знакомы. Назови своё имя, и я запомню его.'
+                                   if ru else "We've met. Tell me your name so I can remember it.",
+                                   voice=True)
+                elif label:
+                    b.say('acquaintance_ok', label=label)
+                else:
+                    b.say_text('Я запомнила твой голос. Назови имя позже — и я его узнаю.'
+                               if ru else "I've remembered your voice. Tell me your name later and I'll know it.",
+                               voice=True)
             else:
-                b.say('acquaintance_ok' if action == 'speaker_acquaintance' else 'speaker_ready',
-                      label=label)
+                b.say('speaker_ready', label=label or str(pid or ''))
         elif action == 'speaker_test':
             field = result.get('speaker') or {}
             if field.get('id'):

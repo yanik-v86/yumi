@@ -1484,9 +1484,12 @@ class Brain(Extras):
         self.close_radial()
         cur = getattr(self, '_speaker_current', None)
         if isinstance(cur, dict) and cur.get('id') and cur.get('status') == 'known':
-            label = cur.get('label') or self._voice_label(cur.get('id')) or str(cur.get('id'))
-            self.say('acquaintance_already', label=label)
-            return
+            label = named_voice_label(cur.get('label') or self._voice_label(cur.get('id')))
+            if label:
+                self.say('acquaintance_already', label=label)
+                return
+            # A placeholder profile («Голос 1» from a wake word) is not an
+            # acquaintance: let the guided interview learn the real name.
         self.say('acquaintance_again' if again else 'acquaintance_intro')
         self.requests.append(('speaker_acquaintance', None))
 
@@ -1693,7 +1696,8 @@ class Brain(Extras):
                         label = str(profs[0].get('label') or '').strip()
                 except Exception:
                     pass
-            if label and label.lower() not in ('голос', 'voice'):
+            label = named_voice_label(label)
+            if label:
                 if lang == 'ru':
                     self.say_text(f'Тебя зовут {label}.', voice=True)
                 else:
@@ -3482,41 +3486,40 @@ CONFIRM_YES = frozenset(('да', 'давай', 'ага', 'ок', 'окей', 'л
 CONFIRM_NO = frozenset(('нет', 'не', 'не надо', 'отмена', 'отмени', 'откажись',
                         'no', 'nope', 'cancel', 'dont', "don't", 'stop'))
 
-ACQUAINTANCE_PHRASES = (
-    'давай познакомимся', 'давай знакомиться', 'давайте познакомимся',
-    'познакомимся', 'хочу познакомиться', 'можно познакомиться',
-    'знакомство', 'запомни мой голос', 'запиши мой голос',
-    'запомни меня', 'запомни голос', 'запиши голос',
-    'давай запишем мой голос', 'запомни как я говорю',
-    'lets get acquainted', "let's get acquainted", 'get acquainted',
-    'remember my voice', 'record my voice', 'learn my voice',
-    'enroll my voice', 'recognize my voice', 'recognise my voice',
-    'know my voice',
-)
+# the canonical matcher lives in addressing.py: the ears' fallback router and
+# the speaker gate need the very same words before the phrase reaches her mind
+ACQUAINTANCE_PHRASES = addressing.ACQUAINTANCE_PHRASES
 
 
 def acquaintance_command(text):
     """True when the phrase asks Yumi to remember the speaker's voice."""
-    low = ' '.join(str(text or '').lower().split())
-    if not low:
-        return False
-    toks = set(nlu.normalize(low))
-    # "Покажи/открой знакомство" is the tour button phrase in Russian UI;
-    # don't hijack it as voice enrollment.
-    if ('знакомств' in low) and (toks & {'покажи', 'показать', 'открой', 'открыть', 'show', 'open'}):
-        if not (toks & {'голос', 'voice', 'запомни', 'запиши', 'запомнить',
-                        'записать', 'remember', 'record', 'learn', 'enroll'}):
-            return False
-    for p in ACQUAINTANCE_PHRASES:
-        if p in low:
-            return True
-    if ('познаком' in low) or ('acquaint' in low):
-        # self-acquaintance / voice enrollment; avoid "познакомь с ..." introductions
-        if toks & {'голос', 'voice', 'запомни', 'запиши', 'запомнить', 'записать',
-                   'remember', 'record', 'learn', 'enroll', 'me', 'us', 'меня', 'нас'}:
-            return True
-        if toks & {'давай', 'давайте', 'хочу', 'можно', "let's", 'lets', 'want'}:
-            return True
+    return addressing.acquaintance_command(text)
+
+
+def named_voice_label(label):
+    """A real name, or '' for a generated placeholder like «Голос 1»."""
+    from . import speaker as voices
+    text = str(label or '').strip()
+    return '' if voices.is_generic_label(text) else text
+
+
+def _wake_spellings(word):
+    """every spelling the ears may write for her name: the fixed hear-say list and
+    the ones learned from live sessions (yumi/stt_daemon.py keeps that book). The
+    import is lazy so the mind stays importable without the ears' dependencies."""
+    try:
+        from . import stt_daemon
+        return stt_daemon.variants(word) | stt_daemon.hearsay_load(word)
+    except Exception:                       # noqa: BLE001 - an optional reader, never fatal
+        return set()
+
+
+def _wake_head(token, word):
+    """True when the first word of a heard phrase is her name, however the ears
+    bent it: «юми», «юмию» (one letter), or a hear-say like «юный» / «юлий» that
+    vosk writes when the name is quiet or the room is loud. Only one token is
+    judged here — a name deep in the phrase is somebody's talking, not her cue."""
+    if not token:
         return False
     if ('голос' in toks or 'voice' in toks) and (
             toks & {'запомни', 'запиши', 'запомнить', 'записать', 'remember',

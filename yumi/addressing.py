@@ -183,6 +183,61 @@ def _addressed(toks):
 
 _WAKES = frozenset(('юми', 'yumi'))
 
+# ---- acquaintance / voice enrollment -------------------------------------
+# «Юми, давай знакомиться» has no imperative stem from RU_VERB_STEMS and no
+# question word, so route() used to call it background talk.  The small ear
+# heard the name and the whole phrase (recogn.txt has both lines), but the
+# wake's fallback threw it away — the phrase was recognized, never processed.
+# brain.acquaintance_command() delegates here, so the ears, the speaker gate
+# and the mind all use one vocabulary.
+ACQUAINTANCE_PHRASES = (
+    'давай познакомимся', 'давай знакомиться', 'давайте познакомимся',
+    'познакомимся', 'хочу познакомиться', 'можно познакомиться',
+    'знакомство', 'запомни мой голос', 'запиши мой голос',
+    'запомни меня', 'запомни голос', 'запиши голос',
+    'давай запишем мой голос', 'запомни как я говорю',
+    'lets get acquainted', "let's get acquainted", 'get acquainted',
+    'remember my voice', 'record my voice', 'learn my voice',
+    'enroll my voice', 'recognize my voice', 'recognise my voice',
+    'know my voice',
+)
+_ACQ_WISH = frozenset((
+    'давай', 'давайте', 'хочу', 'можно', "let's", 'lets', 'want',
+))
+_ACQ_VOICE = frozenset((
+    'голос', 'voice', 'запомни', 'запиши', 'запомнить', 'записать',
+    'remember', 'record', 'learn', 'enroll', 'recognize', 'recognise',
+    'меня', 'нас', 'me', 'us',
+))
+_ACQ_RECORD = _ACQ_VOICE - {'меня', 'нас', 'me', 'us'}
+
+
+def acquaintance_command(text):
+    """True when the phrase asks Yumi to remember the speaker's voice.
+
+    The canonical matcher: the ears' fallback router, the multi-speaker gate
+    and the brain's heard_text() all ask this same question.  «Покажи
+    знакомство» stays the tour button, not an enrollment request.
+    """
+    low = ' '.join(str(text or '').lower().split())
+    if not low:
+        return False
+    toks = set(words(low))
+    if 'знакомств' in low and (toks & {'покажи', 'показать', 'открой', 'открыть',
+                                        'show', 'open'}):
+        if not (toks & _ACQ_RECORD):
+            return False
+    for phrase in ACQUAINTANCE_PHRASES:
+        if phrase in low:
+            return True
+    if 'познаком' in low or 'acquaint' in low:
+        if toks & _ACQ_VOICE:
+            return True
+        return bool(toks & _ACQ_WISH)
+    if (toks & {'голос', 'voice'}) and (toks & _ACQ_RECORD):
+        return True
+    return False
+
 
 def _named_other(raw, toks, labels):
     """A phrase that opens by calling somebody else is not a word for her.
@@ -215,6 +270,8 @@ def addressee(text, labels=()):
         return 'unclear'
     if _named_other(raw, toks, labels):
         return 'other'
+    if acquaintance_command(raw):
+        return 'yumi'
     if any(token in _WAKES for token in toks):
         return 'yumi'
     for token in toks:
@@ -251,6 +308,8 @@ def route(text, hints=()):
     toks = words(raw)
     if not toks:
         return 'ignore'
+    if acquaintance_command(raw):
+        return 'command'
     if _hinted(toks, hints):
         return 'command'
     if _command(toks):

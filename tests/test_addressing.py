@@ -56,4 +56,15 @@ assert stt.fallback_route('как дела') == 'chat'
 assert stt.fallback_route('просто болтовня ни о чем') == 'ignore'
 assert stt.fallback_route('терминал', hints=['терминал']) == 'command'
 
+# the wake hears «юми давай знакомиться» but the Oww ear can miss the name:
+# the vosk fallback must pass the phrase to her instead of logging and dropping it
+for said in ('давай знакомиться', 'давай познакомимся', 'познакомимся',
+             'хочу познакомиться', 'запомни мой голос', 'remember my voice'):
+    assert addressing.route(said) == 'command', said
+    assert addressing.addressee(said) == 'yumi', said
+    assert stt.fallback_route(said) == 'command', said
+assert addressing.acquaintance_command('юми давай знакомиться')
+assert not addressing.acquaintance_command('покажи знакомство')   # the tour stays the tour
+assert not addressing.acquaintance_command('он давно мне знаком')
+
 print('tests/test_addressing.py: ok')
