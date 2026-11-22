@@ -1700,9 +1700,9 @@ class Brain(Extras):
                     self.say_text(f'Your name is {label}.', voice=True)
             else:
                 if lang == 'ru':
-                    self.say_text('Я пока не знаю, как тебя зовут. Скажи «давай познакомимся», и я запомню.', voice=True)
+                    self.say_text('Мы ещё не знакомы. Скажи «Юми, давай познакомимся», и я запомню твоё имя.', voice=True)
                 else:
-                    self.say_text("I don't know your name yet. Say “let's get acquainted” and I'll remember you.", voice=True)
+                    self.say_text("We haven't met yet. Say “Yumi, let's get acquainted” and I'll remember your name.", voice=True)
             return
         if fallback:
             # the name came from the small ear: a command above already ran, and a
