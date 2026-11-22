@@ -87,10 +87,11 @@ Guard от конфликта с туром: «покажи/показать/о�
 
 Файлы: `yumi/speaker.py`, `yumi/stt_daemon.py`, `yumi/ears.py`, `yumi/ui/senses.py`, `yumi/ui/webpanel.py`
 
-- Профиль голоса (`speakers.json`, schema v2) хранит `info`: `name`, `city`, `music`, `work`, `hobbies`, `about` (без embeddings в API).
+- Профиль голоса (`speakers.json`, schema v3) хранит несколько образцов `embeddings` и `info`: `name`, `city`, `music`, `work`, `hobbies`, `about` (без векторов в API). Файлы v1/v2 читаются без миграции.
 - При знакомстве Юми просит назвать имя, город, музыку, работу и хобби; транскрипт берётся из записи enrollment, LLM (`chat.ask`) извлекает поля, профиль обновляется.
 - Если голосовой слепок уже существует (dedup/`created == False` или текущий говорящий уже известен), Юми говорит `acquaintance_already` с именем и останавливает знакомство.
 - Web snapshot/bridge отдают `profiles[].info`; страница «Ушки и голос» показывает данные выбранного профиля.
+- Исправлен разрыв между daemon и модулем: `stt_daemon.py` вызывает `profiles.enroll(..., info=...)`, `profiles.profile()` и `profiles.update_info()`, но на уровне модуля `speaker.py` этих обёрток не было. Из-за `TypeError: enroll() got an unexpected keyword argument 'info'` `/speaker/enroll` падал с HTTP 500, а Юми говорила общее `acquaintance_fail` («не расслышала чистый голос») даже на тихой и хорошо распознаваемой записи. Обёртки добавлены, регрессия покрыта `tests/test_speaker.py`.
 
 ### 3.5 Веб-панель
 
@@ -138,7 +139,7 @@ RU/EN тексты подобраны так, чтобы Юми объяснял
 1. **Запуск**: голосовая команда / меню / веб-кнопка.
 2. **Приглашение**: Юми говорит `acquaintance_intro`.
 3. **Тишина перед записью**: приложение ждёт окончания TTS.
-4. **Запись слепка**: daemon записывает ~4с, проверяет качество, считает embedding.
+4. **Запись слепка**: daemon записывает ~15с, проверяет качество, считает embedding.
 5. **Сохранение**: `speaker.enroll(..., source='manual')` создаёт или обновляет профиль.
 6. **Подтверждение**: Юми говорит `acquaintance_ok` с меткой профиля.
 7. **Ошибка**: `acquaintance_nomodel` или `acquaintance_fail`.
@@ -208,11 +209,12 @@ RU/EN тексты подобраны так, чтобы Юми объяснял
 - `yumi/webpanel/server.py` — route/handler.
 - `yumi/webui/static/js/api.js` — `speakerAcquaintance()`.
 - `yumi/webui/static/js/pages/voice.js` — кнопка «Познакомиться», polling фаз, already, отображение info профиля.
-- `yumi/speaker.py` — schema v2, `info` профиля, `update_info/profile`.
-- `yumi/stt_daemon.py` — `/speaker/enroll` принимает secs/lang/info, возвращает text/created/profile; `/speaker/update`.
+- `yumi/speaker.py` — schema v3 (несколько `embeddings` на профиль, `_best()` по максимуму, `merge()`, `closest()`, `add_sample()`, `SOFT_MATCH_SCORE`), `info` профиля, `update_info/profile`.
+- `yumi/stt_daemon.py` — `/speaker/enroll` принимает secs/lang/info, возвращает text/created/profile; `/speaker/update`; voiceprint на wake берётся из 8-секундного ring-буфера, подавление авто-enroll на командах знакомства, near-miss добавляется в существующий профиль, лог `VOICE` в judge.log.
 - `yumi/ears.py` — `speaker_enroll`/`speaker_update` с параметрами.
 - `tests/test_webpanel.py` — stub + route tests.
 - `tests/test_acquaintance.py` — unit/mock tests.
+- `tests/test_speaker.py` — мульти-образцы, `merge()`, near-miss/чужой голос на wake, старая схема, изоляция `YUMI_SPEAKER_FILE` в `test_fake_backend`.
 - `README.md`, `README.ru.md` — краткое упоминание.
 - `docs/tasks-acquaintance.md`, `docs/handoff-acquaintance.md` — этот комплект.
 

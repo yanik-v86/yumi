@@ -1056,6 +1056,22 @@ def fallback_route(text, hints=()):
     return route(text, hints)
 
 
+def wake_enrollment_allowed(text, alt=''):
+    """A name followed by «давай познакомимся» is not a voiceprint sample.
+
+    The wake used to auto-enroll every addressed phrase.  When the phrase was
+    the acquaintance command itself, a fresh «Голос 1» profile appeared before
+    the guided interview even started; brain.acquaintance_begin() then saw a
+    known speaker and announced «Мы уже знакомы, Голос 1».  Let the interview
+    create that profile instead.  A broken import keeps the old behaviour.
+    """
+    try:
+        from yumi.addressing import acquaintance_command
+    except Exception:                   # noqa: BLE001 - never break the wake over a label
+        return True
+    return not (acquaintance_command(text) or acquaintance_command(alt))
+
+
 # ---- speaker diarisation (all pure modules; never import GTK here)
 _join_candidates = {}                   # voice fingerprint -> one seen addressed phrase
 
@@ -1113,7 +1129,19 @@ def speaker_voice(pcm, text='', join=False, wake=False, hints=()):
 
     may_join = False
     if wake and found['status'] == 'unknown':
-        may_join = True
+        # A near-miss is the same person saying a different phrase: 3D-Speaker
+        # gives 0.35-0.95 for one voice depending on the words.  Add the reading
+        # to the closest profile instead of creating a new «Голос 2» — a generic
+        # label can never be spoken as a name, so the user would hear «мы ещё не
+        # знакомы» right after her own wake word.  Only a genuinely new voice
+        # (below SOFT_MATCH_SCORE) gets a fresh profile.
+        near_id, near_score = profiles.closest(vec)
+        if near_id and near_score >= profiles.SOFT_MATCH_SCORE:
+            pid = profiles.add_sample(near_id, vec)
+            if pid:
+                field = _speaker_field('known', pid, near_score, True, ms)
+        else:
+            may_join = True
     elif join and found['status'] == 'unknown' and tune['join_policy'] != 'off':
         may_join = route(text, hints) != 'ignore' and addressee(text) == 'yumi'
         if may_join and tune['join_policy'] == 'strict':
@@ -1853,12 +1881,23 @@ class Ears:
                        buffer_duration_ms=round(len(ring) / (RATE * 2.0), 2),
                        judge_called=False, final_wake=True,
                        **diag_base('LISTENING'))
-            # the stop ear read the air while the big ear read the tape: its
-            # reading travels with the phrase as alt, just like on the listen
-            # path — «heard … (vosk: …)» in the mind's diary must not be empty
-            tape = wake_pcm or bytes(ring[-RING_MAX:])
-            return {'woke': True, 'text': text, 'alt': vosk_fallback(),
-                    'speaker': speaker_voice(tape, text or '', wake=True),
+            # The word's own phrase (wake_pcm) is usually 1–2 s — too short for
+            # a voice vector when speaker_min_ms is 3 s, so verification always
+            # said 'unknown'.  The ring holds the last ~8 s ending at the wake
+            # and is the same length whether the name was heard by the trained
+            # ear or only by vosk; use it for the print, keep wake_pcm for STT.
+            tape = bytes(ring[-RING_MAX:]) or wake_pcm
+            alt = vosk_fallback() or ''
+            who = speaker_voice(tape, text or '',
+                                wake=wake_enrollment_allowed(text, alt))
+            # the voice verdict belongs in the same diary as the wake itself:
+            # without it a failed recognition is a guess (score and duration
+            # only — never the embedding or the audio).
+            judge_note(f'VOICE {who["status"]} id={who["id"]} '
+                       f'score={who["score"]} ms={who["ms"]} '
+                       f'tape_s={round(len(tape) / (RATE * 2.0), 1)}')
+            return {'woke': True, 'text': text, 'alt': alt,
+                    'speaker': who,
                     'fallback': bool(fallback_wake),
                     'verdict': {'matched': True, 'reason': str(why)[:120],
                                 'fallback': bool(fallback_wake),

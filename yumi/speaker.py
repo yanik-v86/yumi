@@ -18,11 +18,13 @@ from pathlib import Path
 
 from yumi import config
 
-SCHEMA_VERSION = 2
-SUPPORTED_SCHEMA = frozenset((1, 2))
+SCHEMA_VERSION = 3
+SUPPORTED_SCHEMA = frozenset((1, 2, 3))
 DEFAULT_THRESHOLD = 0.65
 DEFAULT_MIN_MS = 1200
-DEDUP_SCORE = 0.95          # a second enroll of the same voice updates the profile
+DEDUP_SCORE = 0.75          # a second enroll of the same voice joins the profile
+SOFT_MATCH_SCORE = 0.55     # a wake near-miss is the same voice, not «Голос 2»
+MAX_EMBEDDINGS = 12         # a profile keeps this many samples of the voice
 SOURCES = frozenset(('wake', 'join', 'manual'))
 PROFILE_INFO_KEYS = ('name', 'city', 'music', 'work', 'hobbies', 'about')
 
@@ -40,6 +42,24 @@ def speaker_file():
 
 def _now():
     return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+
+def is_generic_label(label):
+    """True for an auto-generated label such as «Голос 1» or `spk_03`.
+
+    Such a label is a placeholder, not something Yumi should repeat as a name.
+    """
+    low = ' '.join(str(label or '').lower().split())
+    if not low:
+        return True
+    if low in ('голос', 'voice'):
+        return True
+    parts = low.split()
+    if len(parts) == 2 and parts[0] in ('голос', 'voice') and parts[1].isdigit():
+        return True
+    if low.startswith('spk_') and low[4:].isdigit():
+        return True
+    return False
 
 
 def _vector(value):
@@ -72,6 +92,20 @@ def cosine(a, b):
     if a is None or b is None or len(a) != len(b):
         return 0.0
     return max(-1.0, min(1.0, _dot(a, b)))
+
+
+def _vecs(profile):
+    """All clean sample vectors of a profile (new files keep many, old ones one)."""
+    out = []
+    candidates = [profile.get('embedding')]
+    more = profile.get('embeddings')
+    if isinstance(more, (builtins.list, tuple)):
+        candidates.extend(more)
+    for item in candidates:
+        v = _vector(item)
+        if v is not None and v not in out:
+            out.append(v)
+    return out
 
 
 class SpeakerStore:
@@ -147,8 +181,8 @@ class SpeakerStore:
     def _clean(self, item):
         if not isinstance(item, dict):
             return None
-        vec = _vector(item.get('embedding'))
-        if vec is None:
+        vecs = _vecs(item)
+        if not vecs:
             return None
         pid = str(item.get('id') or '').strip()[:64]
         if not pid:
@@ -156,7 +190,8 @@ class SpeakerStore:
         profile = {
             'id': pid,
             'label': str(item.get('label') or 'Голос')[:64],
-            'embedding': vec,
+            'embedding': vecs[0],
+            'embeddings': vecs[:MAX_EMBEDDINGS],
             'created_at': str(item.get('created_at') or _now())[:32],
             'updated_at': str(item.get('updated_at') or item.get('created_at') or _now())[:32],
             'source': str(item.get('source') or 'manual')
@@ -184,9 +219,10 @@ class SpeakerStore:
 
     # ---- matching
     def _best(self, vec):
+        """Best profile by its closest stored sample (a voice varies by phrase)."""
         best_id, score = None, 0.0
         for profile in self.profiles:
-            s = cosine(vec, profile['embedding'])
+            s = max((cosine(vec, v) for v in _vecs(profile)), default=0.0)
             if s > score:
                 best_id, score = profile['id'], s
         return best_id, score
@@ -197,6 +233,39 @@ class SpeakerStore:
         while f'spk_{n:02d}' in used:
             n += 1
         return f'spk_{n:02d}'
+
+    def closest(self, embedding):
+        """(pid, raw score) of the nearest profile, without applying a threshold.
+
+        The wake path uses this for a near-miss: a phrase that scores 0.60 is
+        still the same person, and adding it as a sample is far better than
+        spawning another generic «Голос 2» profile.
+        """
+        vec = _vector(embedding)
+        return self._best(vec) if vec is not None else (None, 0.0)
+
+    def add_sample(self, pid, embedding, label=None, info=None):
+        """Attach one more reading of an already-known voice to its profile."""
+        profile = next((p for p in self.profiles if p['id'] == pid), None)
+        vec = _vector(embedding)
+        if profile is None or vec is None:
+            return None
+        vecs = _vecs(profile)
+        if vec not in vecs:
+            vecs.append(vec)
+            profile['embeddings'] = vecs[-MAX_EMBEDDINGS:]
+            profile['embedding'] = profile['embeddings'][0]
+        profile['updated_at'] = _now()
+        if label:
+            profile['label'] = str(label)[:64]
+        if isinstance(info, dict):
+            clean = self._clean_info(info)
+            if clean:
+                cur = profile.get('info') if isinstance(profile.get('info'), dict) else {}
+                cur.update(clean)
+                profile['info'] = cur
+        self.save()
+        return pid
 
     def verify(self, embedding, threshold=DEFAULT_THRESHOLD, enabled=True):
         """'known' / 'unknown' / 'disabled' — no vector ever comes back."""
@@ -213,7 +282,13 @@ class SpeakerStore:
         return {'status': 'unknown', 'id': None, 'score': round(score, 4)}
 
     def enroll(self, embedding, label=None, source='wake', info=None):
-        """Add a profile, or refresh an existing one at DEDUP_SCORE and above."""
+        """Add a profile, or add another sample of the same voice at DEDUP_SCORE.
+
+        One utterance scores 0.35–0.95 against another of the very same person
+        with 3D-Speaker; a single vector per profile made repeated enrollments
+        spawn duplicates and made live verification miss.  Keep several samples
+        and match against the closest one.
+        """
         vec = _vector(embedding)
         if vec is None:
             return None
@@ -221,7 +296,11 @@ class SpeakerStore:
         pid, score = self._best(vec)
         if pid and score >= DEDUP_SCORE:
             profile = next(p for p in self.profiles if p['id'] == pid)
-            profile['embedding'] = vec
+            vecs = _vecs(profile)
+            if vec not in vecs:
+                vecs.append(vec)
+                profile['embeddings'] = vecs[-MAX_EMBEDDINGS:]
+                profile['embedding'] = profile['embeddings'][0]
             profile['updated_at'] = _now()
             if label:
                 profile['label'] = str(label)[:64]
@@ -237,6 +316,7 @@ class SpeakerStore:
             'id': pid,
             'label': str(label or f'Голос {len(self.profiles) + 1}')[:64],
             'embedding': vec,
+            'embeddings': [vec],
             'created_at': stamp,
             'updated_at': stamp,
             'source': source if source in SOURCES else 'manual',
@@ -307,6 +387,37 @@ class SpeakerStore:
             return False
         return self.save()
 
+    def merge(self, ids, label=None):
+        """Fold several profiles into one, keeping all of their voice samples.
+
+        Used when wake auto-enrollment and a guided interview made several
+        profiles of the same person; each one holds a different reading of the
+        voice and throwing any of them away loses a match.
+        """
+        ids = {str(x) for x in (ids or [])}
+        rows = [p for p in self.profiles if p['id'] in ids]
+        if len(rows) < 2:
+            return None
+        keep = rows[0]
+        vecs = []
+        info = {}
+        for p in rows:
+            for v in _vecs(p):
+                if v not in vecs:
+                    vecs.append(v)
+            info.update(p.get('info') or {})
+        keep['embeddings'] = vecs[:MAX_EMBEDDINGS]
+        keep['embedding'] = keep['embeddings'][0]
+        if label:
+            keep['label'] = str(label)[:64]
+        if info:
+            keep['info'] = info
+        keep['updated_at'] = _now()
+        keep_id = keep['id']
+        self.profiles = [p for p in self.profiles if p['id'] == keep_id or p['id'] not in ids]
+        self.save()
+        return keep_id
+
     def label(self, pid):
         for profile in self.profiles:
             if profile['id'] == pid:
@@ -339,16 +450,37 @@ def save():
     return store().save()
 
 
-def enroll(embedding, label=None, source='wake'):
-    return store().enroll(embedding, label, source)
+def enroll(embedding, label=None, source='wake', info=None):
+    """The ears daemon's /speaker/enroll passes profile info here."""
+    return store().enroll(embedding, label, source, info=info)
 
 
 def verify(embedding, threshold=DEFAULT_THRESHOLD, enabled=True):
     return store().verify(embedding, threshold, enabled)
 
 
+def closest(embedding):
+    """(pid, raw score) without a threshold — for the wake near-miss path."""
+    return store().closest(embedding)
+
+
+def add_sample(pid, embedding, label=None, info=None):
+    """Add one more reading of an existing voice (no new profile)."""
+    return store().add_sample(pid, embedding, label, info)
+
+
 def list():                              # noqa: A001 - the module API mirrors the store
     return store().list()
+
+
+def profile(pid):
+    """Public metadata for one profile (no embedding), or None."""
+    return store().profile(pid)
+
+
+def update_info(pid, info, label=None):
+    """Merge extracted acquaintance fields, optionally renaming the profile."""
+    return store().update_info(pid, info, label)
 
 
 def rename(pid, label):
@@ -357,6 +489,11 @@ def rename(pid, label):
 
 def delete(pid):
     return store().delete(pid)
+
+
+def merge(ids, label=None):
+    """Fold several profiles into one (see SpeakerStore.merge)."""
+    return store().merge(ids, label)
 
 
 def snapshot(reload=False):
