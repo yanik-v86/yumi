@@ -95,6 +95,7 @@ def test_speaker_acquaintance_action_path_mock(monkeypatch):
         _speaker_current = None
         _speaker_last_event = ''
         _pending_speaker = None
+        settings = {'speech_lang': 'ru'}
         class conversation:
             @staticmethod
             def add_participant(pid): calls.append(('add', pid))
@@ -104,6 +105,8 @@ def test_speaker_acquaintance_action_path_mock(monkeypatch):
             def clear_participants(): calls.append(('clear',))
         def _speaker_remember(self, spk): calls.append(('remember', spk.get('id')))
         def say(self, event, **kw): calls.append(('say', event, kw.get('label'))); return True
+        def say_text(self, text, **kw): calls.append(('say_text', text, kw.get('voice'))); return True
+        def set_face(self, face, ttl=None): calls.append(('face', face))
         def _voice_label(self, pid): return str(pid)
 
     class Fake(senses.SensesMixin):
@@ -131,6 +134,13 @@ def test_speaker_acquaintance_action_path_mock(monkeypatch):
     assert ('resume', True) in calls, calls
     assert ('remember', 'spk_01') in calls, calls
     assert ('say', 'acquaintance_ok', 'Голос 1') in calls, calls
+    # recording start/end signals: non-voice bubbles and face
+    assert any(c[0] == 'say_text' and c[2] is False and 'Слушаю' in c[1] for c in calls), calls
+    assert any(c[0] == 'say_text' and c[2] is False and 'Запись закончена' in c[1] for c in calls), calls
+    assert ('face', 'listening') in calls, calls
+    assert ('face', 'think') in calls, calls
+    assert f.acquaintance['phase'] == 'done'
+    assert f.acquaintance['active'] is False
 
 
 def test_acquaintance_fail_on_noisy_or_short_voice(monkeypatch):
@@ -141,11 +151,14 @@ def test_acquaintance_fail_on_noisy_or_short_voice(monkeypatch):
     class FakeBrain:
         now = 0.0; talk_until = 0.0
         _speaker_current = None; _speaker_last_event = ''; _pending_speaker = None
+        settings = {'speech_lang': 'ru'}
         conversation = type('C', (), {'add_participant': staticmethod(lambda *_: None),
                                       'remove_participant': staticmethod(lambda *_: None),
                                       'clear_participants': staticmethod(lambda *_: None)})()
         def _speaker_remember(self, spk): calls.append(('remember', spk))
         def say(self, event, **kw): calls.append(('say', event)); return True
+        def say_text(self, text, **kw): calls.append(('say_text', text, kw.get('voice'))); return True
+        def set_face(self, face, ttl=None): calls.append(('face', face))
         def _voice_label(self, pid): return str(pid)
 
     class Fake(senses.SensesMixin):
@@ -164,6 +177,8 @@ def test_acquaintance_fail_on_noisy_or_short_voice(monkeypatch):
         time.sleep(0.02)
     assert ('say', 'acquaintance_fail') in calls, calls
     assert ('sync',) in calls, calls
+    assert f.acquaintance['phase'] == 'error'
+    assert f.acquaintance['active'] is False
 
 
 def test_acquaintance_nomodel(monkeypatch):
@@ -174,11 +189,14 @@ def test_acquaintance_nomodel(monkeypatch):
     class FakeBrain:
         now = 0.0; talk_until = 0.0
         _speaker_current = None; _speaker_last_event = ''; _pending_speaker = None
+        settings = {'speech_lang': 'ru'}
         conversation = type('C', (), {'add_participant': staticmethod(lambda *_: None),
                                       'remove_participant': staticmethod(lambda *_: None),
                                       'clear_participants': staticmethod(lambda *_: None)})()
         def _speaker_remember(self, spk): pass
         def say(self, event, **kw): calls.append(('say', event)); return True
+        def say_text(self, text, **kw): calls.append(('say_text', text, kw.get('voice'))); return True
+        def set_face(self, face, ttl=None): calls.append(('face', face))
         def _voice_label(self, pid): return str(pid)
 
     class Fake(senses.SensesMixin):
@@ -196,6 +214,7 @@ def test_acquaintance_nomodel(monkeypatch):
         if ('resume', True) in calls: break
         time.sleep(0.02)
     assert ('say', 'acquaintance_nomodel') in calls, calls
+    assert f.acquaintance['phase'] == 'error'
 
 
 def test_wait_voice_quiet_blocks_until_tts_drains():

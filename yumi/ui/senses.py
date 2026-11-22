@@ -525,17 +525,42 @@ class SensesMixin:
             time.sleep(0.1)
         return False
 
+    def _acquaintance_set(self, phase, action=None):
+        self.acquaintance = {
+            'active': phase in ('waiting_tts', 'recording', 'processing'),
+            'phase': str(phase),
+            'action': action or getattr(self, 'acquaintance', {}).get('action'),
+            'at': time.time(),
+        }
+        web = getattr(self, 'web', None)
+        if web and getattr(web, 'running', False):
+            try:
+                web.publish('status', self._web_snapshot(light=True))
+            except Exception:
+                pass
+
     def speaker_action(self, action, pid=None, label=None):
         """record/check/rename/forget a voice in a worker: the wake ear is lent to the mic"""
         if action not in ('speaker_enroll', 'speaker_test', 'speaker_clear',
                           'speaker_delete', 'speaker_rename', 'speaker_acquaintance'):
             return
         was_on = self.wake_pause()
+        if action == 'speaker_acquaintance':
+            self._acquaintance_set('waiting_tts', action)
 
         def work():
             try:
                 if action == 'speaker_acquaintance':
                     self._wait_voice_quiet(timeout=10.0)
+                    def rec_start():
+                        self._acquaintance_set('recording', action)
+                        b = self.brain
+                        b.set_face('listening', 6.0)
+                        b.say_text('Слушаю, говори...' if str(b.settings.get('speech_lang', 'ru')) == 'ru'
+                                   else 'Listening, speak now...', face='listening', voice=False)
+                        return False
+                    GLib.idle_add(rec_start)
+                    time.sleep(0.15)  # let UI publish before blocking record
                 if action in ('speaker_enroll', 'speaker_acquaintance'):
                     result = ears.speaker_enroll()
                 elif action == 'speaker_test':
@@ -552,8 +577,17 @@ class SensesMixin:
                 result = {'ok': False, 'error': str(exc)[:160]}
 
             def done():
+                if action == 'speaker_acquaintance':
+                    self._acquaintance_set('processing', action)
+                    b = self.brain
+                    b.set_face('think', 4.0)
+                    b.say_text('Запись закончена, обрабатываю...' if str(b.settings.get('speech_lang', 'ru')) == 'ru'
+                               else 'Recording finished, processing...', face='think', voice=False)
                 self.wake_resume(was_on)
                 self._speaker_action_done(action, result, pid)
+                if action == 'speaker_acquaintance':
+                    ok = isinstance(result, dict) and bool(result.get('ok'))
+                    self._acquaintance_set('done' if ok else 'error', action)
                 return False
             GLib.idle_add(done)
 

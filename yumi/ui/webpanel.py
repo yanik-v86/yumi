@@ -410,6 +410,8 @@ class PanelMixin:
                                 else {'state': 'off', 'owner': None, 'generation': 0,
                                       'since': 0, 'reason': '', 'wake_enabled': False,
                                       'transitions': []}),
+                'acquaintance': dict(getattr(self, 'acquaintance', None) or
+                                     {'active': False, 'phase': 'idle', 'action': None, 'at': 0}),
                 'doctor': getattr(self, 'doctor_last', None),
                 'models_check': models.cached(),
                 'tap_ears': bool(s.get('tap_ears')),

@@ -65,9 +65,12 @@ Guard от конфликта с туром: «покажи/показать/о�
 - Добавлен `_wait_voice_quiet(timeout=8.0)`: ждёт, пока очередь TTS/blips не опустеет, чтобы запись не захватила голос Юми.
 - Для `speaker_acquaintance` worker:
   1. ставит wake loop на паузу;
-  2. ждёт тишину TTS;
-  3. вызывает `ears.speaker_enroll()`;
-  4. возвращается в GTK поток, возобновляет wake и озвучивает результат.
+  2. выставляет фазу `waiting_tts` в `runtime.acquaintance` и публикует status;
+  3. ждёт тишину TTS;
+  4. перед записью выставляет `recording`, показывает bubble `Слушаю, говори...` / `Listening, speak now...` (`voice=False`) и face `listening`;
+  5. вызывает `ears.speaker_enroll()`;
+  6. после записи выставляет `processing`, показывает bubble `Запись закончена, обрабатываю...` (`voice=False`, face `think`);
+  7. возобновляет wake, озвучивает результат, выставляет `done`/`error`.
 - Результат:
   - успех: `acquaintance_ok` с `{label}`;
   - нет модели: `acquaintance_nomodel`;
@@ -83,9 +86,10 @@ Guard от конфликта с туром: «покажи/показать/о�
 - Bridge: `speaker_acquaintance()` вызывает GTK `app.speaker_action('speaker_acquaintance')` и возвращает `{ok: True, started: True}`.
 - Server: `POST /api/speaker/acquaintance` с CSRF+audit.
 - API: `api.speakerAcquaintance()`.
-- Voice page: кнопка «Познакомиться» / "Get acquainted" запускает guided flow, показывает подсказку и делает явный polling `ctx.refreshStatus()` ~12 секунд. Если появляется новый профиль или текущий голос распознан, UI показывает итог; иначе показывает подсказку проверить микрофон/модель.
+- Voice page: кнопка «Познакомиться» / "Get acquainted" запускает guided flow, показывает подсказку и делает явный polling `ctx.refreshStatus()` ~20 секунд. UI читает `runtime.acquaintance.phase` и показывает сигналы: ожидание TTS, 🔴 запись, запись закончена/обработка, готово/ошибка.
+- Snapshot: `runtime.acquaintance` содержит `{active, phase, action, at}`.
 
-Важно: web endpoint асинхронный по смыслу. Он возвращает `started`, а не готовый профиль. Итог определяется polling'ом статуса и обычным status/speaker snapshot; для более чистого UX можно добавить отдельное SSE событие завершения.
+Важно: web endpoint асинхронный по смыслу. Он возвращает `started`, а не готовый профиль. Итог определяется polling'ом статуса и фазой `runtime.acquaintance`; для более чистого UX можно добавить отдельное SSE событие завершения.
 
 ### 3.5 Строки/тексты
 
@@ -164,8 +168,8 @@ RU/EN тексты подобраны так, чтобы Юми объяснял
 
 ## 6. Известные ограничения / следующий шаг
 
-1. **Web итог всё ещё эвристический**. Endpoint возвращает `started`; UI делает polling status ~12с и смотрит новый профиль/распознанный голос. Для более точного UX добавить отдельное SSE событие `speaker_acquaintance`/result или явное состояние в snapshot.
-2. **Нет явной индикации записи**. Желательно bubble/face «слушаю для знакомства», блокировка повторного запуска на bridge/server.
+1. **Web итог всё ещё эвристический**. Endpoint возвращает `started`; UI делает polling status ~20с и читает `runtime.acquaintance.phase` (`waiting_tts/recording/processing/done/error`). Для более точного UX можно добавить отдельное SSE событие завершения.
+2. **Нет серверной блокировки повторного запуска**. Пока идёт запись, повторный запуск на bridge/server не блокируется явно.
 3. **Нет отдельной команды «познакомиться заново»**. Сейчас повторный запуск делает обычный enroll; можно добавить `again=True` и специальный текст.
 4. **Ручной smoke не выполнен**. Нужна проверка на реальном микрофоне (см. чек-лист ниже).
 

@@ -333,33 +333,49 @@ export function render(view, ctx) {
         if (speakerBusy) return;
         speakerBusy = true;
         acquaintanceBtn.disabled = true;
+        const phaseText = (acq) => {
+          const p = String(acq?.phase || '');
+          if (p === 'waiting_tts') return say('Юми договаривает подсказку…', 'Yumi is finishing her prompt…');
+          if (p === 'recording') return say('🔴 Идёт запись: говори обычным голосом.', '🔴 Recording: speak in your normal voice.');
+          if (p === 'processing') return say('Запись закончена, обрабатываю голос…', 'Recording finished, processing the voice…');
+          if (p === 'done') return say('Знакомство завершено.', 'Acquaintance finished.');
+          if (p === 'error') return say('Знакомство не получилось. Проверь микрофон и модель.', 'Acquaintance failed. Check microphone and model.');
+          return say('Юми начинает знакомство…', 'Yumi is starting the acquaintance…');
+        };
         setNotice(say('Юми начинает знакомство: послушай её подсказку и скажи фразу обычным голосом.',
           'Yumi is starting the acquaintance: listen to her prompt and say a phrase in your normal voice.'));
         try {
           await api.speakerAcquaintance();
           const before = new Set((status.runtime?.speaker?.profiles || []).map((p) => p.id));
-          for (let i = 0; i < 24; i++) {  // ~12s, enough for TTS + 4s record
+          for (let i = 0; i < 40; i++) {  // ~20s: TTS + 4s record + processing
             await new Promise((r) => setTimeout(r, 500));
             await ctx.refreshStatus();
             status = ctx.status || status;
+            const acq = status.runtime?.acquaintance || {};
+            setNotice(phaseText(acq));
             const profiles = status.runtime?.speaker?.profiles || [];
             const added = profiles.find((p) => !before.has(p.id));
-            const current = status.runtime?.speaker?.current;
-            if (added?.id) {
-              speakerPick = added.id;
-              speakerName = labelNow(added.id);
-              setNotice(say(`Готово: ${speakerName}. Теперь можно нажать «Проверить голос».`,
-                `Done: ${speakerName}. Now you can press “Check a voice”.`));
+            if (acq.phase === 'done') {
+              if (added?.id) {
+                speakerPick = added.id;
+                speakerName = labelNow(added.id);
+              }
+              const name = added?.id ? labelNow(added.id) : '';
+              setNotice(name
+                ? say(`Готово: ${name}. Теперь можно нажать «Проверить голос».`,
+                  `Done: ${name}. Now you can press “Check a voice”.`)
+                : say('Знакомство завершено. Проверь профиль в списке голосов.',
+                  'Acquaintance finished. Check the profile in the voice list.'));
               return;
             }
-            if (current?.id && status.runtime?.speaker?.last_event === 'recognized') {
-              setNotice(say(`Юми услышала голос: ${labelNow(current.id)}.`,
-                `Yumi heard a voice: ${labelNow(current.id)}.`));
+            if (acq.phase === 'error') {
+              setNotice(say('Знакомство не получилось. Проверь микрофон, тишину вокруг и модель голоса.',
+                'Acquaintance failed. Check microphone, ambient noise, and voice model.'));
               return;
             }
           }
-          setNotice(say('Знакомство запущено. Если профиль не появился, проверь микрофон/модель и попробуй ещё раз.',
-            'Acquaintance started. If no profile appeared, check microphone/model and try again.'));
+          setNotice(say('Знакомство не подтвердилось по статусу. Проверь микрофон/модель и попробуй ещё раз.',
+            'Acquaintance status was not confirmed. Check microphone/model and try again.'));
         } catch (err) {
           setNotice(err.message);
           errToast(err);
