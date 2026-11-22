@@ -20,6 +20,13 @@ export function render(view, ctx) {
   const lang = () => ctx.lang;
   let status = ctx.status || {};
   let drawnSig = '';
+  // Keep the outcome of a microphone test across status redraws: a fresh
+  // /api/status tick must not wipe the answer the user came here to see.
+  let speakerNotice = '';
+  let speakerPick = '';
+  let speakerName = '';
+  let speakerBusy = false;
+  let speakerOut = null;              // one node, carried over between status redraws
 
   const say = (ru, en) => (lang() === 'ru' ? ru : en);
   const entries = () => {
@@ -260,6 +267,11 @@ export function render(view, ctx) {
     const profiles = Array.isArray(spk.profiles) ? spk.profiles : [];
     const names = new Map(profiles.map((p) => [p.id, p.label || p.id]));
     const labelOf = (id) => names.get(id) || id || '—';
+    const labelNow = (id) => {
+      const found = (status.runtime?.speaker?.profiles || []).find((p) => p.id === id);
+      return (found && (found.label || found.id)) || id || '—';
+    };
+    if (speakerPick && !names.has(speakerPick)) speakerPick = '';
     fill(speakerBox, SPEAKER_KEYS,
       say('Чьи голоса она слышит', 'Whose voices she hears'),
       say('Знакомый голос продолжает диалог без имени; чужой требует обращения. Векторы голосов хранятся только в приложении.',
@@ -280,60 +292,131 @@ export function render(view, ctx) {
       `${say('последнее событие', 'last event')}: ${events[spk.last_event] || spk.last_event || '—'}` }));
     speakerBox.append(facts);
 
-    const out = el('div', { class: 'bubble', text: say('результат появится здесь', 'the result will appear here') });
-    const run = (label, fn) => el('button', {
+    // The result node is created once and only re-appended: a status tick can
+    // redraw the card a hundred times without erasing what a button just said.
+    if (!speakerOut) speakerOut = el('div', { class: 'bubble' });
+    speakerOut.textContent = speakerNotice || say(
+      'Нажми кнопку — здесь появится результат проверки.',
+      'Press a button — the result will show up here.');
+    const setNotice = (text) => {
+      speakerNotice = String(text || '');
+      speakerOut.textContent = speakerNotice;
+    };
+    const refresh = async () => {
+      await ctx.refreshStatus();
+      drawSpeaker();
+    };
+    const run = (label, fn, message, note) => el('button', {
       class: 'btn btn-small', type: 'button', text: label,
       onclick: async () => {
-        out.textContent = say('подожди…', 'wait…');
+        if (speakerBusy) return;
+        speakerBusy = true;
+        setNotice(note || say('подожди…', 'wait…'));
         try {
           const data = await fn();
-          out.textContent = data?.error || data?.speaker?.error || say('готово', 'done');
-          await ctx.refreshStatus();
-          drawAll(true);
+          await refresh();
+          setNotice(message(data) || data?.error || data?.speaker?.error ||
+            say('готово', 'done'));
         } catch (err) {
-          out.textContent = err.message;
+          setNotice(err.message);
           errToast(err);
+        } finally {
+          speakerBusy = false;
         }
       },
     });
+    const listening = say('слушаю голос…', 'listening for the voice…');
     speakerBox.append(el('div', { class: 'row', style: { marginTop: '10px' } },
-      run(say('Записать голос', 'Record a voice'), api.speakerEnroll),
-      run(say('Проверить голос', 'Check a voice'), async () => {
-        const data = await api.speakerTest();
+      run(say('Записать голос', 'Record a voice'), api.speakerEnroll, (data) => {
+        const id = data?.speaker?.id || data?.id;
+        if (!id) return data?.error || say('голос не записан — проверь микрофон',
+          'no voice recorded — check the microphone');
+        speakerPick = id;
+        speakerName = labelNow(id);
+        return say(`записала: ${speakerName}. Теперь нажми «Проверить голос».`,
+          `recorded: ${speakerName}. Now press “Check a voice”.`);
+      }, listening),
+      run(say('Проверить голос', 'Check a voice'), api.speakerTest, (data) => {
         const verdict = data?.speaker || {};
-        return { ...data, error: verdict.id
-          ? say(`узнала: ${verdict.id} (${Number(verdict.score || 0).toFixed(2)})`,
-            `recognised: ${verdict.id} (${Number(verdict.score || 0).toFixed(2)})`)
-          : say('голос незнаком', 'the voice is new') };
-      }),
-      run(say('Забыть участников', 'Clear participants'), api.speakerClear)));
+        const score = Number(verdict.score || 0).toFixed(2);
+        return verdict.id
+          ? say(`узнала: ${labelNow(verdict.id)} (${score})`,
+            `recognised: ${labelNow(verdict.id)} (${score})`)
+          : data?.error || verdict.error || say(
+            'голос незнаком — сначала запиши его кнопкой «Записать голос».',
+            'the voice is new — record it with “Record a voice” first.');
+      }, listening),
+      run(say('Забыть участников', 'Clear participants'), async () => {
+        await api.speakerClear();
+        return say('диалог забыл участников; профили остались',
+          'the talk forgot everyone; the profiles remain');
+      })));
 
-    const picker = el('select');
+    // A profile must be chosen explicitly, and the field starts with its
+    // current name (the same way the GTK rename dialog does).
+    if (!profiles.length) {
+      speakerBox.append(el('div', { class: 'card-hint', style: { marginTop: '10px' }, text:
+        say('Профилей пока нет — нажми «Записать голос».',
+          'No profiles yet — press “Record a voice”.') }));
+    }
+    const picker = el('select', {
+      disabled: !profiles.length,
+      onchange: (ev) => {
+        speakerPick = ev.target.value;
+        speakerName = names.get(speakerPick) || '';
+        rename.value = speakerName;
+      },
+    });
     picker.append(el('option', { value: '', text: say('выбери профиль', 'pick a profile') }));
     for (const p of profiles) picker.append(el('option', { value: p.id, text: labelOf(p.id) }));
-    const rename = el('input', { type: 'text', placeholder: say('новое имя', 'a new name') });
-    const change = (label, fn) => el('button', {
-      class: 'btn btn-small', type: 'button', text: label,
+    picker.value = speakerPick;
+    const rename = el('input', {
+      type: 'text', value: speakerName, disabled: !profiles.length,
+      placeholder: say('новое имя', 'a new name'),
+      oninput: (ev) => { speakerName = ev.target.value; },
+    });
+    const change = (label, fn, needsLabel = false) => el('button', {
+      class: 'btn btn-small', type: 'button', text: label, disabled: !profiles.length,
       onclick: async () => {
-        const id = picker.value;
-        if (!id) { out.textContent = say('сначала выбери профиль', 'pick a profile first'); return; }
-        out.textContent = say('подожди…', 'wait…');
+        const id = speakerPick;
+        if (!id) { setNotice(say('сначала выбери профиль', 'pick a profile first')); return; }
+        if (speakerBusy) return;
+        const labelText = rename.value.trim();
+        if (needsLabel && !labelText) {
+          setNotice(say('введи новое имя', 'type a new name'));
+          rename.focus();
+          return;
+        }
+        speakerBusy = true;
+        setNotice(say('подожди…', 'wait…'));
         try {
-          const data = await fn(id);
-          out.textContent = data?.error || say('готово', 'done');
-          await ctx.refreshStatus();
-          drawAll(true);
+          const before = labelOf(id);
+          const data = await fn(id, labelText);
+          await refresh();
+          setNotice(needsLabel
+            ? say(`«${before}» → «${labelText}»`, `“${before}” → “${labelText}”`)
+            : (data?.error || say('профиль удалён', 'profile deleted')));
+          if (needsLabel) speakerName = labelText;
         } catch (err) {
-          out.textContent = err.message;
+          setNotice(err.message);
           errToast(err);
+        } finally {
+          speakerBusy = false;
         }
       },
     });
+    const field = (title, node) => el('div', { class: 'field', style: { flex: '1 1 170px' } },
+      el('span', { text: title }), node);
+    speakerBox.append(el('div', { class: 'card-hint', style: { marginTop: '10px' }, text:
+      say('Выбери профиль, чтобы переименовать или удалить:',
+        'Pick a profile to rename or delete:') }));
+    speakerBox.append(el('div', { class: 'row', style: { marginTop: '6px' } },
+      field(say('профиль', 'profile'), picker),
+      field(say('новое имя', 'new name'), rename)));
     speakerBox.append(el('div', { class: 'row', style: { marginTop: '8px' } },
-      picker, rename,
-      change(say('Переименовать', 'Rename'), (id) => api.speakerRename(id, rename.value.trim())),
+      change(say('Переименовать', 'Rename'), (id, next) => api.speakerRename(id, next), true),
       change(say('Удалить', 'Delete'), (id) => api.speakerDelete(id))));
-    speakerBox.append(out);
+    speakerBox.append(speakerOut);
   }
 
   function drawLive() {

@@ -100,6 +100,7 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
         self.brain.outfit_names = Meta.outfits(config.SPRITES)
         self.wake_on = False             # the wake-word loop is running or not
         self.wake_thread = None
+        self.wake_gen = 0                # bumps on pause: an old loop must never come back
         self.wake_waiting = False        # /wake is holding the microphone right now
         self.followup_waiting = False    # a conversation follow-up listen is holding it
         self._conv_handled = None        # last (id, exchanges) released by _conversation_tick

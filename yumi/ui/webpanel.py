@@ -888,7 +888,7 @@ class PanelMixin:
         was_on = getattr(self, '_voice_pause_was_on', bool(self.wake_on))
         self.wake_resume(was_on)
         if hasattr(self, 'voice_state') and not was_on:
-            self.voice_state.wake_off()
+            self.voice_state.wake_off()  # there is no wake loop to hand the mic back to
         return self.voice_state.snapshot() if hasattr(self, 'voice_state') else {}
 
     def _web_voice_released(self):

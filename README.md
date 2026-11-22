@@ -632,6 +632,12 @@ and the `POST /api/speaker/*` routes share the GTK state. Raw embeddings never
 leave the app: they are absent from the API, panel, logs and the config editor,
 and `speakers.json` is deliberately not editable as a normal JSON file.
 
+On **Ears & voice**, the profile section now has an explicit profile picker,
+«Old name» / «New name» fields and clear messages: **Check voice** keeps its verdict
+under the button even when the status refreshes, and renaming pre-fills the current
+label and confirms «old» → «new». With no profiles yet, the check and rename buttons
+are disabled with a hint to record a voice first.
+
 ## Files
 
 | Path | What |
@@ -665,7 +671,8 @@ and `speakers.json` is deliberately not editable as a normal JSON file.
 - **One microphone state** is shown on Overview and Ears & voice: watching, candidate,
   listening, held for answer, paused, muted, missing, busy or off, with an owner and a
   generation number. Pause / Resume / Release from the panel parks the mic and gives it
-  back to the wake loop safely.
+  back to the wake loop safely. Browser tests do too: even if an old wake thread has not
+  exited yet, Yumi starts a fresh name listener, so «Yumi» keeps waking her after any test.
 - **Permissions for buttons with `requires_confirmation`:** the answer is now
   **Allow once / Always / Deny**. `Always` is click-only (a spoken “always” is never
   accepted) and is refused for anything that looks like a key, token or password store.

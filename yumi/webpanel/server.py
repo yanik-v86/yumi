@@ -973,6 +973,9 @@ def _make_handler(panel):
 
         def _speaker_test(self, _q):
             result = panel.bridge.speaker_test()
+            verdict = result.get('speaker') or {}
+            panel.audit(self._ip(), 'speaker-test', str(verdict.get('id') or
+                                                        result.get('error') or ''))
             return self._json(200, {'ok': bool(result.get('ok')), **result})
 
         def _speaker_rename(self, _q):

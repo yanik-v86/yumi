@@ -352,18 +352,28 @@ class SensesMixin:
         and, the moment it passes by, the phrase that follows goes straight to her mind"""
         self.wake_on = bool(on)
         if not self.wake_on:
+            # A paused loop can still be inside a /wake HTTP call.  Bump the
+            # generation so that even if it returns after we resume, it drops
+            # out instead of silently stealing the microphone back.
+            self.wake_gen = getattr(self, 'wake_gen', 0) + 1
+            self.wake_waiting = False
             self._vs('wake_off')
             if self.wake_thread:            # a /wake may still be waiting: let it off the mic
                 threading.Thread(target=ears.stop, daemon=True).start()
             return
-        if self.wake_thread:
+        gen = getattr(self, 'wake_gen', 0)
+        if (self.wake_thread and self.wake_thread.is_alive()
+                and getattr(self, 'wake_thread_gen', gen) == gen):
             return
+        self.wake_thread = None             # a stale or dead thread is not a live ear
         self._vs('wake_on')
 
         def work():
             b = self.brain
-            while self.wake_on:
+            while self.wake_on and gen == self.wake_gen:
                 time.sleep(0.15)
+                if gen != self.wake_gen:
+                    return                  # paused while we were sleeping
                 conv = getattr(b, 'conversation', None)
                 if (conv and conv.active and self.settings.get('conversation_mode', False)
                         and not b.listening):
@@ -402,8 +412,10 @@ class SensesMixin:
                                     oww_ear=self.settings.get('wake_ear', 'auto'),
                                     hints=self.wake_hints(b))
                 finally:
-                    self.wake_waiting = False
-                if not self.wake_on:
+                    # A stale loop must not clear the flag of the fresh one.
+                    if gen == self.wake_gen:
+                        self.wake_waiting = False
+                if not self.wake_on or gen != self.wake_gen:
                     continue            # called off while the daemon was listening
                 if not res:
                     self._vs('missing', 'the ears are away')
@@ -467,6 +479,7 @@ class SensesMixin:
                             lambda br: br.wake_up('', speaker=s)) and False)
 
         self.wake_thread = threading.Thread(target=work, daemon=True)
+        self.wake_thread_gen = gen
         self.wake_thread.start()
 
     def wake_pause(self, timeout=6.0):
@@ -476,20 +489,21 @@ class SensesMixin:
         self.wake_set(False)
         self._vs('wake_paused')
         t = self.wake_thread
+        # Forget the thread even when the join times out.  It was told to
+        # leave by wake_set(False) (and by the generation bump); keeping the
+        # dead/tired handle would make wake_resume() think the mic is already
+        # owned and leave her deaf for good after a panel test.
+        self.wake_thread = None
         if t and t.is_alive():
             t.join(timeout)
-        if t and not t.is_alive():
-            self.wake_thread = None
         return was_on
 
     def wake_resume(self, was_on):
         """the panel's test is over: the wake loop takes the microphone back"""
         if not was_on:
             return
-        if not (self.wake_thread and self.wake_thread.is_alive()):
-            self.wake_thread = None
         self.wake_on = True
-        self.wake_set(True)
+        self.wake_set(True)             # a fresh thread with a fresh generation
         self._vs('wake_resumed')
 
     # ---- voice profiles from the in-world menu (the panel uses the same daemon routes)
