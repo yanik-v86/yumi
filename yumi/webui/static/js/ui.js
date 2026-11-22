@@ -466,7 +466,7 @@ export function buildSetting(entry, value, onChange, { className = '' } = {}) {
     inner = input;
   } else {
     const isSecret = Boolean(entry.secret);
-    const long = !isSecret && typeof value === 'string' && (value.length > 90 || value.includes('\n'));
+    const long = entry.type === 'textarea' || (!isSecret && typeof value === 'string' && (value.length > 90 || value.includes('\n')));
     const masked = isSecret && /^•+$/.test(String(value ?? ''));
     const input = long
       ? el('textarea', { value: masked ? '' : (value ?? entry.default ?? ''), spellcheck: 'false' })

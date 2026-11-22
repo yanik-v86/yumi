@@ -766,10 +766,10 @@ class PanelMixin:
         note = ''
         if s.get('chat_memory', True):
             try:
-                note = chat.recalled_note(memory.recall(text, s, skip_recent=len(turns)), lang)
+                note = chat.recalled_note(memory.recall(text, s, skip_recent=len(turns)), lang, s)
             except Exception:
                 note = ''
-        messages = [{'role': 'system', 'content': chat.system_prompt(lang, bool(s.get('sassy')))}]
+        messages = [{'role': 'system', 'content': chat.system_prompt(lang, bool(s.get('sassy')), s)}]
         messages += turns
         if note:
             messages.append({'role': 'system', 'content': note})

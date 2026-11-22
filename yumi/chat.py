@@ -112,20 +112,38 @@ SASSY_EN = (
 )
 
 
-def system_prompt(lang, sassy=False):
+def _prompt(settings, key, fallback):
+    """a prompt template from settings, or the built-in fallback when it is empty"""
+    if isinstance(settings, dict):
+        val = settings.get(key)
+        if isinstance(val, str) and val.strip():
+            return val
+    return fallback
+
+
+def system_prompt(lang, sassy=False, settings=None):
     """who she is: short answers, her language, and the mood of this very reply;
     sassy is the «Дерзкая 18+» mode — a foul-mouthed brat instead of the sleepy moth"""
+    ru = str(lang) == 'ru'
     if sassy:
-        return SASSY_RU if str(lang) == 'ru' else SASSY_EN
-    if str(lang) == 'ru':
-        mood, manner = random.choice(MOODS)
-        return (f'Ты — Юми, девочка-мотылёк в пиксельном виде, живёшь у нижнего края экрана '
-                f'и помогаешь с мелочами на компьютере. Сейчас ты {mood}: отвечай по-русски, '
-                f'одно-два коротких предложения, {manner}. Без эмодзи и без списков.')
-    mood, manner = random.choice(MOODS_EN)
-    return (f'You are Yumi, a pixel-art moth girl living at the bottom edge of the screen, '
-            f'helping with little things on this computer. Right now you are {mood}: answer in '
-            f'English, one or two short sentences, {manner}. No emoji, no lists.')
+        key = 'prompt_sassy_ru' if ru else 'prompt_sassy_en'
+        return _prompt(settings, key, SASSY_RU if ru else SASSY_EN)
+    mood, manner = random.choice(MOODS if ru else MOODS_EN)
+    key = 'prompt_system_ru' if ru else 'prompt_system_en'
+    fallback = (SASSY_RU if ru else SASSY_EN)  # never used, just a placeholder
+    if ru:
+        fallback = ('Ты — Юми, девочка-мотылёк в пиксельном виде, живёшь у нижнего края экрана '
+                    'и помогаешь с мелочами на компьютере. Сейчас ты {mood}: отвечай по-русски, '
+                    'одно-два коротких предложения, {manner}. Без эмодзи и без списков.')
+    else:
+        fallback = ('You are Yumi, a pixel-art moth girl living at the bottom edge of the screen, '
+                    'helping with little things on this computer. Right now you are {mood}: answer in '
+                    'English, one or two short sentences, {manner}. No emoji, no lists.')
+    tpl = _prompt(settings, key, fallback)
+    try:
+        return tpl.format(mood=mood, manner=manner)
+    except (KeyError, IndexError, ValueError):
+        return fallback.format(mood=mood, manner=manner)
 
 
 def _think(settings):
@@ -134,21 +152,28 @@ def _think(settings):
     return bool(settings.get('chat_think', False))
 
 
-def recalled_note(turns, lang='en'):
+def recalled_note(turns, lang='en', settings=None):
     """the older lines the diary recalled as one system note for the mind:
     they are far away in time, so they matter only when the phrase right now
     really follows them (the talks about other things must not bleed in)"""
     if not turns:
         return ''
-    lines = '\n'.join(('— вы: ' if t['role'] == 'user' else '— она: ') + t['text']
-                      for t in turns)
-    if str(lang) == 'ru':
-        return ('Из ваших давних разговоров на похожую тему (давно; используй их, '
-                'только если это важно и сейчас):\n' + lines)
-    return ('From your older talks about a similar topic (long ago; use them only '
-            'when they still matter now):\n'
-            + '\n'.join(('— you: ' if t['role'] == 'user' else '— she: ') + t['text']
-                        for t in turns))
+    ru = str(lang) == 'ru'
+    if ru:
+        lines = '\n'.join(('— вы: ' if t['role'] == 'user' else '— она: ') + t['text']
+                          for t in turns)
+        key, fallback = 'prompt_recall_ru', ('Из ваших давних разговоров на похожую тему (давно; используй их, '
+                                             'только если это важно и сейчас):\n{lines}')
+    else:
+        lines = '\n'.join(('— you: ' if t['role'] == 'user' else '— she: ') + t['text']
+                          for t in turns)
+        key, fallback = 'prompt_recall_en', ('From your older talks about a similar topic (long ago; use them only '
+                                             'when they still matter now):\n{lines}')
+    tpl = _prompt(settings, key, fallback)
+    try:
+        return tpl.format(lines=lines)
+    except (KeyError, IndexError, ValueError):
+        return fallback.format(lines=lines)
 
 
 def _strip_think(text):
@@ -353,18 +378,24 @@ def summarize(settings, title, text, lang='en', timeout=15):
     if not text:
         return ''
     title = ' '.join(str(title or '').split())
-    if str(lang) == 'ru':
-        system = ('Ты кратко пересказываешь заметки. Отвечай по-русски одним-двумя '
+    ru = str(lang) == 'ru'
+    title_block = (f'Заголовок: {title}\n' if ru else f'Title: {title}\n') if title else ''
+    if ru:
+        sys_fb = ('Ты кратко пересказываешь заметки. Отвечай по-русски одним-двумя '
                   'короткими предложениями, только суть, без вступления и кавычек.')
-        prompt = ('Перескажи эту заметку.\n\n'
-                  + (f'Заголовок: {title}\n' if title else '')
-                  + 'Заметка:\n' + text[:4000])
+        usr_fb = 'Перескажи эту заметку.\n\n{title_block}Заметка:\n{text}'
+        sys_key, usr_key = 'prompt_summarize_system_ru', 'prompt_summarize_user_ru'
     else:
-        system = ('You briefly retell notes. Answer in English in one or two short '
+        sys_fb = ('You briefly retell notes. Answer in English in one or two short '
                   'sentences, only the point, no preamble and no quotes.')
-        prompt = ('Retell this note.\n\n'
-                  + (f'Title: {title}\n' if title else '')
-                  + 'Note:\n' + text[:4000])
+        usr_fb = 'Retell this note.\n\n{title_block}Note:\n{text}'
+        sys_key, usr_key = 'prompt_summarize_system_en', 'prompt_summarize_user_en'
+    system = _prompt(settings, sys_key, sys_fb)
+    usr_tpl = _prompt(settings, usr_key, usr_fb)
+    try:
+        prompt = usr_tpl.format(title_block=title_block, title=title, text=text[:4000])
+    except (KeyError, IndexError, ValueError):
+        prompt = usr_fb.format(title_block=title_block, title=title, text=text[:4000])
     return _one_shot(settings, prompt, 110, lang, timeout=timeout, temp=0.2,
                      system=system)
 
@@ -503,7 +534,7 @@ def _one_shot(settings, user, tokens, lang='en', timeout=90, temp=None, system=N
     req_body = {
         'model': model,
         'messages': [
-            {'role': 'system', 'content': system or system_prompt(lang, bool(settings.get('sassy')))},
+            {'role': 'system', 'content': system or system_prompt(lang, bool(settings.get('sassy')), settings)},
             {'role': 'user', 'content': user}
         ],
         'stream': False,
@@ -546,12 +577,17 @@ def music_name(settings, kind, query, timeout=15):
     query = ' '.join(str(query or '').split())
     if not query:
         return ''
-    asked = (f'A music player heard a voice request. The user named '
-             f'{ {"song": "a song", "artist": "an artist", "album": "an album"}.get(kind, "music") }: '
-             f'«{query}» — spoken by ear, likely in Russian, while the music tags '
-             f'carry the original spelling. Write the most likely original spelling '
-             f'(how it appears on the covers and the labels). Answer with the name '
-             f'only, in one line, nothing else.')
+    kind_word = {'song': 'a song', 'artist': 'an artist', 'album': 'an album'}.get(kind, 'music')
+    fb = ('A music player heard a voice request. The user named '
+          '{kind}: «{query}» — spoken by ear, likely in Russian, while the music tags '
+          'carry the original spelling. Write the most likely original spelling '
+          '(how it appears on the covers and the labels). Answer with the name '
+          'only, in one line, nothing else.')
+    tpl = _prompt(settings, 'prompt_music_name', fb)
+    try:
+        asked = tpl.format(kind=kind_word, query=query)
+    except (KeyError, IndexError, ValueError):
+        asked = fb.format(kind=kind_word, query=query)
     got = _one_shot(settings, asked, 32, timeout=timeout, temp=0.1)
     if not got:
         return ''
@@ -564,10 +600,16 @@ def music_name(settings, kind, query, timeout=15):
 def hourly_joke(settings, hour, lang='en', timeout=90):
     """ask the mind for a short funny line about this hour (Russian or English),
     one or two sentences, no emoji, no lists; '' when the mind is out of reach"""
-    user = ('Скажи что-нибудь смешное и короткое про время '
-            f'{hour}:00, одно-два предложения, по-русски, без эмодзи и списков.'
-            if str(lang) == 'ru' else
-            f'Say something short and funny about {hour}:00, one or two sentences, in English, no emoji, no lists.')
+    ru = str(lang) == 'ru'
+    key = 'prompt_hourly_joke_ru' if ru else 'prompt_hourly_joke_en'
+    fb = ('Скажи что-нибудь смешное и короткое про время '
+          '{hour}:00, одно-два предложения, по-русски, без эмодзи и списков.' if ru else
+          'Say something short and funny about {hour}:00, one or two sentences, in English, no emoji, no lists.')
+    tpl = _prompt(settings, key, fb)
+    try:
+        user = tpl.format(hour=hour)
+    except (KeyError, IndexError, ValueError):
+        user = fb.format(hour=hour)
     return _one_shot(settings, user, 120, lang, timeout)
 
 
@@ -591,14 +633,20 @@ def joke(settings, lang='en', timeout=90):
     """ask the mind for a short joke («анекдот»), one or two sentences, no emoji,
     no lists; a topic is drawn by lot, so the jokes do not rhyme; '' when the
     mind is out of reach"""
-    if str(lang) == 'ru':
-        user = (f'Расскажи короткий смешной анекдот про {random.choice(JOKE_TOPICS)}, '
-                'одно-два предложения, по-русски, без эмодзи и списков. Каждый раз '
-                'придумывай новый, не повторяй старые.')
-    else:
-        user = (f'Tell me a short funny joke about {random.choice(JOKE_TOPICS_EN)}, one or '
-                'two sentences, in English, no emoji, no lists. Invent a new one every '
-                'time, do not repeat the old ones.')
+    ru = str(lang) == 'ru'
+    topic = random.choice(JOKE_TOPICS if ru else JOKE_TOPICS_EN)
+    key = 'prompt_joke_ru' if ru else 'prompt_joke_en'
+    fb = ('Расскажи короткий смешной анекдот про {topic}, '
+          'одно-два предложения, по-русски, без эмодзи и списков. Каждый раз '
+          'придумывай новый, не повторяй старые.' if ru else
+          'Tell me a short funny joke about {topic}, one or '
+          'two sentences, in English, no emoji, no lists. Invent a new one every '
+          'time, do not repeat the old ones.')
+    tpl = _prompt(settings, key, fb)
+    try:
+        user = tpl.format(topic=topic)
+    except (KeyError, IndexError, ValueError):
+        user = fb.format(topic=topic)
     return _one_shot(settings, user, 160, lang, timeout, temp=0.9)
 
 
@@ -609,20 +657,25 @@ def joke_tired(settings, lang='ru', count=JOKE_TIRED_AFTER, timeout=60):
     """the mind writes the brush-off for yet another joke in a row in «Дерзкая
     18+»: «заебал со своими анекдотами, я тебе не <имя российского
     стендап-комика>»; '' when the mind is out of reach (a dry line stands in)"""
-    if str(lang) == 'ru':
-        user = (f'Пользователь просит анекдот уже {count}-й раз подряд, ты '
-                'заебалась. Отшей его одной короткой грубой фразой с матом, '
-                'можешь послать нахуй: скажи, что он заебал со своими '
-                'анекдотами и что ты ему не <имя известного российского '
-                'стендап-комика> — назови настоящего комика, например Славу '
-                'Комиссаренко или Павла Волю, и придумай фразу сама. '
-                'Без эмодзи и списков.')
-    else:
-        user = (f'The user has asked for a joke {count} times in a row and you are '
-                'fed up. Brush him off in one short rude sentence with swearing, '
-                'tell him to piss off: say he is tiresome with his jokes and that '
-                'you are not <name of a famous Russian stand-up comedian> — name a '
-                'real one and write the line yourself. No emoji, no lists.')
+    ru = str(lang) == 'ru'
+    key = 'prompt_joke_tired_ru' if ru else 'prompt_joke_tired_en'
+    fb = ('Пользователь просит анекдот уже {count}-й раз подряд, ты '
+          'заебалась. Отшей его одной короткой грубой фразой с матом, '
+          'можешь послать нахуй: скажи, что он заебал со своими '
+          'анекдотами и что ты ему не <имя известного российского '
+          'стендап-комика> — назови настоящего комика, например Славу '
+          'Комиссаренко или Павла Волю, и придумай фразу сама. '
+          'Без эмодзи и списков.' if ru else
+          'The user has asked for a joke {count} times in a row and you are '
+          'fed up. Brush him off in one short rude sentence with swearing, '
+          'tell him to piss off: say he is tiresome with his jokes and that '
+          'you are not <name of a famous Russian stand-up comedian> — name a '
+          'real one and write the line yourself. No emoji, no lists.')
+    tpl = _prompt(settings, key, fb)
+    try:
+        user = tpl.format(count=count)
+    except (KeyError, IndexError, ValueError):
+        user = fb.format(count=count)
     got = _one_shot(settings, user, 120, lang, timeout, temp=0.9)
     if not got or '<' in got or '>' in got:
         return ''                   # a placeholder leaked: the dry line stands in

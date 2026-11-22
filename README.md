@@ -441,6 +441,9 @@ Ollama lives lives in `~/.config/yumi/settings.json` as `ollama_url`. Right ther
 The mode's lines go into her diary tagged, and so do the jokes: ask for four jokes in a
 row and she snaps back with a line her mind makes up — «you're not my stand-up comic».
 Switch the mode off and every line of it, jokes included, is wiped from the diary.
+The system prompt and other prompts (jokes, note summaries, memory, music name normalization)
+can be edited in the web panel: **Settings → Prompts** (or in `~/.config/yumi/settings.json`,
+keys `prompt_*`). An empty value restores the built-in default.
 **Settings → Her ears → Ears diary** — while it is on, she writes everything she hears into
 `/tmp/yumi`: the sound into `ears-*.wav` files (no bigger than 10 MB and ten minutes each,
 only the five freshest stay on the shelf) and the heard phrases into `recogn.txt`, one

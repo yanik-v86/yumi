@@ -603,12 +603,12 @@ class SensesMixin:
             if s.get('chat_memory', True):
                 try:
                     note = chat.recalled_note(
-                        memory.recall(user_text, s, skip_recent=len(hist)), lang)
+                        memory.recall(user_text, s, skip_recent=len(hist)), lang, s)
                 except Exception:
                     note = ''
                 if note:
                     hist.append({'role': 'system', 'content': note})
-            prompt = chat.system_prompt(lang, sassy)
+            prompt = chat.system_prompt(lang, sassy, s)
             full = [{'role': 'system', 'content': prompt}] + hist
 
             if not use_stream:
