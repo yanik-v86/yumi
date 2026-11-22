@@ -570,6 +570,7 @@ class SensesMixin:
                     b.say('acquaintance_fail')
             else:
                 b.say('speaker_fail')
+            self.web_sync_soon()
             return
         if action in ('speaker_enroll', 'speaker_acquaintance'):
             pid = result.get('id') or pid

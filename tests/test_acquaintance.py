@@ -131,3 +131,96 @@ def test_speaker_acquaintance_action_path_mock(monkeypatch):
     assert ('resume', True) in calls, calls
     assert ('remember', 'spk_01') in calls, calls
     assert ('say', 'acquaintance_ok', 'Голос 1') in calls, calls
+
+
+def test_acquaintance_fail_on_noisy_or_short_voice(monkeypatch):
+    import time
+    from yumi.ui import senses
+
+    calls = []
+    class FakeBrain:
+        now = 0.0; talk_until = 0.0
+        _speaker_current = None; _speaker_last_event = ''; _pending_speaker = None
+        conversation = type('C', (), {'add_participant': staticmethod(lambda *_: None),
+                                      'remove_participant': staticmethod(lambda *_: None),
+                                      'clear_participants': staticmethod(lambda *_: None)})()
+        def _speaker_remember(self, spk): calls.append(('remember', spk))
+        def say(self, event, **kw): calls.append(('say', event)); return True
+        def _voice_label(self, pid): return str(pid)
+
+    class Fake(senses.SensesMixin):
+        brain = FakeBrain()
+        voice_queue = []; _voice_ready = {}; voice_pending = 0; voice_streaming = False
+        def wake_pause(self): calls.append(('pause',)); return True
+        def wake_resume(self, was_on): calls.append(('resume', was_on))
+        def web_sync_soon(self): calls.append(('sync',))
+
+    monkeypatch.setattr(senses.ears, 'speaker_enroll',
+                        lambda: {'ok': False, 'error': 'not enough clear voice'})
+    monkeypatch.setattr(senses.GLib, 'idle_add', lambda fn, *a: fn(*a) or False)
+    f = Fake(); f.speaker_action('speaker_acquaintance')
+    for _ in range(50):
+        if ('resume', True) in calls: break
+        time.sleep(0.02)
+    assert ('say', 'acquaintance_fail') in calls, calls
+    assert ('sync',) in calls, calls
+
+
+def test_acquaintance_nomodel(monkeypatch):
+    import time
+    from yumi.ui import senses
+
+    calls = []
+    class FakeBrain:
+        now = 0.0; talk_until = 0.0
+        _speaker_current = None; _speaker_last_event = ''; _pending_speaker = None
+        conversation = type('C', (), {'add_participant': staticmethod(lambda *_: None),
+                                      'remove_participant': staticmethod(lambda *_: None),
+                                      'clear_participants': staticmethod(lambda *_: None)})()
+        def _speaker_remember(self, spk): pass
+        def say(self, event, **kw): calls.append(('say', event)); return True
+        def _voice_label(self, pid): return str(pid)
+
+    class Fake(senses.SensesMixin):
+        brain = FakeBrain()
+        voice_queue = []; _voice_ready = {}; voice_pending = 0; voice_streaming = False
+        def wake_pause(self): return True
+        def wake_resume(self, was_on): calls.append(('resume', was_on))
+        def web_sync_soon(self): pass
+
+    monkeypatch.setattr(senses.ears, 'speaker_enroll',
+                        lambda: {'ok': False, 'error': 'speaker model is not available'})
+    monkeypatch.setattr(senses.GLib, 'idle_add', lambda fn, *a: fn(*a) or False)
+    f = Fake(); f.speaker_action('speaker_acquaintance')
+    for _ in range(50):
+        if ('resume', True) in calls: break
+        time.sleep(0.02)
+    assert ('say', 'acquaintance_nomodel') in calls, calls
+
+
+def test_wait_voice_quiet_blocks_until_tts_drains():
+    import time
+    from yumi.ui import senses
+
+    class FakeBrain:
+        now = 0.0; talk_until = 0.0
+
+    class Fake(senses.SensesMixin):
+        brain = FakeBrain()
+        voice_queue = ['chunk']
+        _voice_ready = {}
+        voice_pending = 0
+        voice_streaming = True
+
+    f = Fake()
+    t0 = time.time()
+    def clear():
+        time.sleep(0.25)
+        f.voice_queue = []
+        f.voice_streaming = False
+    import threading
+    threading.Thread(target=clear, daemon=True).start()
+    ok = f._wait_voice_quiet(timeout=2.0)
+    dt = time.time() - t0
+    assert ok is True
+    assert dt >= 0.25
