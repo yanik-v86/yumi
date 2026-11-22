@@ -245,6 +245,39 @@ def _ear_tuning():
 VAD_TAIL, WAKE_AFTER = _ear_tuning()    # the user's own timing, when settings.json says so
 
 
+def hotwords_text(*parts):
+    """one short prompt for the phrase ear's decoder: the words it must keep whole.
+
+    Whisper's small model turns a rare word into a string of similar sounds
+    («анекдот» -> «о негдот») when nothing in the prompt mentions it. A hint is
+    only spelling, never a second reading for the mind to judge: the other ear's
+    own words are the best hint, because they came from the very same tape.
+    """
+    words = []
+    for part in parts:
+        if isinstance(part, (list, tuple)):
+            part = ' '.join(str(p) for p in part)
+        text = ' '.join(str(part or '').split())
+        if text and text not in words:
+            words.append(text)
+    out = ', '.join(words)
+    if len(out) > 300:            # a prompt as long as a paragraph biases everything
+        out = ', '.join(out[:300].split(', ')[:-1])
+    return out.strip(', ')
+
+
+def fresh_hotwords(said, wake_t, until=None):
+    """the stop ear's last final that landed *after* the name was believed.
+
+    A final from before the name is somebody else's talk (or the phrase whose
+    tail woke her) and would bend the reading toward the wrong words. Only a
+    later final speaks for the phrase that followed the name.
+    """
+    now = time.monotonic() if until is None else until
+    tail = [w for t, w in said if wake_t < t <= now and w]
+    return hotwords_text(tail[-1] if tail else '')
+
+
 def _wake_tuning():
     """the wake's own dials, when settings.json says so: the trained ear's
     thresholds ('oww_threshold', 'oww_sure', 'oww_hold', 'oww_veto'), its memory
@@ -253,7 +286,8 @@ def _wake_tuning():
     verdict stays fresh), the phonetic net ('wake_phonetic') and the debug
     wavs ('stt_diag_wav').
     Every dial keeps a safe default: an old settings.json wakes just as before."""
-    t = {'oww_threshold': OWW_THRESHOLD, 'oww_sure': OWW_SURE, 'oww_hold': OWW_HOLD,
+    t = {'stt_hotwords': '',
+         'oww_threshold': OWW_THRESHOLD, 'oww_sure': OWW_SURE, 'oww_hold': OWW_HOLD,
          'oww_veto': OWW_VETO, 'oww_window': 3.0, 'oww_spike': OWW_SPIKE,
          'oww_positive_ms': OWW_POSITIVE_MS, 'oww_confirm': OWW_CONFIRM,
          'oww_confirm_below': OWW_CONFIRM_BELOW,
@@ -290,6 +324,10 @@ def _wake_tuning():
     clamp('wake_read_s', 2.0, 10.0)
     clamp('wake_vosk_fallback', 0.0, 10.0)
     t['oww_spike'] = int(t['oww_spike'])
+    # extra words the phrase ear should keep whole: «анекдот» used to come back
+    # as «о негдот». The stop ear's own reading is a stronger, per-phrase hint;
+    # these words are the fallback for a phrase vosk did not catch.
+    t['stt_hotwords'] = hotwords_text(st.get('stt_hotwords', ''))
     for key in ('wake_phonetic', 'stt_diag_wav', 'oww_confirm'):
         try:
             t[key] = bool(st[key])
@@ -1620,12 +1658,15 @@ class Ears:
             log(f'nemotron: the 0.6b ear is ready (beam {beam})')
         return self.nemo
 
-    def transcribe(self, pcm, lang, size='small', beam=5):
+    def transcribe(self, pcm, lang, size='small', beam=5, hotwords=None):
         """bytes of s16 mono RATE through faster-whisper: the words it hears ('' for
         silence). vad_filter keeps the quiet out (whisper dreams on silence), and the
         chain is not carried on (so one dream does not write the next); beam 5 reads
-        a tangled phrase better than the judge's quick beam 1"""
-        return transcribe_model(self.whisper(lang, size), pcm, lang, beam=beam)
+        a tangled phrase better than the judge's quick beam 1. hotwords is a short
+        spelling hint for rare words (the stop ear's reading of the same tape), not
+        a second answer for the mind to arbitrate"""
+        return transcribe_model(self.whisper(lang, size), pcm, lang,
+                                hotwords=hotwords, beam=beam)
 
     def vosk_read(self, said, lang):
         """the phrase's bytes (s16 mono RATE) through vosk's own small ear: one fresh
@@ -1650,7 +1691,8 @@ class Ears:
             return ''
         return text
 
-    def read_tape(self, said, lang, size='small', engine='whisper', beam=5):
+    def read_tape(self, said, lang, size='small', engine='whisper', beam=5,
+                  hotwords=None):
         """the phrase's bytes (s16 mono RATE) and who read them: (text, ear).
         The ear the settings name reads first — Nemotron 0.6b when it is chosen,
         whisper otherwise. Whisper is the fallback, never the worker: when
@@ -1669,7 +1711,7 @@ class Ears:
                     log('nemotron failed, whisper answers instead: ' + str(e)[-120:])
         else:                           # the whisper ear (the settings name it) reads
             try:
-                text = self.transcribe(said, lang, size, beam)   # whisper reads the tape
+                text = self.transcribe(said, lang, size, beam, hotwords)   # whisper reads
                 ear = 'whisper' if text else ''
             except Exception as e:      # noqa: BLE001 - whisper is best effort
                 log('whisper failed, the small ear answers instead: ' + str(e)[-120:])
@@ -1677,7 +1719,7 @@ class Ears:
             # whisper is the fallback: the same tape, a different reader — a name
             # or a command Nemotron swallowed must not die on an empty reading
             try:
-                text = self.transcribe(said, lang, size, beam)
+                text = self.transcribe(said, lang, size, beam, hotwords)
                 ear = 'whisper' if text else ''
             except Exception as e:      # noqa: BLE001 - whisper is best effort
                 log('whisper (fallback) failed, the small ear answers instead: '
@@ -1689,10 +1731,11 @@ class Ears:
                 text, ear = back, 'vosk'
         return text, ear
 
-    def transcribe_said(self, said, lang, size='small', engine='whisper', beam=5):
+    def transcribe_said(self, said, lang, size='small', engine='whisper', beam=5,
+                        hotwords=None):
         """the phrase's bytes (s16 mono RATE) as words: read_tape's text alone —
         None never leaves here, the caller gets the best reading of the three"""
-        return self.read_tape(said, lang, size, engine, beam)[0]
+        return self.read_tape(said, lang, size, engine, beam, hotwords)[0]
 
     def listen(self, lang, secs, quiet, size='small', mic=None, engine='whisper', beam=5,
                join=False):
@@ -1770,8 +1813,12 @@ class Ears:
                 said = utt.take()
                 text = ''
                 vtext = ' '.join(json.loads(rec.FinalResult() or '{}').get('text', '').split())
+                # The stop ear read this very tape, so its words are a safe spelling
+                # hint: whisper keeps «анекдот» whole instead of writing «о негдот».
+                # The hint goes to the decoder only — the mind still gets one reading.
+                hint = hotwords_text(vtext, TUNE.get('stt_hotwords', ''))
                 if len(said) >= RATE:         # under a second is a breath, not a phrase
-                    text = self.transcribe_said(said, lang, size, engine, beam)
+                    text = self.transcribe_said(said, lang, size, engine, beam, hint)
                 if not text:                  # whisper silent or away: vosk's words stand in
                     text = vtext
                 # the same tape goes to STT and to the voice-print ear; only the
@@ -2025,7 +2072,13 @@ class Ears:
                         diag.event(arbitration='STT', reason='phrase_end', stt_start=True,
                                    judge_called=False, final_wake=False,
                                    **diag_base('LISTENING', voiced))
-                        text, ear = self.read_tape(window, lang, size, engine, beam)
+                        # a final that landed after the name read the same phrase:
+                        # lend its spelling to whisper, never to the mind's prompt
+                        hint = hotwords_text(
+                            fresh_hotwords(vosk_said, wake_t, time.monotonic()),
+                            TUNE.get('stt_hotwords', ''))
+                        text, ear = self.read_tape(window, lang, size, engine, beam,
+                                                   hint)
                         if text and ear == 'vosk' and fallback_route(text, hints) == 'ignore':
                             # the weakest ear read the background: an honest «не расслышала»
                             # (she asks what you wanted) beats a confident wrong command
@@ -2714,6 +2767,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(answer)
         if u.path != '/listen':
             return self._json({'error': 'no such path'}, 404)
+        refresh_tune()                  # a word hint changed in the panel is live too
         if self.ears.busy and self.ears.kind == 'wake':
             # the mic button was clicked while she was waiting for her name:
             # the wake-word wait gives the microphone up to this listen

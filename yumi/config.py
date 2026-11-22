@@ -160,8 +160,10 @@ DEFAULT_SETTINGS = {
                               # beam_size / nemotron's max_active_paths. Greedy decoding
                               # can mangle rare words; a wider beam often keeps the word
                               # whole, at the cost of a little more CPU
-    'stt_crosscheck': True,   # when two ears hear the phrase differently, show both readings
-                              # to the mind: it can tell «бапушки» from «пушкин»
+    'stt_hotwords': '',       # extra words the phrase ear must keep whole (comma-separated).
+                              # Empty by default: vosk's reading of the same tape already
+                              # spells them for whisper; add rare names or commands here
+    # the second ear is used by the local command matcher only: never sent to the mind
     'stt_mic': None,          # which microphone the ears hear with: None = auto (the desktop's pick)
     'stt_echo': True,         # the webrtc echo canceller around the mic; false = plain mic only
     'stt_selfmute': True,     # the ears close while she speaks, so she never hears

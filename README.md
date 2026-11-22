@@ -481,10 +481,20 @@ fails). The wake-word judge uses it too.
 
 Both ears search with a width set by `stt_beam` (5 by default, **Settings → Her ears →
 Reading width**): whisper's `beam_size` and Nemotron's `max_active_paths`. Greedy decoding is
-fast but may turn a rare word into «бапушки» instead of «Пушкин». Chat has a second guard:
-`stt_crosscheck` (on, **Compare both ears**). When the primary ear and Vosk's stop ear disagree,
-the mind sees both readings and picks the sensible one; `/tmp/yumi/mind.log` gets a
-`crosscheck: ...` line beside `heard`.
+fast but may turn a rare word into «бапушки» instead of «Пушкин». Vosk's stop ear still reads
+every phrase, but **only for local commands** — music, notes, stop words and the acquaintance
+command. The chat model gets one reading: the primary one. A system note listing both ears
+used to go into the prompt, and the model started talking about «first/second ear» instead of
+answering (old replies like that can still be found in the diary). That note and its
+`stt_crosscheck` setting are gone: the answer is about your words, not about her ears.
+
+The stop ear still helps earlier, inside the decoder: its reading of the same tape is
+passed to whisper as a **spelling hint** (`hotwords`), so «расскажи анекдот» no longer
+comes back as «расскажи о негдот». The hint never becomes a second text in the prompt —
+the model still sees one reading. Add your own rare words to `stt_hotwords`
+(**Settings → Her ears → Word hints**, comma-separated); it is empty by default because
+vosk already spells them from the same recording. The daemon picks the setting up on the
+next phrase, without a restart.
 
 Voice input no longer pays for STT after the listening window: `stt_early_read` (on,
 **Settings → Her ears → Read ahead while listening**) starts reading the tape as soon as

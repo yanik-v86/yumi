@@ -24,7 +24,7 @@ def make_brain(monkeypatch, tmp_path, settings=None):
         'conversation_timeout_s': 10, 'wake_ears': True, 'sleeping': False,
         'wake_word': 'юми', 'speech_lang': 'ru', 'ui_lang': 'ru',
         'music_skill': False, 'notes_voice': False, 'nlu': False,
-        'stt_crosscheck': False, 'chat_history_n': 10, 'conversation_history_n': 20,
+        'chat_history_n': 10, 'conversation_history_n': 20,
         'conversation_gap_reset_min': 15, 'chat_memory': False,
         'chat_provider': 'ollama', 'chat_model': 'test', 'chat_stream': False,
         'chat_think': False, 'chat_provider_url': '', 'ollama_url': '',

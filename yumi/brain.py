@@ -1749,11 +1749,11 @@ class Brain(Extras):
             if label:
                 msg['content'] = f'{label}: {msg["content"]}'
             history.append(msg)
-        if self.settings.get('stt_crosscheck', True):
-            note = reading_note(text, alt, lang)
-            if note:
-                history.insert(-1, {'role': 'system', 'content': note})
-                _mind_log(f'crosscheck: {alt!r}')
+        # The second ear helps the local command matcher above, but it never
+        # goes into the chat prompt.  A system note with both readings made the
+        # mind discuss «первое/второе ухо» instead of answering the question —
+        # the phrase that reached her was enough, and the other reading stays
+        # a local hint only (never a line the model has to arbitrate).
         self.thinking = True
         self.conversation.waiting_answer = True   # hold the ears until this answer lands
         self.requests.append(('chat_ask', history))
@@ -3551,22 +3551,6 @@ def strip_wake_raw(text, word='юми'):
     if head and wake and _near1(head[0], wake[0] if wake else 'юми'):
         parts = parts[1:]
     return ' '.join(parts)
-
-
-def reading_note(text, alt, lang='ru'):
-    """a system line for the mind when the two ears heard the phrase differently:
-    the primary reading goes to chat, but the other ear may have kept the word the
-    first one mangled («бапушки» against «пушкин») — let the mind choose the sense"""
-    if not alt or alt == text:
-        return ''
-    first, second = text[:200], alt[:200]
-    if lang == 'ru':
-        return ('Одну и ту же фразу уши расслышали по-разному. Основное ухо: '
-                f'«{first}». Другое ухо: «{second}». Если одно написание явно '
-                'испорчено звуком, считай, что человек сказал более осмысленный вариант.')
-    return ('The two ears heard the same phrase differently. First ear: '
-            f'"{first}". Other ear: "{second}". If one reading is clearly garbled, '
-            'treat the more sensible wording as what the person said.')
 
 
 def _near1(a, b):

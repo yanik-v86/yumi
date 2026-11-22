@@ -484,6 +484,8 @@ class PanelMixin:
         if 'nlu' in patch and not self.settings.get('nlu'):
             b.intent_confirm = None         # voice commands switched off: no pending answer
         # nlu_confidence is read from settings on every phrase, so it applies at once
+        # stt_hotwords is read by the ears daemon from settings.json on the next
+        # /listen or /wake (refresh_tune there) — the panel needs no extra call
         if 'chat_provider' in patch:
             b.chat_models = []
             b.requests.append(('chat_models',))

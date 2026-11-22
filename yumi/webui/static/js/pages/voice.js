@@ -6,7 +6,7 @@ import {
 const CARD_KEYS = {
   activation: ['wake_ears', 'wake_word', 'wake_ear', 'wake_sensitivity',
     'wake_confirm', 'wake_model_size'],
-  judge: ['stt_engine', 'stt_size', 'stt_beam', 'stt_crosscheck', 'wake_read_s',
+  judge: ['stt_engine', 'stt_size', 'stt_beam', 'stt_hotwords', 'wake_read_s',
     'phrase_tail_ms', 'wake_after', 'wake_judge_log'],
   voice: ['voice_kind', 'voice_vol', 'tts_ru_speaker', 'tts_en_speaker',
     'tts_pitch', 'tts_ru_model'],
