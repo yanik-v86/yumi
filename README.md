@@ -223,7 +223,8 @@ are away, health breaks every 20 / 30 / 45 / 60 min: water, eyes, stretch), **So
 voice volume, the timer sound: her bell or any audio file), **Her ears** (microphone, hearing
 accuracy, wake on «Yumi»), **Look** (wallpaper colors or a
 color by hand, outfit, which screen she lives on) and **Language**. The first-run tour can be
-replayed from there too.
+replayed from there too. The ears also have a quick **Ears** toggle on her ring, a row in the
+main menu and a chip in the browser panel's top bar — the same switch as «Wake on «Yumi»».
 
 ## Her colors
 
@@ -569,7 +570,9 @@ behind a filler word («well, Yumi») and a half-heard mush of syllables counts 
 catches it properly at first try more often than not. Said with a phrase
 («Yumi, what's the news today») she waits for the phrase to end and the question goes to her
 whole; a pause after the name — she asks "Yes? What is it?" right away and listens on. The idle
-waiting goes on while enabled (off in **Settings → Her ears → Wake on «Yumi»**) and it is not an
+waiting goes on while enabled (off in **Settings → Her ears → Wake on «Yumi»**, with the
+**Ears** button on her ring or in the menu, and the **Ears** chip in the browser panel's top
+bar) and it is not an
 eavesdrop: while she is in DND, talking an answer or listening on request, her name is ignored.
 The name is not taken at the first word's say-so: the trained OpenWakeWord ear catches a loud
 name, while a quiet one (0.5–0.8) is checked against the tape the phrase ear reads anyway —

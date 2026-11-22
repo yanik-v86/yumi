@@ -23,6 +23,7 @@ TOUR_STEPS = 5
 RING_BUILTIN = {'recent': ('pile', 'recent', 'box', 'recent'), 'shelf': ('pile', 'shelf', 'shelf', 'shelf'),
                 'pipette': ('pipette', None, 'drop', 'pipette'), 'timer': ('timer', None, 'clock', 'timer'),
                 'clock': ('clock', None, 'clock', 'clock'), 'listen': ('listen', None, 'mic', 'listen'),
+                'ears': ('ears', None, 'mic', 'ears_on'),
                 'joke': ('joke', None, 'laugh', 'joke'),
                 'sleep': ('sleep', None, 'dnd', 'sleep'), 'settings': ('menu', 'settings', 'gear', 'settings')}
 RING_ALPHA = 0.55
@@ -410,7 +411,13 @@ class Extras:
     def ring_table(self):
         """id: (action, arg, icon, label, id) of every button, the settings one last"""
         t = lambda k: tr(self.settings, k)
-        out = {i: (a, g, ic, t(lbl), i) for i, (a, g, ic, lbl) in RING_BUILTIN.items() if i != 'settings'}
+        out = {}
+        for i, (a, g, ic, lbl) in RING_BUILTIN.items():
+            if i == 'settings':
+                continue
+            if i == 'ears':              # the label follows the switch, not a fixed word
+                lbl = 'ears_on' if self.settings.get('wake_ears', True) else 'ears_off'
+            out[i] = (a, g, ic, t(lbl), i)
         if self.sleeping:
             out['sleep'] = ('wake', None, 'dnd', t('wake'), 'sleep')
         out.update((it[4], it) for it in self.custom_items())

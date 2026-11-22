@@ -136,6 +136,7 @@ export function render(view, ctx) {
   const showBtn = el('button', { class: 'btn btn-primary', type: 'button' });
   const pinBtn = el('button', { class: 'btn', type: 'button', text: lang() === 'ru' ? 'Закрепить' : 'Pin' });
   const dndBtn = el('button', { class: 'btn', type: 'button', text: 'DND' });
+  const earsBtn = el('button', { class: 'btn', type: 'button', text: lang() === 'ru' ? 'Ушки' : 'Ears' });
 
   showBtn.addEventListener('click', async () => {
     await ctx.stateAction('toggle');
@@ -147,9 +148,13 @@ export function render(view, ctx) {
   dndBtn.addEventListener('click', async () => {
     await ctx.stateAction('dnd', { on: !ctx.status?.runtime?.sleeping });
   });
+  earsBtn.addEventListener('click', async () => {
+    await ctx.applySettings({ wake_ears: !(ctx.status?.settings?.wake_ears) }, { quiet: false });
+    await ctx.refreshStatus();
+  });
 
   quick.append(
-    showBtn, pinBtn, dndBtn,
+    showBtn, pinBtn, dndBtn, earsBtn,
     actionButton('Домой', 'home', () => ctx.stateAction('home')),
     actionButton('Экран', 'monitor', () => ctx.stateAction('monitor')),
     actionButton('Пипетка', 'pipette', () => ctx.stateAction('pipette')),
@@ -389,6 +394,11 @@ export function render(view, ctx) {
       ? (lang() === 'ru' ? 'Открепить' : 'Unpin')
       : (lang() === 'ru' ? 'Закрепить' : 'Pin');
     dndBtn.classList.toggle('btn-on', Boolean(runtime.sleeping));
+    const earsOn = Boolean(settings.wake_ears);
+    earsBtn.classList.toggle('btn-on', earsOn);
+    earsBtn.textContent = earsOn
+      ? (lang() === 'ru' ? 'Ушки вкл' : 'Ears on')
+      : (lang() === 'ru' ? 'Ушки выкл' : 'Ears off');
 
     const music = runtime.music?.now_playing;
     if (Array.isArray(music) && (music[0] || music[1])) {

@@ -124,6 +124,10 @@ function localizeShell() {
   if (pin) pin.title = ru ? 'Не прятаться' : 'Stay out';
   const dnd = $('chip-dnd');
   if (dnd) dnd.title = ru ? 'Не мешать' : 'Do not disturb';
+  const ears = $('chip-ears');
+  if (ears) ears.title = ru ? 'Ушки: слушать имя «Юми»' : 'Ears: listen for the name';
+  const earsName = $('chip-ears-name');
+  if (earsName) earsName.textContent = ru ? 'УШКИ' : 'EARS';
 }
 
 function applyLanguage(lang) {
@@ -322,6 +326,18 @@ function updateChips() {
   const pin = $('chip-pin');
   if (pin) pin.classList.toggle('on', Boolean(settings.pinned || runtime.pinned));
 
+  const ears = $('chip-ears');
+  if (ears) {
+    const on = Boolean(settings.wake_ears);
+    ears.classList.toggle('on', on);
+    const earsState = $('chip-ears-state');
+    if (earsState) {
+      earsState.textContent = on
+        ? (state.lang === 'ru' ? 'ВКЛ' : 'ON')
+        : (state.lang === 'ru' ? 'ВЫКЛ' : 'OFF');
+    }
+  }
+
   const timerChip = $('chip-timer');
   if (timerChip) {
     const tm = currentTimer();
@@ -447,6 +463,12 @@ function bindShell() {
 
   $('nav')?.addEventListener('click', () => {
     document.querySelector('.sidebar')?.classList.remove('open');
+  });
+
+  $('chip-ears')?.addEventListener('click', async () => {
+    const on = !state.status?.settings?.wake_ears;
+    await applySettings({ wake_ears: on }, { quiet: false });
+    await refreshStatus();
   });
 
   $('chip-dnd')?.addEventListener('click', async () => {

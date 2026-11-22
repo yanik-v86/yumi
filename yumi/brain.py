@@ -899,6 +899,7 @@ class Brain(Extras):
             if self.state.get('colors'):
                 rows.append(('chips', None, ''))
             rows.append(('wake', None, t('wake')) if self.sleeping else ('sleep', None, t('sleep')))
+            rows.append(('set', 'wake_ears', t('ears')))
             rows.append(('menu', 'settings', t('settings')))
             if self.mode != 'docked' or abs(self.dock_x - self.clamp_x(
                     self.W - EDGE_MARGIN * self.S - self.meta.bw * self.S / 2)) > 4:
@@ -1115,6 +1116,18 @@ class Brain(Extras):
             self.requests.append(('quit',))
         elif action == 'restart':
             self.requests.append(('restart',))
+        elif action == 'ears':
+            # one click on the ring (or the menu row) closes or opens the ears:
+            # the setting and the live wake loop always move together
+            on = not bool(self.settings.get('wake_ears', True))
+            self.settings['wake_ears'] = on
+            self.requests.append(('save_settings',))
+            self.requests.append(('wake_set', on))
+            if not on:
+                self.conversation_close('wake off')
+            self.menu = None
+            self.close_radial()
+            self.say('ears_on' if on else 'ears_off')
         elif action == 'set':
             s = self.settings
             if arg in self.unavailable:
@@ -2455,6 +2468,8 @@ class Brain(Extras):
                     'set_ears': 'mic', 'set_lang': 'doc'}.get(arg, 'back')
         if action == 'job':
             return 'next'
+        if action == 'set' and arg == 'wake_ears':
+            return 'mic'
         return self.ICON_FOR.get(action)
 
     def menu_ops(self):

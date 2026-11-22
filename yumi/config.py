@@ -230,7 +230,7 @@ def load_settings():
     return st
 
 
-RING_SLOTS = 10            # places on her ring in the button editor
+RING_SLOTS = 11            # places on her ring in the button editor (one free beside the built-ins)
 
 # the entities a button may say it understands (yumi/entities.py); kept here as
 # a plain list so this low-level file needs no import of the NLU
@@ -400,6 +400,7 @@ UI = {
         'conversation_timeout_s': 'Seconds before she stops listening',
         'conversation_gap_reset_min': 'Minutes before a talk starts fresh',
         'conversation_history_n': 'Messages in an active talk',
+        'ears': 'Ears', 'ears_on': 'Ears on', 'ears_off': 'Ears off',
         'wake_ears': 'Wake when you say «Yumi»', 'stt_engine': 'Ear for phrases',
         'eng_whisper': 'Whisper', 'eng_nemotron': 'Nemotron 0.6b (fast)',
         'stt_size': 'Whisper ear size', 'e_small': 'Lite (~460 MB)',
@@ -477,6 +478,7 @@ UI = {
         'conversation_timeout_s': 'Секунд тишины до конца диалога',
         'conversation_gap_reset_min': 'Минут до нового разговора',
         'conversation_history_n': 'Сообщений в активном диалоге',
+        'ears': 'Ушки', 'ears_on': 'Ушки вкл', 'ears_off': 'Ушки выкл',
         'wake_ears': 'Будить, когда скажешь «Юми»', 'stt_engine': 'Ухо для фраз',
         'eng_whisper': 'Whisper', 'eng_nemotron': 'Nemotron 0.6b (быстрое)',
         'stt_size': 'Размер whisper-уха', 'e_small': 'Лёгкая (~460 МБ)',
