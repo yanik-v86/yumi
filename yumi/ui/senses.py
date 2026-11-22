@@ -250,12 +250,14 @@ class SensesMixin:
         self._vs('followup', 'the answer is over: waiting for your next phrase')
         ears.unmute()                 # her voice is gone: the ears open at once
         self.followup_waiting = True
+        join = (bool(self.settings.get('speaker_verify', False))
+                and self.settings.get('speaker_join_policy', 'addressed') != 'off')
         try:
             res = ears.listen(lang=self.settings.get('speech_lang', 'en'), secs=secs,
                               size=self.settings.get('stt_size', 'small'),
                               mic=self.settings.get('stt_mic'),
                               engine=self.settings.get('stt_engine'),
-                              beam=self.settings.get('stt_beam', 5))
+                              beam=self.settings.get('stt_beam', 5), join=join)
         finally:
             self.followup_waiting = False
         if conv.stale(cid) or not conv.active:
@@ -271,9 +273,11 @@ class SensesMixin:
                 lambda br: br.conversation_close('silence')) and False)
             return
         self._vs('held', 'processing the follow-up phrase')
+        spk = res.get('speaker') if isinstance(res, dict) else None
         conv.waiting_answer = True      # the wake loop must not listen again just yet
-        GLib.idle_add(lambda t=text, v=alt: self.ev(
-            lambda br: br.heard_text(t, wake=True, alt=v, followup=True)) and False)
+        GLib.idle_add(lambda t=text, v=alt, s=spk: self.ev(
+            lambda br: br.heard_text(t, wake=True, alt=v, followup=True,
+                                     speaker=s, join=join)) and False)
 
     def talking(self):
         """her voice is sounding at this very moment"""
@@ -423,6 +427,7 @@ class SensesMixin:
                 tail = res.get('text') or ''
                 alt = res.get('alt') or ''  # the stop ear's reading, the other ear
                 fb = bool(res.get('fallback'))   # the name from vosk, not from the trained ear
+                spk = res.get('speaker')        # optional: a profile from the name's voice
                 GLib.idle_add(self.duck_begin)   # her name passed: quiet now, whatever comes
                 if b.thinking or b.listening:
                     continue            # she got busy in those seconds: the word is spent
@@ -434,8 +439,8 @@ class SensesMixin:
                     self.hush()         # her own line was still sounding: it dies, your turn now
                 if tail:
                     # name + text already recognised: pass the whole phrase straight to the brain
-                    GLib.idle_add(lambda t=tail, a=alt, f=fb:
-                                  self.ev(lambda br: br.wake_up(t, a, f)) and False)
+                    GLib.idle_add(lambda t=tail, a=alt, f=fb, s=spk:
+                                  self.ev(lambda br: br.wake_up(t, a, f, speaker=s)) and False)
                 else:
                     # «юми» без текста: ухо openWakeWord только имя ловит,
                     # команда за ней теряется — слушаем фразу, которая пошла после имени
@@ -448,14 +453,18 @@ class SensesMixin:
                     if cmd:
                         said = cmd.get('text') or ''
                         vtxt = cmd.get('vosk') or ''   # the other reading, as on the click-listen
+                        cmd_spk = cmd.get('speaker') or spk
                         if said:
-                            GLib.idle_add(lambda t=said, v=vtxt: self.ev(lambda br: br.wake_up(t, v)) and False)
+                            GLib.idle_add(lambda t=said, v=vtxt, s=cmd_spk:
+                                          self.ev(lambda br: br.wake_up(t, v, speaker=s)) and False)
                         else:
                             # silence after the name: she asks what you wanted
-                            GLib.idle_add(lambda: self.ev(lambda br: br.wake_up('')) and False)
+                            GLib.idle_add(lambda s=cmd_spk: self.ev(
+                                lambda br: br.wake_up('', speaker=s)) and False)
                     else:
                         # ears unavailable: fall back to asking
-                        GLib.idle_add(lambda: self.ev(lambda br: br.wake_up('')) and False)
+                        GLib.idle_add(lambda s=spk: self.ev(
+                            lambda br: br.wake_up('', speaker=s)) and False)
 
         self.wake_thread = threading.Thread(target=work, daemon=True)
         self.wake_thread.start()

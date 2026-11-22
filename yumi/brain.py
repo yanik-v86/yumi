@@ -1272,9 +1272,14 @@ class Brain(Extras):
         """
         if not self.conversation_enabled():
             return False
-        return self.conversation.begin(
+        opened = self.conversation.begin(
             self.now, source,
             timeout=self.settings.get('conversation_timeout_s', 10))
+        pid = getattr(self, '_pending_speaker', None)
+        if opened and pid:
+            self.conversation.add_participant(pid)
+            self._pending_speaker = None
+        return opened
 
     def conversation_extend(self, source='chat'):
         """a phrase arrived inside the window: the dialogue stays open"""
@@ -1292,6 +1297,56 @@ class Brain(Extras):
 
     def conversation_snapshot(self):
         return self.conversation.snapshot(self.now)
+
+    # ------------------------------------------------------------------ who is speaking
+    def _voice_label(self, pid):
+        """a profile's label for the chat history; a missing one stays an id"""
+        if not pid:
+            return None
+        try:
+            from . import speaker as voices
+            return voices.store().label(pid) or str(pid)
+        except Exception:                   # noqa: BLE001 - never break a chat over a label
+            return str(pid)
+
+    def _speaker_remember(self, spk):
+        """the wake word always belongs in the current dialogue: remember its
+        voice now, before her answer opens the follow-up window"""
+        if not self.settings.get('speaker_verify', False) or not isinstance(spk, dict):
+            return
+        pid = spk.get('joined_id') or (spk.get('id') if spk.get('status') == 'known' else None)
+        if not pid:
+            return
+        self._pending_speaker = str(pid)
+        if self.conversation.active:
+            self.conversation.add_participant(str(pid))
+
+    def _speaker_gate(self, text, raw, spk, join):
+        """'pass' — her words, 'join' — a newcomer, 'ignore' — somebody else's talk.
+
+        Stop words are handled before this; a disabled feature or an old daemon
+        with no speaker field takes the old path.  Only a known voice already in
+        the window or an addressed newcomer with a fresh profile gets through.
+        ``raw`` keeps the case and commas that ``drop_name()`` normalises away:
+        «Борис, где ключи?» is an address to a person, not a question for her.
+        """
+        conv = self.conversation
+        hints = addressing.hints_from(getattr(self, 'custom', None))
+        route = addressing.route(text, hints)
+        labels = [self._voice_label(pid) for pid in conv.participants]
+        spoken = strip_wake_raw(raw, self.settings.get('wake_word') or 'юми')
+        who = addressing.addressee(spoken, labels)
+        conv.last_route = who if who == 'other' else route
+        if route == 'ignore' or who == 'other':
+            return 'ignore'
+        if spk.get('status') == 'known' and str(spk.get('id')) in conv.participants:
+            conv.participant_seen(str(spk.get('id')))
+            return 'pass'
+        policy = self.settings.get('speaker_join_policy', 'addressed')
+        if (spk.get('status') == 'unknown' and join and spk.get('quality')
+                and spk.get('joined_id') and policy != 'off'):
+            return 'join'
+        return 'ignore'
 
     # ------------------------------------------------------------------ her ears and her chat
     def heard(self, text, alt=None, followup=False):
@@ -1314,18 +1369,21 @@ class Brain(Extras):
         elif self.mode == 'docked' and not self.out:
             self.pop(True)                  # the moth by the edge: she comes out
 
-    def wake_up(self, text, alt=None, fallback=False):
+    def wake_up(self, text, alt=None, fallback=False, speaker=None):
         """her name was heard («юми»): text is what was said after it, '' when it was said alone;
         alt is what vosk read while whisper read the tape — two ears, one phrase;
         fallback says the name came from vosk rather than the trained ear,
-        so a phrase that is not meant for her must stay out of the mind"""
+        so a phrase that is not meant for her must stay out of the mind;
+        speaker is the optional voice profile verdict from the ears daemon"""
         if self.listening:
             return                          # the mic is lent to a click-listen: not her name
         if self.thinking:
             return                          # an answer is in flight: the word is spent
         self.wake_form()                    # the moth becomes the girl: at once, the phrase waits
+        self._speaker_remember(speaker)
         if text:
-            self.heard_text(text, wake=True, alt=alt, fallback=fallback)   # the question is whole
+            self.heard_text(text, wake=True, alt=alt, fallback=fallback,
+                            speaker=speaker)   # the question is whole
             return
         if self.say('woke_ask'):            # the name alone: she asks right away what you wanted
             self.listening = True
@@ -1346,19 +1404,22 @@ class Brain(Extras):
             _mind_log(f'music {music_cmd}')
             self.music_control(music_cmd)
 
-    def heard_text(self, text, wake=False, alt=None, fallback=False, followup=False):
+    def heard_text(self, text, wake=False, alt=None, fallback=False, followup=False,
+                   speaker=None, join=False):
         """into her mind, whatever the ears' way was; wake is True when the phrase
         came right after her name («юми ...») or after she asked what you wanted;
         followup marks a phrase heard in conversation mode — no name was said,
         the window is simply still open; alt is the other reading (vosk's) when
         the first one was whisper's; fallback marks a phrase the trained ear did
         not hear the name of — such a text is only answered when it is clearly
-        meant for her (yumi/addressing.py)"""
+        meant for her (yumi/addressing.py). speaker is the optional voice verdict
+        of the ears daemon; join says a follow-up may add a new participant."""
         if text is None:                # the ears are not set up (tools/stt_setup.sh)
             self.note_pending = False
             self.say('ears_fail')
             return
         text = ' '.join(str(text or '').split())
+        raw = text                      # the unnormalised phrase, for addressee()
         alt = ' '.join(str(alt or '').split()) if alt else ''
         # the ears sometimes keep her name in the phrase («Юми, время!», «юмию»
         # for «юми»): a first word that is her name goes, the rest is the question
@@ -1372,12 +1433,23 @@ class Brain(Extras):
             else:
                 self.say('heard_nothing')
             return
-        if followup:
-            # a real phrase in the window: the dialogue stays open a little longer
-            self.conversation_extend('voice')
         if stop_command(text):             # «стоп» overrides everything, even her own voice
             self.stop_all()
             return
+        gate_active = (followup and isinstance(speaker, dict)
+                       and bool(self.settings.get('speaker_verify', False)))
+        if gate_active:
+            verdict = self._speaker_gate(text, raw, speaker, join)
+            if verdict == 'ignore':
+                # another person's talk must not answer or keep the window alive
+                _mind_log('speaker gate: not for me')
+                return
+            if verdict == 'join' and speaker.get('joined_id'):
+                if self.conversation.add_participant(str(speaker['joined_id'])):
+                    self.say('speaker_joined')   # one hint, the first time we hear them
+        if followup:
+            # a real phrase in the window: the dialogue stays open a little longer
+            self.conversation_extend('voice')
         if self.pending_permission:       # the next word answers «Run it?»
             said = set(nlu.normalize(text))
             decisions = []
@@ -1483,10 +1555,25 @@ class Brain(Extras):
         if fresh:
             self.chat_history = []
         self.last_chat_exchange_at = self.now
-        self.chat_history.append({'role': 'user', 'content': text})
+        entry = {'role': 'user', 'content': text}
+        if gate_active or (isinstance(speaker, dict)
+                           and self.settings.get('speaker_verify', False)):
+            pid = str(speaker.get('id') or speaker.get('joined_id') or '')
+            if pid:
+                entry['speaker'] = pid
+                entry['speaker_label'] = self._voice_label(pid)
+        self.chat_history.append(entry)
         del self.chat_history[:-limit]  # the recent turn goes along; in an active
                                         # dialogue the window is a little wider
-        history = list(self.chat_history)
+        # The mind gets a signed line, the panel and the diary keep the plain
+        # words: an extra JSON key in an Ollama message is not portable.
+        history = []
+        for item in self.chat_history:
+            msg = {'role': item['role'], 'content': item.get('content', '')}
+            label = item.get('speaker_label') if item['role'] == 'user' else None
+            if label:
+                msg['content'] = f'{label}: {msg["content"]}'
+            history.append(msg)
         if self.settings.get('stt_crosscheck', True):
             note = reading_note(text, alt, lang)
             if note:
@@ -3235,6 +3322,19 @@ def drop_name(text, word='юми'):
     if toks and _near1(toks[0], w[0] if w else 'юми'):
         toks = toks[1:]
     return ' '.join(toks)
+
+
+def strip_wake_raw(text, word='юми'):
+    """the same head cut as drop_name(), but on the raw phrase: case and commas
+    survive, so addressee() can still tell «Борис, где ключи?» from her own name"""
+    parts = str(text or '').split()
+    if not parts:
+        return ''
+    head = volume_tokens(parts[0])
+    wake = volume_tokens(word)
+    if head and wake and _near1(head[0], wake[0] if wake else 'юми'):
+        parts = parts[1:]
+    return ' '.join(parts)
 
 
 def reading_note(text, alt, lang='ru'):

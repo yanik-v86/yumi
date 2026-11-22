@@ -81,4 +81,29 @@ assert limit == HISTORY_CAP
 limit, _ = context_window(1, 1, True, 0, 0, 0)
 assert 2 <= limit <= HISTORY_CAP
 
+# ---- the voices inside one window -----------------------------------------
+conv = Conversation(timeout=10)
+conv.begin(100.0, 'voice')
+assert conv.add_participant('spk_01') is True
+assert conv.add_participant('spk_01') is False      # the same voice is not a join event
+assert conv.add_participant('spk_02') is True
+assert conv.participant_seen('spk_02') is True
+assert conv.participant_seen('spk_09') is False
+assert conv.last_speaker == 'spk_09'
+assert conv.join_events == 2
+conv.last_route = 'chat'
+snap = conv.snapshot(100.0)
+assert snap['participants'] == ['spk_01', 'spk_02']
+assert snap['last_speaker'] == 'spk_09' and snap['last_route'] == 'chat'
+assert snap['join_events'] == 2
+assert conv.remove_participant('spk_01') is True
+assert conv.remove_participant('spk_01') is False
+conv.clear_participants()
+assert conv.snapshot(100.0)['participants'] == []
+conv.add_participant('spk_01')
+assert conv.close('timeout') and conv.snapshot(100.0)['participants'] == []
+assert conv.join_events == 0 and conv.last_route == ''
+conv.begin(200.0, 'voice')
+assert conv.participants == set()                    # a fresh window starts with no voices
+
 print('test_conversation_mode: ok')

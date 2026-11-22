@@ -30,6 +30,12 @@ class Conversation:
         self.exchanges = 0
         self.reason = ''            # why it was closed, for the panel
         self.waiting_answer = False  # a phrase was delivered; do not listen again yet
+        # who is speaking inside this window.  These are profile ids, never
+        # embeddings, and they live only until close()/timeout.
+        self.participants = set()
+        self.last_speaker = None
+        self.last_route = ''
+        self.join_events = 0
 
     def begin(self, now, source=None, timeout=None):
         """open a conversation (bump id), or refresh an already open one"""
@@ -47,7 +53,37 @@ class Conversation:
         self.exchanges = 1
         self.reason = ''
         self.waiting_answer = False
+        self.participants.clear()
+        self.last_speaker = None
+        self.last_route = ''
+        self.join_events = 0
         return True
+
+    def add_participant(self, pid):
+        """a voice joins the current dialogue; True only the first time."""
+        if not pid or pid in self.participants:
+            return False
+        self.participants.add(str(pid))
+        self.last_speaker = str(pid)
+        self.join_events += 1
+        return True
+
+    def remove_participant(self, pid):
+        if pid not in self.participants:
+            return False
+        self.participants.remove(pid)
+        if self.last_speaker == pid:
+            self.last_speaker = None
+        return True
+
+    def participant_seen(self, pid):
+        """remember who just spoke; True when that voice is in the dialogue."""
+        self.last_speaker = str(pid) if pid else None
+        return bool(pid) and str(pid) in self.participants
+
+    def clear_participants(self):
+        self.participants.clear()
+        self.last_speaker = None
 
     def extend(self, now, source=None):
         """a new phrase arrived in the window: keep the conversation going"""
@@ -106,6 +142,9 @@ class Conversation:
         self.last_wait = 0.0
         self.waiting_answer = False
         self.reason = str(reason or '')[:80]
+        self.clear_participants()
+        self.last_route = ''
+        self.join_events = 0
         return True
 
     def expire(self, now, reason='timeout'):
@@ -131,6 +170,10 @@ class Conversation:
             'waiting_answer': bool(self.waiting_answer),
             'reason': self.reason,
             'id': self.id,
+            'participants': sorted(self.participants),
+            'last_speaker': self.last_speaker,
+            'last_route': self.last_route,
+            'join_events': self.join_events,
         }
 
 
