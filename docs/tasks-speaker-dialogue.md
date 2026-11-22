@@ -292,7 +292,7 @@ done
 - [x] Всё доступно из GTK **и** из веб-панели; статус/настройки/роуты/тесты на месте.
 - [x] Сырые embedding'ы не утекают в API, панель, логи или редактор конфигов.
 - [x] README (ru/en) и handoff обновлены; `python3 -m pytest tests/ -q` →
-  `17 passed, 1 skipped`, `python3 tests/test_webpanel.py` → `ok`, py_compile и
+  `18 passed, 1 skipped`, `python3 tests/test_webpanel.py` → `ok`, py_compile и
   JS syntax check без ошибок. Smoke с реальной моделью 3D-Speaker пройден отдельно.
 
 ## Порядок передачи между агентами

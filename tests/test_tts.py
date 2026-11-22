@@ -18,6 +18,13 @@ os.environ['YUMI_TTS_PY'] = '/nonexistent'  # she must not start a real daemon h
 
 from yumi import config, tts  # noqa: E402
 
+# Other test modules may have imported config before the override above took
+# effect; pin the voice cache and the port file to this scratch directory.
+config.CACHE_DIR = Path(tmp) / 'yumi'
+tts.DIR = config.CACHE_DIR / 'tts'
+tts.STATE = tts.DIR / 'port.json'
+tts.PY = Path('/nonexistent')
+
 HITS = []
 
 
@@ -103,7 +110,7 @@ tts._ask = ask
 # a stale port file: nothing answers, and starting a daemon is impossible -> None (blips instead)
 server.shutdown()
 (tts.DIR / 'port.json').write_text('{"port": 1, "profile": "x"}')
-assert tts.speak('Привет!', 0.5) is None
+assert tts.speak('Фраза без кэша', 0.5) is None
 assert tts.last_error, 'the fallback must leave a reason in tts.last_error'
 
 # the cache stays under the limit, the oldest go first

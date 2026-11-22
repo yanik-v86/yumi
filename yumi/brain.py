@@ -1356,7 +1356,9 @@ class Brain(Extras):
             return None
         try:
             from . import speaker as voices
-            return voices.store().label(pid) or str(pid)
+            labels = {str(p.get('id')): p.get('label')
+                      for p in (voices.snapshot(reload=True).get('profiles') or [])}
+            return labels.get(str(pid)) or str(pid)
         except Exception:                   # noqa: BLE001 - never break a chat over a label
             return str(pid)
 
@@ -1389,7 +1391,7 @@ class Brain(Extras):
         try:
             from . import speaker as voices
             profiles = [{'id': str(p.get('id') or ''), 'label': str(p.get('label') or '')}
-                        for p in (voices.snapshot().get('profiles') or [])]
+                        for p in (voices.snapshot(reload=True).get('profiles') or [])]
         except Exception:                   # noqa: BLE001 - a status call must never throw
             profiles = []
         conv = self.conversation.snapshot(self.now)

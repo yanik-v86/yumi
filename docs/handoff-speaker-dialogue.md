@@ -360,7 +360,12 @@ done
   фрагмента подряд в демоне, `off` запрещает авто-join и в мозге.
 - Имена контракта: `WebBridge.speaker_clear_participants()` и `api.speakerGet()`
   (остальные методы — `speakerEnroll/Test/Rename/Delete/Clear`).
-- `pytest tests/ -q` зелёный: `17 passed, 1 skipped`. Старые standalone-скрипты
+- Панель и GTK держат собственный `speaker.store()`, а запись/удаление делает демон
+  ушей. `speaker.snapshot(reload=True)` перед каждым снимком перечитывает
+  `speakers.json`, поэтому удаление/переименование из `/#/voice` сразу видно и в
+  GTK, и в панели; `WebBridge` кладёт свежий снимок в ответ `rename/delete`.
+  «Забыть участников» по-прежнему чистит только текущий диалог, не профили.
+- `pytest tests/ -q` зелёный: `18 passed, 1 skipped`. Старые standalone-скрипты
   (`test_wake`, `test_arbiter`, `test_stop_wake`, `test_tap`, `test_utterance`,
   `test_oww`) больше не вызывают `sys.exit(0)` при импорте, их source-проверки
   обновлены под новые сигнатуры `wake_up`/`heard_text`. По-прежнему их можно

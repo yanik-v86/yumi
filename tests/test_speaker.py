@@ -59,6 +59,20 @@ def test_dedup_refreshes_instead_of_copying(store):
     assert len(store.list()) == 2
 
 
+def test_snapshot_reloads_daemon_edits(store):
+    """The panel and the ears daemon are different processes: the GTK cache must re-read."""
+    pid = store.enroll([1.0, 0.0], 'Аня', source='wake')
+    assert [p['id'] for p in speaker.snapshot()['profiles']] == [pid]
+    other = speaker.SpeakerStore()          # simulates the daemon's own store
+    assert other.delete(pid) is True
+    assert [p['id'] for p in speaker.store().list()] == [pid], 'the cached copy is stale'
+    assert speaker.snapshot()['profiles'], 'a plain snapshot is the cached view'
+    assert speaker.snapshot(reload=True)['profiles'] == []
+    after = speaker.SpeakerStore()
+    after.enroll([0.0, 1.0], 'Борис', source='join')
+    assert [p['label'] for p in speaker.snapshot(reload=True)['profiles']] == ['Борис']
+
+
 def test_broken_and_empty_files(monkeypatch, tmp_path):
     path = tmp_path / 'speakers.json'
     monkeypatch.setenv('YUMI_SPEAKER_FILE', str(path))

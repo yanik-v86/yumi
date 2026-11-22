@@ -297,8 +297,17 @@ def delete(pid):
     return store().delete(pid)
 
 
-def snapshot():
-    return store().snapshot()
+def snapshot(reload=False):
+    """Public snapshot; ``reload=True`` sees edits made by the ears daemon.
+
+    The GTK process and the daemon keep separate ``SpeakerStore`` instances.
+    Without a re-read the panel would still list a profile after the daemon
+    renamed or deleted it (or created one from a wake word).
+    """
+    shared = store()
+    if reload:
+        shared.load()
+    return shared.snapshot()
 
 
 def diag():

@@ -81,13 +81,17 @@ class WebBridge:
 
     def speaker_rename(self, pid, label):
         result = ears.speaker_rename(pid, label)
-        self._on(self.app._web_speaker_changed)
-        return self._speaker_public(result)
+        snap = self._on(self.app._web_speaker_changed)
+        out = self._speaker_public(result)
+        out['speaker'] = snap
+        return out
 
     def speaker_delete(self, pid):
         result = ears.speaker_delete(pid)
-        self._on(lambda: self.app._web_speaker_changed(str(pid)))
-        return self._speaker_public(result)
+        snap = self._on(lambda: self.app._web_speaker_changed(str(pid)))
+        out = self._speaker_public(result)
+        out['speaker'] = snap
+        return out
 
     def speaker_clear_participants(self):
         return self._on(self.app._web_speaker_clear)

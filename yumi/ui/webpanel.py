@@ -296,7 +296,7 @@ class PanelMixin:
         except Exception:                   # an older Brain: still give the panel a shape
             try:
                 profiles = [{'id': str(p.get('id') or ''), 'label': str(p.get('label') or '')}
-                            for p in (speaker.snapshot().get('profiles') or [])]
+                            for p in (speaker.snapshot(reload=True).get('profiles') or [])]
             except Exception:
                 profiles = []
             snap = {'enabled': bool(self.settings.get('speaker_verify', False)),
