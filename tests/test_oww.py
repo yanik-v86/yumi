@@ -200,7 +200,7 @@ assert 'wake_up(t' in src, 'senses.py lost the wake_up call'
 # the fallback flag and the user's own action words travel into the wake and back
 assert 'hints=self.wake_hints(b)' in src, 'senses.py lost the actions.json hints'
 assert "res.get('fallback')" in src, 'senses.py lost the fallback flag'
-assert 'wake_up(t, a, f)' in src, 'senses.py lost the fallback flag on the way to the brain'
+assert 'wake_up(t, a, f' in src, 'senses.py lost the fallback flag on the way to the brain'
 # «юми» услышана: мотылек становится девочкой сразу, ещё до фразы
 assert 'wake_form' in src, 'senses.py lost the wake_form call on the wake'
 # stop branch present and calls brain
@@ -210,7 +210,7 @@ assert 'b.stop_all' in m.group(1), 'stop must reach the brain'
 
 # ---- alt (чтение стоп-ухи) доходит с пробуждением до мозгов ----
 src_brain = (_root / 'yumi' / 'brain.py').read_text(encoding='utf-8')
-assert 'def wake_up(self, text, alt=None, fallback=False)' in src_brain, \
+assert 'def wake_up(self, text, alt=None, fallback=False, speaker=None)' in src_brain, \
     'brain.wake_up lost the alt or the fallback flag'
 assert 'alt=alt' in src_brain and 'fallback=fallback' in src_brain, \
     'wake_up does not pass alt/fallback into heard_text'
@@ -285,4 +285,5 @@ assert stt.stop_shout('стоп')
 assert not stt.stop_shout('скажи стоп')
 
 print('test_oww: ok')
-sys.exit(0)
+if __name__ == '__main__':
+    sys.exit(0)

@@ -19,4 +19,5 @@ assert 'b.stop_all' in body, \
     'the stop must land in the brain, the same stop_all «юми стоп» goes through'
 
 print('test_stop_wake: ok')
-sys.exit(0)
+if __name__ == '__main__':
+    sys.exit(0)

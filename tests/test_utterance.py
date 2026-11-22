@@ -36,4 +36,5 @@ tape = u.take()
 assert tape.startswith(speech) and len(tape) == len(speech) + 9000, tape
 
 print('test_utterance: ok')
-sys.exit(0)
+if __name__ == '__main__':
+    sys.exit(0)

@@ -1,7 +1,7 @@
 # Задачи: голосовые профили и диалог с несколькими участниками
 
-Статус: **список задач к реализации, код не изменён**.  
-Дата: 2026-11-21.  
+Статус: **T-01–T-12 выполнены; T-13 не делался (P2, по решению владельца)**.  
+Дата: 2026-11-22.  
 Связанный документ: `docs/handoff-speaker-dialogue.md` (архитектура, контракты, риски).  
 Правило проекта: см. `AGENTS.md` — каждая возможность должна работать **и в GTK, и в веб-панели**.
 
@@ -16,7 +16,7 @@
 ## Легенда
 
 - Приоритет: P0 — блокирующий, P1 — важный, P2 — улучшение.
-- Статус: `TODO` (все задачи сейчас в этом состоянии).
+- Статус: `DONE` у T-01–T-12, `SKIPPED` у T-13; commit-id указан в строке задачи.
 - Зависимости указаны в поле `Зависит от`.
 - ID задач используются в коммитах: `feat(speaker-dialogue): T-01 ...`.
 
@@ -26,6 +26,7 @@
 
 ### T-01. Хранилище голосовых профилей (P0)
 
+**Статус:** DONE — commit `b92c82b`.  
 **Зависит от:** —  
 **Файлы:** `yumi/speaker.py` (новый), `tests/test_speaker.py` (новый).
 
@@ -46,6 +47,7 @@
 
 ### T-02. Адаптер sherpa-onnx / 3D-Speaker (P0)
 
+**Статус:** DONE — commit `b92c82b`; smoke с реальной моделью пройден отдельно.  
 **Зависит от:** T-01  
 **Файлы:** `yumi/speaker_sherpa.py` (новый), `tools/speaker_setup.sh` (новый) или дополнение к `tools/nemotron_setup.sh`, `tests/test_speaker.py`.
 
@@ -64,6 +66,7 @@
 
 ### T-03. Определение адресата: `addressee()` (P0)
 
+**Статус:** DONE — commit `b92c82b`.  
 **Зависит от:** —  
 **Файлы:** `yumi/addressing.py`, `tests/test_addressing.py`.
 
@@ -84,6 +87,7 @@
 
 ### T-04. Speaker-метаданные в `/wake` и `/listen` (P0)
 
+**Статус:** DONE — commit `e0530ed`.  
 **Зависит от:** T-01, T-02  
 **Файлы:** `yumi/stt_daemon.py` (`Ears.listen()` `:1568-1575`, `read_and_confirm()` `:1784-1797`, `wake_result()` `:1662-1683`, роуты `:2416-2471`), `yumi/ears.py:215-283`, `tests/test_wake.py`.
 
@@ -102,6 +106,7 @@
 
 ### T-05. Авто-enroll по wake-word и join-режим follow-up (P0)
 
+**Статус:** DONE — commit `e0530ed`.  
 **Зависит от:** T-02, T-03, T-04  
 **Файлы:** `yumi/stt_daemon.py`, `yumi/speaker.py`, `tests/test_wake.py`, новый `tests/test_speaker.py`.
 
@@ -119,6 +124,7 @@
 
 ### T-06. Роуты управления профилями в демоне (P1)
 
+**Статус:** DONE — commit `e0530ed`.  
 **Зависит от:** T-01, T-04  
 **Файлы:** `yumi/stt_daemon.py`, `yumi/ears.py`, `tests/test_webpanel.py` (только контракт/статус).
 
@@ -137,6 +143,7 @@
 
 ### T-07. Участники беседы в `Conversation` (P0)
 
+**Статус:** DONE — commit `019aa59`.  
 **Зависит от:** T-03  
 **Файлы:** `yumi/conversation.py`, `tests/test_conversation_mode.py`.
 
@@ -154,6 +161,7 @@
 
 ### T-08. Гейт в `Brain.heard_text()` и подпись реплик (P0)
 
+**Статус:** DONE — commit `019aa59`.  
 **Зависит от:** T-03, T-04, T-05, T-07  
 **Файлы:** `yumi/brain.py:1336-1478`, `yumi/ui/senses.py:236-274`, `tests/test_speaker_gate.py` (новый).
 
@@ -174,6 +182,7 @@
 
 ### T-09. Настройки и живое применение (P0)
 
+**Статус:** DONE — commit `08043ab`.  
 **Зависит от:** T-01  
 **Файлы:** `yumi/config.py` (`DEFAULT_SETTINGS`, `UI`), `yumi/webpanel/catalog.py`, `yumi/ui/webpanel.py` (`_web_apply_settings`, `_web_snapshot`), `tests/test_webpanel.py`.
 
@@ -192,6 +201,7 @@
 
 ### T-10. WebBridge, роуты и страницы панели (P0)
 
+**Статус:** DONE — commit `08043ab`.  
 **Зависит от:** T-06, T-09  
 **Файлы:** `yumi/ui/bridge.py`, `yumi/webpanel/server.py`, `yumi/webui/static/js/api.js`, `pages/voice.js`, `pages/chat.js`, `tests/test_webpanel.py`.
 
@@ -211,6 +221,7 @@
 
 ### T-11. GTK-эквивалент (P0)
 
+**Статус:** DONE — commit `08043ab`.  
 **Зависит от:** T-08, T-09  
 **Файлы:** `yumi/brain.py` (меню слуха), `yumi/config.py` (строки UI), при нужде новый `yumi/ui/speaker_dialog.py`.
 
@@ -228,6 +239,7 @@
 
 ### T-12. Тесты, smoke, документация (P0)
 
+**Статус:** DONE — commit `<финальный>`.  
 **Зависит от:** T-01..T-11  
 **Файлы:** `tests/test_speaker.py`, `tests/test_speaker_gate.py`, `tests/test_conversation_mode.py`, `tests/test_addressing.py`, `tests/test_webpanel.py`, `README.ru.md`, `README.md`, `docs/handoff-web-panel.md`, `docs/handoff-speaker-dialogue.md`, этот файл.
 
@@ -257,6 +269,7 @@ done
 
 ### T-13 (P2, опционально). Улучшение адресации (P2)
 
+**Статус:** SKIPPED — не входит в обязательный DoD, реализовывать по отдельному решению.  
 **Зависит от:** T-08  
 **Файлы:** `yumi/addressing.py`, `yumi/chat.py`, `tests/test_addressing.py`.
 
@@ -271,14 +284,16 @@ done
 
 ## Итоговый Definition of Done
 
-- [ ] T-01 — T-12 выполнены (T-13 — по решению владельца).
-- [ ] Юми сама снимает слепок по wake-word, профилей несколько, есть ручная запись и перезапись.
-- [ ] Новый человек может вклиниться обращённой репликой без имени и стать участником беседы.
-- [ ] Юми не отвечает на разговор участников между собой и на фоновую речь.
-- [ ] Стоп-слова работают независимо от голоса.
-- [ ] Всё доступно из GTK **и** из веб-панели; статус/настройки/роуты/тесты на месте.
-- [ ] Сырые embedding'ы не утекают в API, панель, логи или редактор конфигов.
-- [ ] README (ru/en) и handoff обновлены, все проверки T-12 зелёные.
+- [x] T-01 — T-12 выполнены (T-13 пропущен как опциональный P2).
+- [x] Юми сама снимает слепок по wake-word, профилей несколько, есть ручная запись и перезапись.
+- [x] Новый человек может вклиниться обращённой репликой без имени и стать участником беседы.
+- [x] Юми не отвечает на разговор участников между собой и на фоновую речь.
+- [x] Стоп-слова работают независимо от голоса.
+- [x] Всё доступно из GTK **и** из веб-панели; статус/настройки/роуты/тесты на месте.
+- [x] Сырые embedding'ы не утекают в API, панель, логи или редактор конфигов.
+- [x] README (ru/en) и handoff обновлены; `python3 -m pytest tests/ -q` →
+  `17 passed, 1 skipped`, `python3 tests/test_webpanel.py` → `ok`, py_compile и
+  JS syntax check без ошибок. Smoke с реальной моделью 3D-Speaker пройден отдельно.
 
 ## Порядок передачи между агентами
 

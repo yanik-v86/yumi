@@ -186,6 +186,10 @@ ctx.navigate(id)
 | POST | `/api/voice/test-wake` | `{seconds?, ear?}` — проверить имя выбранным ухом |
 | POST | `/api/voice/test` | `{text?, lang?}` — синхронизировать профиль и озвучить пробу текущим голосом |
 | POST | `/api/voice/stop`, `/api/voice/speak` | остановить запись/озвучку, сказать текст |
+| GET | `/api/speaker` | `{speaker: {enabled, profiles, participants, current, last_event, policy, model}}` — только ids/метки, без векторов |
+| POST | `/api/speaker/enroll`, `/api/speaker/test` | записать / проверить голос через демона ушей (микрофон берётся через `_ears_exclusive()`) |
+| POST | `/api/speaker/rename`, `/api/speaker/delete` | `{id, label}` / `{id}` — переименовать или удалить профиль |
+| POST | `/api/speaker/clear` | очистить участников текущего диалога, профили не трогать |
 | GET | `/api/security` | адрес, токен (маска), сессии |
 | POST | `/api/security/rotate` | новая ссылка |
 | POST | `/api/security/link` | показать ссылку с токеном (только POST + CSRF) |
@@ -212,6 +216,15 @@ pending_permission}`. `confirm: true` (совместимость) или неп
 (кэш явной проверки моделей, без хэширования на тике) и `runtime.doctor` (только короткое
 саммари последнего запуска). Полный отчёт живёт в ответе `POST /api/doctor` и в SSE
 `doctor`, в снимок не попадает.
+
+`runtime.speaker` — состояние голосовых профилей: `enabled`, `profiles` (`id`, `label`),
+`participants`, `current` (`id`, `label`, `status`, `score`), `last_event`, `policy`,
+`model` (`ready`, `name`, `error`). Сюда никогда не попадают embedding'ы, пути к модели
+и секреты. Четыре настройки — `speaker_verify`, `speaker_threshold`, `speaker_min_ms`,
+`speaker_join_policy` — живут в секции `ears` и применяются без перезапуска; выключение
+фичи очищает участников и кэш узнавания, но не удаляет профили. `speakers.json`
+**не** входит в `CONFIG_FILES`: биометрию нельзя редактировать как обычный JSON через
+панель.
 
 Состояние микрофона включает `awaiting_followup` (владелец `conversation`): она ответила
 и ждёт реплику без wake-word. Рядом лежат `runtime.conversation` (снимок
@@ -240,6 +253,8 @@ memory_recent, memory_search, memory_clear, notes_list, notes_search, notes_get,
 notes_add, notes_update, notes_delete, notes_clear, music_status, music_search,
 music_play, music_control, voice_listen(seconds, engine), voice_stop, voice_speak,
 voice_engines, voice_mics, voice_test_wake(seconds, ear), voice_test(text, lang),
+speaker_status, speaker_enroll, speaker_test, speaker_rename(id, label),
+speaker_delete(id), speaker_clear_participants,
 tools_*, logs`.
 
 Проверки слуха и голоса (`voice_listen`, `voice_test_wake`) на время записи ставят

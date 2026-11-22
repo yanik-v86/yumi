@@ -57,4 +57,5 @@ with tempfile.TemporaryDirectory() as tmp:
         stt.STATE = old
 
 print('test_tap: ok')
-sys.exit(0)
+if __name__ == '__main__':
+    sys.exit(0)

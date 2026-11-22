@@ -48,7 +48,7 @@ assert not b.sleeping and not b.nap and b.out, 'the name must end the nap too'
 b = brain()
 b.set_sleep(True)
 seen = []
-b.heard_text = lambda text, wake=False, alt=None, fallback=False: \
+b.heard_text = lambda text, wake=False, alt=None, fallback=False, speaker=None: \
     seen.append((text, wake, alt, fallback))
 b.wake_up('погода', alt='юми погода')
 assert not b.sleeping, 'the phrase must not be lost: she wakes first'
@@ -56,7 +56,7 @@ assert seen == [('погода', True, 'юми погода', False)], seen
 
 # фолбэк: имя из vosk, флаг идёт дальше в heard_text
 b = brain()
-b.heard_text = lambda text, wake=False, alt=None, fallback=False: \
+b.heard_text = lambda text, wake=False, alt=None, fallback=False, speaker=None: \
     seen.append((text, wake, alt, fallback))
 b.wake_up('как дела', alt='как дела', fallback=True)
 assert seen[-1] == ('как дела', True, 'как дела', True), seen

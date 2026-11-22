@@ -1,7 +1,7 @@
 # Handoff: голосовые профили и диалог с несколькими участниками
 
-Статус: **проект/передаточный документ, реализация не начата**.  
-Дата: 2026-11-21.  
+Статус: **реализовано (T-01–T-12), ждёт ручной проверки на двух настоящих голосах**.  
+Дата: 2026-11-22.  
 Аудитория: агент, который будет реализовывать фичу, и ревьюер.  
 Список задач: `docs/tasks-speaker-dialogue.md`.  
 Обязательно к прочтению: `AGENTS.md`, `docs/handoff-conversation-mode.md`, `docs/handoff-web-panel.md`.
@@ -326,3 +326,45 @@ done
 - Формат метки в `chat_history`: отдельное поле `speaker` или префикс в `content` — выбрать то, что не ломает `chat.ask()`/`memory.remember()`.
 - Поведение при `speaker.status='unknown'` и выключенном auto-join: молчать или один раз подсказать wake-word.
 - Нужна ли отдельная voice-реплика «я запомнила новый голос» или достаточно индикатора в панели.
+
+---
+
+## 10. Что получилось (реализация)
+
+Коммиты по этапам:
+
+- `b92c82b` — T-01–T-03: хранилище `speakers.json`, адаптер 3D-Speaker, `addressee()`;
+- `e0530ed` — T-04–T-06: speaker-поле в `/wake` и `/listen`, авто-enroll, локальные
+  роуты демона `/speaker/*`;
+- `019aa59` — T-07–T-08: участники `Conversation` и speaker-гейт в `heard_text()`;
+- `08043ab` — T-09–T-11: настройки и живое применение, роуты/страницы панели,
+  GTK-меню и окно переименования;
+- T-12 — финальные тесты и документация (последний коммит ветки).
+
+Уточнения к проекту:
+
+- Модель зафиксирована как
+  `3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx`, SHA-256
+  `53cab20ba8f2eb2f6e2d89ecc18e88ef3222169b61b4419cbc13666744a4574b`; реальный файл
+  ставится в `~/.local/share/yumi/stt` скриптом `tools/speaker_setup.sh`, в репозиторий
+  бинарник не попадает. Smoke с реальной моделью:
+  `YUMI_SPEAKER_SMOKE=1 python3 -m pytest tests/test_speaker.py -q -k real_model`.
+- `yumi/speaker_sherpa.py` импортирует бэкенд в процессе, если версия совместима,
+  иначе запускает venv-воркер: PCM на stdin, JSON-вектор на stdout. Тесты меняют
+  бэкенд через `set_backend()`, сеть и тяжёлая модель в юнит-тестах не нужны.
+- В `chat_history` лежит обычный текст пользователя плюс поля `speaker` и
+  `speaker_label`; префикс «Label: text» добавляется только в sanitation-промпт
+  для LLM, поэтому `memory.recall()` не ломается.
+- Гейт вызывает `addressee()` на **сырой** фразе (`strip_wake_raw()`), чтобы не
+  потерять запятую и регистр после `drop_name()`; `strict` требует два обращённых
+  фрагмента подряд в демоне, `off` запрещает авто-join и в мозге.
+- Имена контракта: `WebBridge.speaker_clear_participants()` и `api.speakerGet()`
+  (остальные методы — `speakerEnroll/Test/Rename/Delete/Clear`).
+- `pytest tests/ -q` зелёный: `17 passed, 1 skipped`. Старые standalone-скрипты
+  (`test_wake`, `test_arbiter`, `test_stop_wake`, `test_tap`, `test_utterance`,
+  `test_oww`) больше не вызывают `sys.exit(0)` при импорте, их source-проверки
+  обновлены под новые сигнатуры `wake_up`/`heard_text`. По-прежнему их можно
+  запускать и напрямую `python3 <file>`.
+
+Ручные сценарии §9 остаются за владельцем: для них нужны два живых голоса и
+микрофон. Всё остальное покрыто юнит- и HTTP-тестами.

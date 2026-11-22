@@ -228,4 +228,5 @@ for key, value in _saved_env.items():
 _tmp.cleanup()
 
 print('test_wake: ok')
-sys.exit(0)
+if __name__ == '__main__':
+    sys.exit(0)

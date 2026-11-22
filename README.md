@@ -106,6 +106,7 @@ Optional, for the extras (install what you like):
 | `pipewire` (`pw-play`), `paplay`, `aplay` or `ffplay` | the timer bell |
 | `tools/tts_setup.sh` (a venv with torch, ~450 MB) | her real voice: a local Silero TTS |
 | `tools/stt_setup.sh` (a small venv with vosk) | her ears: local speech recognition |
+| `tools/speaker_setup.sh` (3D-Speaker inside the ears venv) | telling the participants' voices apart |
 | `tools/intents_setup.sh` (a ~20 MB model off the releases page, or a venv with torch to teach one anew) | her tiny mind for the voice commands: the rephrasings the sayings miss |
 
 ### 2. Yumi herself
@@ -606,6 +607,31 @@ only shows the live dialogue status (open, number of exchanges, seconds left);
 the «waiting for follow-up» microphone state shows on **Overview** and
 **Ears & voice**. It is the same mode and the same settings as in GTK.
 
+### Who is talking
+
+Turn on **Settings → Ears → Recognise voices in a talk** (`speaker_verify`) and install
+3D-Speaker with `bash tools/speaker_setup.sh`. The model and its venv live in
+`~/.local/share/yumi/stt`, outside the repository; without them Yumi behaves exactly
+as before. The first wake-word records a voice automatically as «Voice 1» into
+`~/.local/state/yumi/speakers.json`. In the **Ears** menu you can record/re-record a
+voice, check it, rename/delete profiles in **Voice profiles**, and forget the
+participants of the current talk (the profiles stay).
+
+A known voice can keep talking without the name. If an unknown voice addresses her
+during the follow-up window, Yumi enrols them and adds them to the talk; by default
+one addressed phrase is enough. **When a new voice joins** can require two addressed
+phrases in a row (`strict`) or disable auto-join (`off`). Conversation between
+participants («Boris, where are the keys?») and background speech never trigger a
+reply, while stop words work from any voice. The speaker label goes into the chat
+history, not into the memory diary.
+
+The browser panel exposes the same actions on **Ears & voice** (`/#/voice`): the
+profile list, record/check/rename/delete buttons, the current speaker and the
+participants; **Talk** (`/#/chat`) shows the participants too. `GET /api/speaker`
+and the `POST /api/speaker/*` routes share the GTK state. Raw embeddings never
+leave the app: they are absent from the API, panel, logs and the config editor,
+and `speakers.json` is deliberately not editable as a normal JSON file.
+
 ## Files
 
 | Path | What |
@@ -618,6 +644,7 @@ the «waiting for follow-up» microphone state shows on **Overview** and
 | `~/.cache/yumi/tts/` | her real voice: the daemon's port and her cached lines |
 | `~/.cache/yumi/stt/` | her ears: the daemon's port |
 | `~/.local/state/yumi/state.json` | where she sits, her shelf, picked colors |
+| `~/.local/state/yumi/speakers.json` | voice profiles (local only, not editable from the panel) |
 | `~/.local/state/yumi/web-chat.json` | browser chat history with a revision and an op journal |
 | `~/.local/state/yumi/yumi.log` | what she printed (errors go here when she runs in the background) |
 
@@ -664,6 +691,10 @@ the «waiting for follow-up» microphone state shows on **Overview** and
   Hands-free talk (`/#/settings`). The Talk page (`/#/chat`) shows only
   `runtime.conversation` — whether the dialogue is open, its exchange count and the
   seconds left before silence closes it. The same status is visible in GTK.
+- **Speakers:** the Ears & voice page (`/#/voice`) lists profiles and offers
+  record/check/rename/delete, the current speaker and the talk participants;
+  `GET /api/speaker` and `POST /api/speaker/*` use the same state as GTK, and no
+  embeddings are exposed.
 - **Network:** it listens on `127.0.0.1` only by default. `0.0.0.0` exposes it to the LAN;
   do that only with a strong token and a firewall. There is no HTTPS yet.
 - **Data:** the token and signing secret live in `~/.config/yumi/webpanel.json` (mode

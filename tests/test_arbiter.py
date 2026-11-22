@@ -224,4 +224,5 @@ assert stt.wake_at('юми поставь таймер на десять мин�
                    spellings) == ('поставь таймер на десять минут и включи музыку', 'юми')
 
 print('test_arbiter: ok')
-sys.exit(0)
+if __name__ == '__main__':
+    sys.exit(0)
