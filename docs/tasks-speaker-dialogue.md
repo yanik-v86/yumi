@@ -239,7 +239,7 @@
 
 ### T-12. Тесты, smoke, документация (P0)
 
-**Статус:** DONE — commit `<финальный>`.  
+**Статус:** DONE — commit `cb1fb82`.  
 **Зависит от:** T-01..T-11  
 **Файлы:** `tests/test_speaker.py`, `tests/test_speaker_gate.py`, `tests/test_conversation_mode.py`, `tests/test_addressing.py`, `tests/test_webpanel.py`, `README.ru.md`, `README.md`, `docs/handoff-web-panel.md`, `docs/handoff-speaker-dialogue.md`, этот файл.
 
