@@ -336,6 +336,7 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                 and not getattr(self, 'voice_queue', None)
                 and not getattr(self, '_voice_ready', None)
                 and not getattr(self, 'voice_streaming', False)
+                and not getattr(self, 'voice_pending', 0)   # still being synthesized
                 and getattr(self, '_voice_next', 1) == getattr(self, '_voice_seq', 0) + 1):
             b.bubble['until'] = min(b.bubble['until'], b.now + 2.0)
         self._conversation_tick()

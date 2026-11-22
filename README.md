@@ -653,8 +653,24 @@ are disabled with a hint to record a voice first.
 
 To enroll a voice explicitly, say “Yumi, let's get acquainted” / “remember my
 voice”, use **Get acquainted** in the ears menu, or press **Get acquainted** in
-the web panel. Yumi gives a short prompt, listens for a few seconds of clean
-speech, and saves the voiceprint as a profile you can rename later.
+the web panel. Yumi gives a short prompt (the microphone opens only after the
+prompt has finished speaking), listens for a few seconds of clean speech, and
+saves the voiceprint as a profile you can rename later. Saying “let's get
+acquainted” no longer creates a placeholder «Voice 1» profile on its own, and
+Yumi never speaks a generated label as if it were your name. If you say “my name
+is John and I live in Ottawa” during the interview, she remembers the name and
+city even without a Polza.ai key — those fields are read from the phrase itself.
+
+Short phrases like “Yumi, hi” are recognised too: the voiceprint for verification
+is taken from the last ~8 seconds of audio, not just the tail after the wake word,
+so a quick “hi” no longer needs a long monologue. A profile keeps several voice
+samples (different phrasings produce noticeably different embeddings) and matches
+against the closest one; re-enrolling and old duplicates of the same person are
+folded into a single profile instead of piling up as «Voice 1», «Voice 2». A
+half-match (score 0.55–0.65) is also stored as another sample of the existing
+profile — otherwise Yumi would create a generic «Voice 2» and then say “we haven't
+met” about her own wake word. If you edit `speakers.json` by hand, run
+`yumi --quit`, `./install.sh`, `yumi`: a restart alone keeps the old code running.
 
 ## Files
 

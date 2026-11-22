@@ -93,6 +93,13 @@ class SensesMixin:
         self._voice_next = 1
         self._voice_ready.clear()
         self.voice_id = bid
+        # The WAV is made in a worker thread: a long answer can take seconds
+        # before it is ready.  Keep the bubble (and her being out) alive while
+        # the line is being prepared, or the frame loop's "voice is over"
+        # safety shortens it first and voice_start() finds no bubble to play.
+        b = self.brain
+        if b.bubble and b.bubble.get('id') == bid:
+            b.bubble['until'] = max(b.bubble['until'], b.now + 60)
         if not blips and not text:
             return
         # one whole line is being prepared.  The acquaintance recording waits
