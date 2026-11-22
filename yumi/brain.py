@@ -1414,7 +1414,7 @@ class Brain(Extras):
             'policy': str(self.settings.get('speaker_join_policy', 'addressed')),
         }
 
-    def _speaker_gate(self, text, raw, spk, join):
+    def _speaker_gate(self, text, raw, spk, join, wake=False):
         """'pass' — her words, 'join' — a newcomer, 'ignore' — somebody else's talk.
 
         Stop words are handled before this; a disabled feature or an old daemon
@@ -1433,7 +1433,17 @@ class Brain(Extras):
         pid = spk.get('joined_id') or spk.get('id')
         self._speaker_current = (self._speaker_card(pid, spk.get('status', 'unknown'),
                                                     spk.get('score')) if pid else None)
-        if route == 'ignore' or who == 'other':
+        if who == 'other':
+            self._speaker_last_event = 'ignored'
+            return 'ignore'
+        if wake or who == 'yumi':
+            if spk.get('status') == 'known' and str(spk.get('id')) in conv.participants:
+                conv.participant_seen(str(spk.get('id')))
+                self._speaker_last_event = 'recognized'
+            else:
+                self._speaker_last_event = 'addressed'
+            return 'pass'
+        if route == 'ignore':
             self._speaker_last_event = 'ignored'
             return 'ignore'
         if spk.get('status') == 'known' and str(spk.get('id')) in conv.participants:
@@ -1447,6 +1457,22 @@ class Brain(Extras):
             return 'join'
         self._speaker_last_event = 'ignored'
         return 'ignore'
+
+    @staticmethod
+    def _name_question(text):
+        low = ' '.join(str(text or '').lower().split())
+        if not low:
+            return False
+        pats = (
+            'как меня зовут', 'как мое имя', 'как моё имя', 'моё имя', 'мое имя',
+            'кто я', 'как меня звать', 'напомни как меня зовут',
+            'what is my name', "what's my name", 'whats my name',
+            'who am i', 'what am i called', 'my name',
+        )
+        if any(p in low for p in pats):
+            # avoid "как меня зовут в игре/..." unlikely but cheap guard
+            return True
+        return False
 
     def acquaintance_begin(self, again=False):
         """A guided voice registration: Yumi explains, then records a voiceprint."""
@@ -1555,7 +1581,7 @@ class Brain(Extras):
         gate_active = (followup and isinstance(speaker, dict)
                        and bool(self.settings.get('speaker_verify', False)))
         if gate_active:
-            verdict = self._speaker_gate(text, raw, speaker, join)
+            verdict = self._speaker_gate(text, raw, speaker, join, wake=wake)
             if verdict == 'ignore':
                 # another person's talk must not answer or keep the window alive
                 _mind_log('speaker gate: not for me')
@@ -1651,6 +1677,32 @@ class Brain(Extras):
             return
         if acquaintance_command(text) or (alt and alt != text and acquaintance_command(alt)):
             self.acquaintance_begin()
+            return
+        name_q = self._name_question(text) or (self._name_question(alt) if alt and alt != text else None)
+        if name_q:
+            cur = getattr(self, '_speaker_current', None)
+            label = ''
+            if isinstance(cur, dict) and cur.get('id'):
+                label = str(cur.get('label') or self._voice_label(cur.get('id')) or '').strip()
+            if not label:
+                # try first profile if any
+                try:
+                    from . import speaker as voices
+                    profs = voices.snapshot(reload=False).get('profiles') or []
+                    if len(profs) == 1:
+                        label = str(profs[0].get('label') or '').strip()
+                except Exception:
+                    pass
+            if label and label.lower() not in ('голос', 'voice'):
+                if lang == 'ru':
+                    self.say_text(f'Тебя зовут {label}.', voice=True)
+                else:
+                    self.say_text(f'Your name is {label}.', voice=True)
+            else:
+                if lang == 'ru':
+                    self.say_text('Я пока не знаю, как тебя зовут. Скажи «давай познакомимся», и я запомню.', voice=True)
+                else:
+                    self.say_text("I don't know your name yet. Say “let's get acquainted” and I'll remember you.", voice=True)
             return
         if fallback:
             # the name came from the small ear: a command above already ran, and a
@@ -3431,7 +3483,8 @@ CONFIRM_NO = frozenset(('нет', 'не', 'не надо', 'отмена', 'от
                         'no', 'nope', 'cancel', 'dont', "don't", 'stop'))
 
 ACQUAINTANCE_PHRASES = (
-    'давай познакомимся', 'познакомимся', 'хочу познакомиться',
+    'давай познакомимся', 'давай знакомиться', 'давайте познакомимся',
+    'познакомимся', 'хочу познакомиться', 'можно познакомиться',
     'знакомство', 'запомни мой голос', 'запиши мой голос',
     'запомни меня', 'запомни голос', 'запиши голос',
     'давай запишем мой голос', 'запомни как я говорю',
@@ -3461,6 +3514,8 @@ def acquaintance_command(text):
         # self-acquaintance / voice enrollment; avoid "познакомь с ..." introductions
         if toks & {'голос', 'voice', 'запомни', 'запиши', 'запомнить', 'записать',
                    'remember', 'record', 'learn', 'enroll', 'me', 'us', 'меня', 'нас'}:
+            return True
+        if toks & {'давай', 'давайте', 'хочу', 'можно', "let's", 'lets', 'want'}:
             return True
         return False
     if ('голос' in toks or 'voice' in toks) and (

@@ -28,6 +28,7 @@ def brain(**settings):
 def test_acquaintance_command_matches_explicit_phrases():
     for text in [
         'давай познакомимся',
+        'давай знакомиться',
         'Юми, давай познакомимся',
         'запомни мой голос',
         'запиши мой голос',
@@ -340,3 +341,10 @@ def test_acquaintance_extracts_profile_info(monkeypatch):
         time.sleep(0.02)
     assert any(c[0] == 'update' and c[2] == 'Николас' and c[3].get('city') == 'Ялта' for c in calls), calls
     assert ('say', 'acquaintance_ok', 'Николас') in calls, calls
+
+
+def test_name_question_helper():
+    assert Brain._name_question('как меня зовут')
+    assert Brain._name_question('what is my name')
+    assert not Brain._name_question('как тебя зовут')
+    assert not Brain._name_question('расскажи анекдот')
