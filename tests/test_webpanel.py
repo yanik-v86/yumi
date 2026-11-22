@@ -229,6 +229,10 @@ class Bridge:
         self.speaker_calls.append(('enroll',))
         return {'ok': True, 'id': 'v1', 'profiles': [{'id': 'v1', 'label': 'Голос 1'}]}
 
+    def speaker_acquaintance(self):
+        self.speaker_calls.append(('acquaintance',))
+        return {'ok': True, 'started': True}
+
     def speaker_test(self):
         self.speaker_calls.append(('test',))
         return {'ok': True, 'speaker': {'id': 'v1', 'label': 'Голос 1',
@@ -573,13 +577,15 @@ try:
     code, data, _ = call('GET', '/api/speaker')
     assert code == 200 and data['speaker']['profiles'] == [{'id': 'v1', 'label': 'Голос 1'}]
     assert 'embedding' not in json.dumps(data) and 'vector' not in json.dumps(data)
-    for path, payload in (('enroll', {}), ('test', {}),
+    for path, payload in (('enroll', {}), ('acquaintance', {}), ('test', {}),
                           ('rename', {'id': 'v1', 'label': 'Голос 2'}),
                           ('delete', {'id': 'v1'}), ('clear', {})):
         code, data, _ = call('POST', '/api/speaker/' + path, payload)
         assert code == 403, (path, code, data)
     code, data, _ = call('POST', '/api/speaker/enroll', {}, csrf=csrf)
     assert code == 200 and data['id'] == 'v1', (code, data)
+    code, data, _ = call('POST', '/api/speaker/acquaintance', {}, csrf=csrf)
+    assert code == 200 and data['ok'] is True and data.get('started') is True, (code, data)
     code, data, _ = call('POST', '/api/speaker/test', {}, csrf=csrf)
     assert code == 200 and data['speaker']['score'] == 0.91, (code, data)
     code, data, _ = call('POST', '/api/speaker/rename',
@@ -590,7 +596,7 @@ try:
     code, data, _ = call('POST', '/api/speaker/clear', {}, csrf=csrf)
     assert code == 200 and data['speaker']['participants'] == [], (code, data)
     assert [c[0] for c in bridge.speaker_calls] == [
-        'enroll', 'test', 'rename', 'delete', 'clear'], bridge.speaker_calls
+        'enroll', 'acquaintance', 'test', 'rename', 'delete', 'clear'], bridge.speaker_calls
     code, data, _ = call('PATCH', '/api/settings',
                          {'patch': {'speaker_verify': True}}, csrf=csrf)
     assert code == 200 and data['settings']['speaker_verify'] is True

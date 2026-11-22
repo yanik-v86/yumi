@@ -507,16 +507,36 @@ class SensesMixin:
         self._vs('wake_resumed')
 
     # ---- voice profiles from the in-world menu (the panel uses the same daemon routes)
+    def _wait_voice_quiet(self, timeout=8.0):
+        """wait until TTS/blips finish so the mic records the user, not Yumi"""
+        deadline = time.time() + max(0.5, float(timeout))
+        quiet = 0
+        while time.time() < deadline:
+            q = getattr(self, 'voice_queue', None) or []
+            ready = getattr(self, '_voice_ready', None) or {}
+            pending = int(getattr(self, 'voice_pending', 0) or 0)
+            streaming = bool(getattr(self, 'voice_streaming', False))
+            if not q and not ready and not pending and not streaming:
+                quiet += 1
+                if quiet >= 3:          # ~0.3s of real silence
+                    return True
+            else:
+                quiet = 0
+            time.sleep(0.1)
+        return False
+
     def speaker_action(self, action, pid=None, label=None):
         """record/check/rename/forget a voice in a worker: the wake ear is lent to the mic"""
         if action not in ('speaker_enroll', 'speaker_test', 'speaker_clear',
-                          'speaker_delete', 'speaker_rename'):
+                          'speaker_delete', 'speaker_rename', 'speaker_acquaintance'):
             return
         was_on = self.wake_pause()
 
         def work():
             try:
-                if action == 'speaker_enroll':
+                if action == 'speaker_acquaintance':
+                    self._wait_voice_quiet(timeout=10.0)
+                if action in ('speaker_enroll', 'speaker_acquaintance'):
                     result = ears.speaker_enroll()
                 elif action == 'speaker_test':
                     result = ears.speaker_test()
@@ -542,15 +562,23 @@ class SensesMixin:
     def _speaker_action_done(self, action, result, pid=None):
         b = self.brain
         if not isinstance(result, dict) or not result.get('ok'):
-            b.say('speaker_fail')
+            err = str((result or {}).get('error') or '')
+            if action == 'speaker_acquaintance':
+                if 'no model' in err.lower() or 'not available' in err.lower():
+                    b.say('acquaintance_nomodel')
+                else:
+                    b.say('acquaintance_fail')
+            else:
+                b.say('speaker_fail')
             return
-        if action == 'speaker_enroll':
+        if action in ('speaker_enroll', 'speaker_acquaintance'):
             pid = result.get('id') or pid
             label = next((p.get('label') for p in (result.get('profiles') or [])
                           if p.get('id') == pid), None) or str(pid or '')
             b._speaker_remember({'status': 'known', 'id': pid, 'score': 1.0,
                                  'joined_id': None})
-            b.say('speaker_ready', label=label)
+            b.say('acquaintance_ok' if action == 'speaker_acquaintance' else 'speaker_ready',
+                  label=label)
         elif action == 'speaker_test':
             field = result.get('speaker') or {}
             if field.get('id'):
@@ -568,6 +596,7 @@ class SensesMixin:
             b._pending_speaker = None
             b._speaker_current = None
             b._speaker_last_event = ''
+        self.web_sync_soon()
 
     def tap_set(self, on):
         """the ears' diary: while it is on, the daemon records everything the ears hear

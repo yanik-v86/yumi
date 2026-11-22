@@ -76,6 +76,11 @@ class WebBridge:
         """record a clean voice through the daemon; the background wake ear pauses"""
         return self._speaker_public(self._ears_exclusive(ears.speaker_enroll))
 
+    def speaker_acquaintance(self):
+        """guided voice registration: Yumi speaks intro, then records a voiceprint"""
+        self._on(lambda: self.app.speaker_action('speaker_acquaintance'))
+        return {'ok': True, 'started': True}
+
     def speaker_test(self):
         return self._speaker_public(self._ears_exclusive(ears.speaker_test))
 

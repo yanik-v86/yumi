@@ -104,6 +104,7 @@ export const api = {
 
   speakerGet: () => api.get('/api/speaker'),
   speakerEnroll: () => api.post('/api/speaker/enroll'),
+  speakerAcquaintance: () => api.post('/api/speaker/acquaintance'),
   speakerTest: () => api.post('/api/speaker/test'),
   speakerRename: (id, label) => api.post('/api/speaker/rename', { id, label }),
   speakerDelete: (id) => api.post('/api/speaker/delete', { id }),

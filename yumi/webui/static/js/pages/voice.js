@@ -326,7 +326,51 @@ export function render(view, ctx) {
       },
     });
     const listening = say('слушаю голос…', 'listening for the voice…');
+    const acquaintanceBtn = el('button', {
+      class: 'btn btn-small btn-primary', type: 'button',
+      text: say('Познакомиться', 'Get acquainted'),
+      onclick: async () => {
+        if (speakerBusy) return;
+        speakerBusy = true;
+        acquaintanceBtn.disabled = true;
+        setNotice(say('Юми начинает знакомство: послушай её подсказку и скажи фразу обычным голосом.',
+          'Yumi is starting the acquaintance: listen to her prompt and say a phrase in your normal voice.'));
+        try {
+          await api.speakerAcquaintance();
+          const before = new Set((status.runtime?.speaker?.profiles || []).map((p) => p.id));
+          for (let i = 0; i < 24; i++) {  // ~12s, enough for TTS + 4s record
+            await new Promise((r) => setTimeout(r, 500));
+            await ctx.refreshStatus();
+            status = ctx.status || status;
+            const profiles = status.runtime?.speaker?.profiles || [];
+            const added = profiles.find((p) => !before.has(p.id));
+            const current = status.runtime?.speaker?.current;
+            if (added?.id) {
+              speakerPick = added.id;
+              speakerName = labelNow(added.id);
+              setNotice(say(`Готово: ${speakerName}. Теперь можно нажать «Проверить голос».`,
+                `Done: ${speakerName}. Now you can press “Check a voice”.`));
+              return;
+            }
+            if (current?.id && status.runtime?.speaker?.last_event === 'recognized') {
+              setNotice(say(`Юми услышала голос: ${labelNow(current.id)}.`,
+                `Yumi heard a voice: ${labelNow(current.id)}.`));
+              return;
+            }
+          }
+          setNotice(say('Знакомство запущено. Если профиль не появился, проверь микрофон/модель и попробуй ещё раз.',
+            'Acquaintance started. If no profile appeared, check microphone/model and try again.'));
+        } catch (err) {
+          setNotice(err.message);
+          errToast(err);
+        } finally {
+          speakerBusy = false;
+          acquaintanceBtn.disabled = false;
+        }
+      },
+    });
     speakerBox.append(el('div', { class: 'row', style: { marginTop: '10px' } },
+      acquaintanceBtn,
       run(say('Записать голос', 'Record a voice'), api.speakerEnroll, (data) => {
         const id = data?.speaker?.id || data?.id;
         if (!id) return data?.error || say('голос не записан — проверь микрофон',

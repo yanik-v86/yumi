@@ -516,6 +516,8 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                 self.web_rotate()
             elif kind == 'speaker_rename':
                 self.speaker_rename_dialog(r[1] if len(r) > 1 else None)
+            elif kind == 'speaker_acquaintance':
+                self.speaker_action('speaker_acquaintance', r[1] if len(r) > 1 else None)
             elif kind in ('speaker_enroll', 'speaker_test', 'speaker_clear', 'speaker_delete'):
                 self.speaker_action(kind, r[1] if len(r) > 1 else None)
             elif kind == 'memory_clear_sassy':

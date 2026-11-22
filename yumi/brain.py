@@ -971,6 +971,7 @@ class Brain(Extras):
                     ('set', 'wake_confirm', t('wake_confirm')), ('set', 'wake_ear', t('wake_ear')),
                     ('set', 'wake_model_size', t('wake_model_size')),
                     ('set', 'wake_judge_log', t('wake_judge_log'))]
+            rows.append(('acquaintance', None, t('acquaintance')))
             if self.settings.get('speaker_verify'):
                 rows += [('set', 'speaker_threshold', t('speaker_threshold')),
                          ('set', 'speaker_min_ms', t('speaker_min_ms')),
@@ -978,7 +979,7 @@ class Brain(Extras):
                          ('speaker_enroll', None, t('speaker_enroll')),
                          ('speaker_test', None, t('speaker_test')),
                          ('speaker_show_list', None, t('speaker_list')),
-                          ('speaker_clear', None, t('speaker_clear'))]
+                         ('speaker_clear', None, t('speaker_clear'))]
             if self.mics:
                 rows.append(('mic_refresh', None, t('mic_refresh')))
             rows.append(('menu', 'settings', t('back')))
@@ -1239,6 +1240,10 @@ class Brain(Extras):
             self.requests.append(('web_rotate',))
         elif action == 'speaker_show_list':
             self.open_menu('speaker_list')
+        elif action == 'acquaintance':
+            self.menu = None
+            self.close_radial()
+            self.acquaintance_begin()
         elif action in ('speaker_enroll', 'speaker_test', 'speaker_clear',
                         'speaker_delete', 'speaker_rename'):
             self.menu = None
@@ -1438,6 +1443,17 @@ class Brain(Extras):
         self._speaker_last_event = 'ignored'
         return 'ignore'
 
+    def acquaintance_begin(self, again=False):
+        """A guided voice registration: Yumi explains, then records a voiceprint."""
+        if self.listening:
+            self.listening = False
+            self.requests.append(('listen_stop',))
+        self.note_pending = False
+        self.menu = None
+        self.close_radial()
+        self.say('acquaintance_again' if again else 'acquaintance_intro')
+        self.requests.append(('speaker_acquaintance', None))
+
     # ------------------------------------------------------------------ her ears and her chat
     def heard(self, text, alt=None, followup=False):
         """the microphone gave its best: text is the phrase, '' for silence, None for no
@@ -1622,6 +1638,9 @@ class Brain(Extras):
             return
         if chat.params_question(text):     # «юми, твои параметры»: she names herself
             self.say_text(self.params_report(lang))
+            return
+        if acquaintance_command(text) or (alt and alt != text and acquaintance_command(alt)):
+            self.acquaintance_begin()
             return
         if fallback:
             # the name came from the small ear: a command above already ran, and a
@@ -3400,6 +3419,45 @@ CONFIRM_YES = frozenset(('да', 'давай', 'ага', 'ок', 'окей', 'л
                          'ok', 'okay', 'go', 'run'))
 CONFIRM_NO = frozenset(('нет', 'не', 'не надо', 'отмена', 'отмени', 'откажись',
                         'no', 'nope', 'cancel', 'dont', "don't", 'stop'))
+
+ACQUAINTANCE_PHRASES = (
+    'давай познакомимся', 'познакомимся', 'хочу познакомиться',
+    'знакомство', 'запомни мой голос', 'запиши мой голос',
+    'запомни меня', 'запомни голос', 'запиши голос',
+    'давай запишем мой голос', 'запомни как я говорю',
+    'lets get acquainted', "let's get acquainted", 'get acquainted',
+    'remember my voice', 'record my voice', 'learn my voice',
+    'enroll my voice', 'recognize my voice', 'recognise my voice',
+    'know my voice',
+)
+
+
+def acquaintance_command(text):
+    """True when the phrase asks Yumi to remember the speaker's voice."""
+    low = ' '.join(str(text or '').lower().split())
+    if not low:
+        return False
+    toks = set(nlu.normalize(low))
+    # "Покажи/открой знакомство" is the tour button phrase in Russian UI;
+    # don't hijack it as voice enrollment.
+    if ('знакомств' in low) and (toks & {'покажи', 'показать', 'открой', 'открыть', 'show', 'open'}):
+        if not (toks & {'голос', 'voice', 'запомни', 'запиши', 'запомнить',
+                        'записать', 'remember', 'record', 'learn', 'enroll'}):
+            return False
+    for p in ACQUAINTANCE_PHRASES:
+        if p in low:
+            return True
+    if ('познаком' in low) or ('acquaint' in low):
+        # self-acquaintance / voice enrollment; avoid "познакомь с ..." introductions
+        if toks & {'голос', 'voice', 'запомни', 'запиши', 'запомнить', 'записать',
+                   'remember', 'record', 'learn', 'enroll', 'me', 'us', 'меня', 'нас'}:
+            return True
+        return False
+    if ('голос' in toks or 'voice' in toks) and (
+            toks & {'запомни', 'запиши', 'запомнить', 'записать', 'remember',
+                    'record', 'learn', 'enroll', 'recognize', 'recognise', 'know'}):
+        return True
+    return False
 
 
 def drop_name(text, word='юми'):

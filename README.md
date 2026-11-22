@@ -641,6 +641,11 @@ under the button even when the status refreshes, and renaming pre-fills the curr
 label and confirms «old» → «new». With no profiles yet, the check and rename buttons
 are disabled with a hint to record a voice first.
 
+To enroll a voice explicitly, say “Yumi, let's get acquainted” / “remember my
+voice”, use **Get acquainted** in the ears menu, or press **Get acquainted** in
+the web panel. Yumi gives a short prompt, listens for a few seconds of clean
+speech, and saves the voiceprint as a profile you can rename later.
+
 ## Files
 
 | Path | What |

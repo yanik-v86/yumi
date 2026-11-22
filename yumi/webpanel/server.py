@@ -423,6 +423,7 @@ def _make_handler(panel):
                 ('POST', '/api/voice/test'): self._voice_test,
                 ('GET', '/api/speaker'): self._speaker_get,
                 ('POST', '/api/speaker/enroll'): self._speaker_enroll,
+                ('POST', '/api/speaker/acquaintance'): self._speaker_acquaintance,
                 ('POST', '/api/speaker/test'): self._speaker_test,
                 ('POST', '/api/speaker/rename'): self._speaker_rename,
                 ('POST', '/api/speaker/delete'): self._speaker_delete,
@@ -970,6 +971,11 @@ def _make_handler(panel):
             result = panel.bridge.speaker_enroll()
             panel.audit(self._ip(), 'speaker-enroll', result.get('id') or '')
             return self._json(200, {'ok': bool(result.get('ok')), **result})
+
+        def _speaker_acquaintance(self, _q):
+            result = panel.bridge.speaker_acquaintance()
+            panel.audit(self._ip(), 'speaker-acquaintance', '')
+            return self._json(200, {'ok': bool(result.get('ok', True)), **result})
 
         def _speaker_test(self, _q):
             result = panel.bridge.speaker_test()
