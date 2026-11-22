@@ -3521,21 +3521,19 @@ def _wake_head(token, word):
     judged here — a name deep in the phrase is somebody's talking, not her cue."""
     if not token:
         return False
-    if ('голос' in toks or 'voice' in toks) and (
-            toks & {'запомни', 'запиши', 'запомнить', 'записать', 'remember',
-                    'record', 'learn', 'enroll', 'recognize', 'recognise', 'know'}):
+    if _near1(token, word):
         return True
-    return False
+    return any(_near1(token, heard) for heard in _wake_spellings(word))
 
 
 def drop_name(text, word='юми'):
     """the phrase without her name at the head: the ears' readings sometimes keep
-    it («Юми, время!», «юмию время», «юмит») — whisper leans on the name so hard
-    it will not let go. Only the first word is judged: a name deep in the phrase
-    is somebody's talking, not her cue"""
+    it («Юми, время!», «юмию время», «юный время») — whisper leans on the name so
+    hard it will not let go. Only the first word is judged: a name deep in the
+    phrase is somebody's talking, not her cue"""
     toks = volume_tokens(text)
     w = volume_tokens(word)
-    if toks and _near1(toks[0], w[0] if w else 'юми'):
+    if toks and _wake_head(toks[0], w[0] if w else 'юми'):
         toks = toks[1:]
     return ' '.join(toks)
 
@@ -3548,7 +3546,7 @@ def strip_wake_raw(text, word='юми'):
         return ''
     head = volume_tokens(parts[0])
     wake = volume_tokens(word)
-    if head and wake and _near1(head[0], wake[0] if wake else 'юми'):
+    if head and wake and _wake_head(head[0], wake[0] if wake else 'юми'):
         parts = parts[1:]
     return ' '.join(parts)
 

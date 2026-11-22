@@ -21,6 +21,15 @@ assert brain.drop_name('пока права пучка') == 'пока права
 assert brain.drop_name('юми') == ''                         # the name alone is no question
 assert brain.drop_name('') == ''
 
+# 23:08 in the ears' diary: the name came out as «юный», and «юный время» was
+# not answered because the head never came off. The daemon keeps these hear-say
+# spellings; the mind must strip them the same way it strips «юмию».
+assert brain.drop_name('юный расскажи анекдот') == 'расскажи анекдот'
+assert brain.drop_name('юный время') == 'время'
+assert brain.drop_name('Юный, время!') == 'время'
+assert brain.strip_wake_raw('юный расскажи анекдот') == 'расскажи анекдот'
+assert brain.strip_wake_raw('Борис, где ключи?') == 'Борис, где ключи?'
+
 # her own phrases from the ears' diary, 17:54, the evening it all went wrong
 assert m('юми включи музыку') == 'play'
 assert m('включи музыку') == 'play'
