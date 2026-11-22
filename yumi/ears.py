@@ -212,9 +212,11 @@ def mics():
     return data.get('mics') if isinstance(data.get('mics'), list) else []
 
 
-def listen(lang='ru', secs=7, size='small', mic=None, engine=None, beam=5):
-    """hear one phrase: {'text': the words whisper read, 'vosk': the words vosk read}
-    ('' for silence, None when the ears are not set up); the mind tries both readings"""
+def listen(lang='ru', secs=7, size='small', mic=None, engine=None, beam=5, join=False):
+    """hear one phrase: {'text': the words whisper read, 'vosk': the words vosk read,
+    'speaker': optional {status,id,score,quality,ms,joined_id}} ('' for silence, None
+    when the ears are not set up). ``join=1`` lets an addressed newcomer enroll.
+    An older daemon simply has no speaker field, which is fine."""
     info = _ensure()
     if not info:
         return None
@@ -223,6 +225,8 @@ def listen(lang='ru', secs=7, size='small', mic=None, engine=None, beam=5):
         q['engine'] = engine
     if mic:
         q['mic'] = mic
+    if join:
+        q['join'] = 1
     url = f"http://127.0.0.1:{info['port']}/listen?" + urllib.parse.urlencode(q)
     try:
         # the first listen may download the model (~45 MB), hence the generous timeout
@@ -232,7 +236,10 @@ def listen(lang='ru', secs=7, size='small', mic=None, engine=None, beam=5):
         return None
     if 'error' in data:
         return None
-    return {'text': str(data.get('text') or ''), 'vosk': str(data.get('vosk') or '')}
+    out = {'text': str(data.get('text') or ''), 'vosk': str(data.get('vosk') or '')}
+    if isinstance(data.get('speaker'), dict):
+        out['speaker'] = data['speaker']
+    return out
 
 
 def wake(lang='ru', word='юми', secs=20, size='small', mic=None,
@@ -280,11 +287,52 @@ def wake(lang='ru', word='юми', secs=20, size='small', mic=None,
                        else 'matched' if data.get('woke') else 'no wake in this window'),
             'fallback': bool(data.get('fallback')),
         }
-    return {'woke': bool(data.get('woke')), 'text': str(data.get('text') or ''),
-            'alt': str(data.get('alt') or ''),
-            'fallback': bool(data.get('fallback')),
-            'stop': bool(data.get('stop')), 'cmd': str(data.get('cmd') or ''),
-            'verdict': verdict}
+    out = {'woke': bool(data.get('woke')), 'text': str(data.get('text') or ''),
+           'alt': str(data.get('alt') or ''),
+           'fallback': bool(data.get('fallback')),
+           'stop': bool(data.get('stop')), 'cmd': str(data.get('cmd') or ''),
+           'verdict': verdict}
+    if isinstance(data.get('speaker'), dict):
+        out['speaker'] = data['speaker']
+    return out
+
+
+def speaker_request(route, payload=None):
+    """The local /speaker/* routes: a dict, or {'ok': False, 'error': ...} when
+    the daemon is away (the panel shows the error instead of crashing)."""
+    info = _ensure()
+    if not info:
+        return {'ok': False, 'error': 'the ears are not available'}
+    url = f"http://127.0.0.1:{info['port']}/speaker/{route}"
+    data = json.dumps(payload or {}, ensure_ascii=False).encode() if payload is not None else None
+    req = urllib.request.Request(url, data=data, method='POST' if data is not None else 'GET',
+                                 headers={'Content-Type': 'application/json'} if data else {})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            result = json.loads(r.read().decode())
+        return result if isinstance(result, dict) else {'ok': False, 'error': 'bad answer'}
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return {'ok': False, 'error': str(exc)[:160]}
+
+
+def speaker_status():
+    return speaker_request('status')
+
+
+def speaker_enroll():
+    return speaker_request('enroll', {})
+
+
+def speaker_test():
+    return speaker_request('test', {})
+
+
+def speaker_rename(pid, label):
+    return speaker_request('rename', {'id': str(pid), 'label': str(label)})
+
+
+def speaker_delete(pid):
+    return speaker_request('delete', {'id': str(pid)})
 
 
 def tap(on, lang='ru', size='small', mic=None):

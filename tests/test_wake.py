@@ -146,5 +146,86 @@ assert a(100.0, 0.3, 16.0, 15.0) == 'ceiling'      # reachable in the (0, 400) h
 assert a(0.0, 0.3, 16.0, 15.0) == 'ceiling'        # and with nothing on the tape
 assert a(900.0, 1.3, 16.0, 15.0) == 'end'          # a finished phrase still ends first
 
+# ---- speaker metadata in /wake and /listen, and the local /speaker/* routes
+import json
+import math
+import os
+import struct
+import tempfile
+from pathlib import Path
+
+from yumi import speaker as profiles, speaker_sherpa
+
+_saved_env = {k: os.environ.get(k) for k in
+              ('XDG_CONFIG_HOME', 'YUMI_SPEAKER_FILE', 'YUMI_SPEAKER_MODEL')}
+_tmp = tempfile.TemporaryDirectory()
+_root_tmp = Path(_tmp.name)
+_cfg = _root_tmp / 'config' / 'yumi'
+_cfg.mkdir(parents=True)
+os.environ['XDG_CONFIG_HOME'] = str(_root_tmp / 'config')
+os.environ['YUMI_SPEAKER_FILE'] = str(_root_tmp / 'speakers.json')
+os.environ['YUMI_SPEAKER_MODEL'] = str(_root_tmp / 'no-model.onnx')
+
+
+def _tone(freq=220.0):
+    n = 16000 * 2
+    return struct.pack('<%dh' % n, *(
+        int(8000 * math.sin(2 * math.pi * freq * i / 16000)) for i in range(n)))
+
+
+def _settings(**kw):
+    data = {'speaker_verify': True, 'speaker_threshold': 0.65,
+            'speaker_min_ms': 1200, 'speaker_join_policy': 'addressed'}
+    data.update(kw)
+    (_cfg / 'settings.json').write_text(json.dumps(data))
+
+
+assert stt.speaker_tune()['enabled'] is False
+_settings()
+assert stt.speaker_tune()['enabled'] is True
+assert stt.speaker_voice(_tone())['status'] == 'disabled'  # no model yet
+
+speaker_sherpa.set_backend(lambda pcm: [0.9, 0.1, 0.0])
+try:
+    first = stt.speaker_voice(_tone(), 'привет', wake=True)
+    assert first['status'] == 'known' and first['joined_id'] == 'spk_01', first
+    second = stt.speaker_voice(_tone(), 'как дела', wake=True)
+    assert second['id'] == 'spk_01' and second['joined_id'] is None, second
+
+    speaker_sherpa.set_backend(lambda pcm: [0.0, 0.9, 0.1])
+    joined = stt.speaker_voice(_tone(), 'привет', join=True)
+    assert joined['joined_id'] == 'spk_02', joined
+    assert stt.speaker_voice(_tone(), 'привет', join=False)['joined_id'] is None
+    assert stt.speaker_voice(b'\x00' * 4000, 'привет', join=True)['quality'] is False
+    assert len(profiles.list()) == 2
+    speaker_sherpa.set_backend(lambda pcm: [0.1, 0.1, 0.9])
+    assert stt.speaker_voice(_tone(), 'Борис, где ключи?', join=True)['joined_id'] is None
+    _settings(speaker_join_policy='off')
+    assert stt.speaker_voice(_tone(), 'привет', join=True)['joined_id'] is None
+    _settings(speaker_join_policy='strict')
+    assert stt.speaker_voice(_tone(), 'привет', join=True)['joined_id'] is None
+    assert stt.speaker_voice(_tone(), 'привет', join=True)['joined_id'] == 'spk_03'
+finally:
+    speaker_sherpa.set_backend(None)
+
+# HTTP contracts: no embedding in any answer, a polite error without a model
+handler = object.__new__(stt.Handler)
+handler.path = '/speaker/status'
+handler._json = lambda obj, code=200: obj
+status = handler.do_GET()
+assert status['ok'] and status['model']['ready'] is False
+assert 'embedding' not in json.dumps(status)
+assert [p['label'] for p in status['profiles']] == [p['label'] for p in profiles.list()]
+handler.path = '/speaker/enroll'
+handler._body = lambda: {}
+assert handler.do_POST()['ok'] is False
+
+for key, value in _saved_env.items():
+    if value is None:
+        os.environ.pop(key, None)
+    else:
+        os.environ[key] = value
+_tmp.cleanup()
+
 print('test_wake: ok')
 sys.exit(0)

@@ -74,7 +74,9 @@ MODELS = {                              # lang: size: (zip on alphacephei.com, f
 }
 WHISPER_SIZE = {'small': 'small',       # faster-whisper's own names for the sizes
                 'big': 'large-v3'}
-VERSION = 30                            # bumped when the protocol changes: stale twins are restarted
+VERSION = 31                            # bumped when the protocol changes: stale twins are restarted
+                                        # (31: /wake and /listen may carry a speaker field; the
+                                        #     local /speaker/* routes manage voice profiles)
                                         # (30: a medium-confidence OpenWakeWord name is confirmed by
                                         #     reading the tape: the name or a command must be heard,
                                         #     otherwise the moment is background talk and no wake)
@@ -1054,6 +1056,113 @@ def fallback_route(text, hints=()):
     return route(text, hints)
 
 
+# ---- speaker diarisation (all pure modules; never import GTK here)
+_join_candidates = {}                   # voice fingerprint -> one seen addressed phrase
+
+
+def speaker_tune():
+    """The four dials from settings.json, with safe defaults for an old file."""
+    out = {'enabled': False, 'threshold': 0.65, 'min_ms': 1200,
+           'join_policy': 'addressed'}
+    try:
+        from yumi import speaker as profiles
+        st = json.loads((Path(os.environ.get('XDG_CONFIG_HOME') or
+                              Path.home() / '.config') / 'yumi' / 'settings.json').read_text())
+        if not isinstance(st, dict):
+            return out
+        out['enabled'] = st.get('speaker_verify') is True
+        out['threshold'] = float(st.get('speaker_threshold', out['threshold']))
+        out['min_ms'] = max(200, int(st.get('speaker_min_ms', out['min_ms'])))
+        policy = st.get('speaker_join_policy', 'addressed')
+        out['join_policy'] = policy if policy in ('addressed', 'strict', 'off') else 'addressed'
+    except (OSError, ValueError, TypeError, KeyError, ImportError):
+        pass
+    return out
+
+
+def _speaker_field(status='disabled', pid=None, score=0.0, quality=False, ms=0, joined=None):
+    """The public speaker field: no embedding, no paths, no fingerprints."""
+    return {'status': status, 'id': pid, 'score': round(float(score), 4),
+            'quality': bool(quality), 'ms': int(ms), 'joined_id': joined}
+
+
+def speaker_voice(pcm, text='', join=False, wake=False, hints=()):
+    """Verify (and sometimes enroll) the voice behind one phrase.
+
+    ``wake`` enrolls a new or unknown voice at once (the first profile is made
+    by the name itself); ``join`` may add a newcomer who addressed her without
+    a name.  A short or noisy tape only produces quality=False — no profile.
+    """
+    tune = speaker_tune()
+    ms = int(len(pcm or b'') / (RATE * 2.0) * 1000)
+    if not tune['enabled'] or not pcm:
+        return _speaker_field(ms=ms)
+    try:
+        from yumi import speaker as profiles, speaker_sherpa
+        from yumi.addressing import addressee, route
+    except ImportError:
+        return _speaker_field(ms=ms)
+    quality = ms >= tune['min_ms'] and bool(speaker_sherpa.quality(pcm, tune['min_ms']))
+    if not quality:
+        return _speaker_field('unknown', ms=ms)
+    vec = speaker_sherpa.embedding(pcm, tune['min_ms'])
+    if vec is None:
+        return _speaker_field(ms=ms)    # the model is away: the old path still works
+    found = profiles.verify(vec, tune['threshold'])
+    field = _speaker_field(found['status'], found['id'], found['score'], True, ms)
+
+    may_join = False
+    if wake and found['status'] == 'unknown':
+        may_join = True
+    elif join and found['status'] == 'unknown' and tune['join_policy'] != 'off':
+        may_join = route(text, hints) != 'ignore' and addressee(text) == 'yumi'
+        if may_join and tune['join_policy'] == 'strict':
+            fingerprint = hashlib.sha256(
+                json.dumps([round(x, 3) for x in vec[:32]]).encode()).hexdigest()[:16]
+            if _join_candidates.get(fingerprint) == 1:
+                may_join = True
+            else:
+                _join_candidates.clear()
+                _join_candidates[fingerprint] = 1
+                may_join = False
+    if may_join:
+        source = 'wake' if wake else 'join'
+        pid = profiles.enroll(vec, source=source)
+        if pid:
+            field = _speaker_field('known', pid, found['score'], True, ms, pid)
+            _join_candidates.clear()
+    return field
+
+
+def speaker_record(secs=4.0, lang='ru'):
+    """Record one phrase for a manual enroll/check; (speaker field, model error).
+
+    The manual buttons work even while the daily gate is off: they are how you
+    teach her a voice before switching the gate on.
+    """
+    tune = speaker_tune()
+    try:
+        from yumi import speaker as profiles, speaker_sherpa
+    except ImportError:
+        return _speaker_field(), 'no speaker module', None
+    if not speaker_sherpa.available():
+        return _speaker_field(), (speaker_sherpa.model_info().get('error') or 'no model'), None
+    res = Handler.ears.listen(lang, secs, quiet=min(6.0, secs), size='small')
+    if not res or not res.get('pcm'):
+        return _speaker_field(), 'nothing was heard', None
+    pcm = res['pcm']
+    ms = int(len(pcm) / (RATE * 2.0) * 1000)
+    quality = ms >= tune['min_ms'] and bool(speaker_sherpa.quality(pcm, tune['min_ms']))
+    if not quality:
+        return _speaker_field('unknown', ms=ms), 'not enough clear voice', None
+    vec = speaker_sherpa.embedding(pcm, tune['min_ms'])
+    if vec is None:
+        return _speaker_field(ms=ms), 'the voice could not be read', None
+    found = profiles.verify(vec, tune['threshold'])
+    field = _speaker_field(found['status'], found['id'], found['score'], True, ms)
+    return field, None, vec
+
+
 def stop_mush(text, spellings=()):
     """the stop may arrive glued to her name («юмистоп» for «юми стоп», the pause
     drowns in the music and the ear writes one word): a word counts when it ends
@@ -1556,8 +1665,9 @@ class Ears:
         None never leaves here, the caller gets the best reading of the three"""
         return self.read_tape(said, lang, size, engine, beam)[0]
 
-    def listen(self, lang, secs, quiet, size='small', mic=None, engine='whisper', beam=5):
-        """hear one phrase: the recognized text ('' when there was nothing)"""
+    def listen(self, lang, secs, quiet, size='small', mic=None, engine='whisper', beam=5,
+               join=False):
+        """hear one phrase: text, vosk's reading, the tape and (optionally) who said it"""
         from vosk import KaldiRecognizer
         import selectors
         echo = echo_ready(mic)
@@ -1635,7 +1745,10 @@ class Ears:
                     text = self.transcribe_said(said, lang, size, engine, beam)
                 if not text:                  # whisper silent or away: vosk's words stand in
                     text = vtext
-                return {'text': text, 'vosk': vtext}   # both readings: the mind will choose
+                # the same tape goes to STT and to the voice-print ear; only the
+                # public verdict leaves the daemon, never the raw embedding
+                field = speaker_voice(said, text or vtext, join=join)
+                return {'text': text, 'vosk': vtext, 'pcm': said, 'speaker': field}
             finally:
                 if proc is not None:            # the recorder was born: it dies with the call
                     try:
@@ -1697,6 +1810,7 @@ class Ears:
         # the ring of the last ~8 s of clean sound: the phrase's head (the name's
         # own beginning among it) goes to STT from here after the wake (раздел 10)
         ring = bytearray()
+        wake_pcm = b''                   # the tape the phrase ear read, for the voice print
         RING_MAX = RATE * 8 * 2          # 8 s of s16 mono
 
         def judge_note(what):
@@ -1741,7 +1855,9 @@ class Ears:
             # the stop ear read the air while the big ear read the tape: its
             # reading travels with the phrase as alt, just like on the listen
             # path — «heard … (vosk: …)» in the mind's diary must not be empty
+            tape = wake_pcm or bytes(ring[-RING_MAX:])
             return {'woke': True, 'text': text, 'alt': vosk_fallback(),
+                    'speaker': speaker_voice(tape, text or '', wake=True),
                     'fallback': bool(fallback_wake),
                     'verdict': {'matched': True, 'reason': str(why)[:120],
                                 'fallback': bool(fallback_wake),
@@ -1860,8 +1976,9 @@ class Ears:
                     Returns the wake answer, or None when the moment was background
                     talk: the caller resets the ears and keeps listening in the same
                     window (no recorder restart, no fresh model load)."""
-                    nonlocal utt
+                    nonlocal utt, wake_pcm
                     said = utt.take() if utt is not None else b''
+                    wake_pcm = said
                     window = said[:int(TUNE['wake_read_s'] * RATE * 2)]
                     text, ear = '', ''
                     if len(window) >= RATE // 2:      # under half a second is a breath
@@ -1905,6 +2022,8 @@ class Ears:
                     the ring and the stop ear's finals speak no more of that sound."""
                     nonlocal woken, fallback_wake, wake_t, wake_score, heard_after
                     nonlocal utt, det, phrase_ms, last_voice_t, voice_t0, was_voiced
+                    nonlocal wake_pcm
+                    wake_pcm = b''
                     woken, fallback_wake = False, False
                     wake_t, wake_score, heard_after = 0.0, 0.0, ''
                     utt, det, phrase_ms = None, Detector(), 0.0
@@ -2483,6 +2602,18 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == '/mics':
             # the microphones this recorder can hear, for Settings → Her ears → Microphone
             return self._json({'ok': True, 'recorder': recorder_cmd()[0], 'mics': list_mics()})
+        if u.path == '/speaker/status':
+            try:
+                from yumi import speaker as profiles, speaker_sherpa
+                return self._json({
+                    'ok': True, 'enabled': speaker_tune()['enabled'],
+                    'profiles': [{'id': p['id'], 'label': p['label']}
+                                 for p in profiles.list()],
+                    'model': speaker_sherpa.model_info(),
+                    'diag': profiles.diag(),
+                })
+            except Exception as e:          # noqa: BLE001 - a broken store must not kill /ping
+                return self._json({'ok': False, 'error': str(e)[:200]})
         if u.path == '/mute':
             # her ears close for a while (system.play_file asks, while her own voice
             # plays): nothing she says reaches vosk or the judge until it runs out
@@ -2533,11 +2664,14 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:          # noqa: BLE001 - any failure is reported over HTTP
                 self.ears.error = str(e)
                 return self._json({'error': str(e)}, 500)
-            return self._json({'ok': True, 'woke': res['woke'], 'text': res.get('text'),
-                               'alt': res.get('alt'),
-                               'fallback': bool(res.get('fallback')),
-                               'stop': bool(res.get('stop')),
-                               'cmd': str(res.get('cmd') or '')})
+            answer = {'ok': True, 'woke': res['woke'], 'text': res.get('text'),
+                      'alt': res.get('alt'),
+                      'fallback': bool(res.get('fallback')),
+                      'stop': bool(res.get('stop')),
+                      'cmd': str(res.get('cmd') or '')}
+            if 'speaker' in res:            # old clients ignore it
+                answer['speaker'] = res['speaker']
+            return self._json(answer)
         if u.path != '/listen':
             return self._json({'error': 'no such path'}, 404)
         if self.ears.busy and self.ears.kind == 'wake':
@@ -2551,13 +2685,60 @@ class Handler(BaseHTTPRequestHandler):
         lang = (q.get('lang') or ['ru'])[0]
         size = (q.get('size') or ['small'])[0]
         mic = (q.get('mic') or [None])[0] or None
+        join = q.get('join') and q['join'][0] in ('1', 'true', 'yes', 'on')
         try:
             res = self.ears.listen(lang, secs, quiet=min(6.0, secs), size=size, mic=mic,
-                                   engine=engine, beam=beam)
+                                   engine=engine, beam=beam, join=join)
         except Exception as e:          # noqa: BLE001 - any failure is reported over HTTP
             self.ears.error = str(e)
             return self._json({'error': str(e)}, 500)
-        self._json({'ok': True, 'text': res['text'], 'vosk': res.get('vosk', '')})
+        payload = {'ok': True, 'text': res['text'], 'vosk': res.get('vosk', '')}
+        if 'speaker' in res:            # an old client just ignores the new field
+            payload['speaker'] = res['speaker']
+        self._json(payload)
+
+    def _body(self):
+        """One small JSON object from a local POST; bad bodies are empty objects."""
+        try:
+            size = int(self.headers.get('Content-Length') or 0)
+        except (TypeError, ValueError):
+            return {}
+        if size <= 0 or size > 65536:
+            return {}
+        try:
+            data = json.loads(self.rfile.read(size).decode('utf-8'))
+        except (OSError, UnicodeError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def do_POST(self):
+        """Voice-profile management; the daemon binds 127.0.0.1 only."""
+        path = urllib.parse.urlparse(self.path).path
+        if path not in ('/speaker/enroll', '/speaker/test',
+                        '/speaker/rename', '/speaker/delete'):
+            return self._json({'error': 'no such path'}, 404)
+        body = self._body()
+        try:
+            from yumi import speaker as profiles, speaker_sherpa
+        except ImportError:
+            return self._json({'ok': False, 'error': 'no speaker module'})
+        if path in ('/speaker/enroll', '/speaker/test'):
+            if not speaker_sherpa.available():
+                return self._json({'ok': False, 'error': speaker_sherpa.model_info().get('error')
+                                   or 'speaker model is not available'})
+            field, error, vec = speaker_record()
+            if error:
+                return self._json({'ok': False, 'error': error, 'speaker': field})
+            if path == '/speaker/enroll':
+                pid = profiles.enroll(vec, source='manual')
+                return self._json({'ok': bool(pid), 'id': pid, 'profiles': profiles.list()})
+            return self._json({'ok': True, 'speaker': field, 'id': field['id']})
+        pid = str(body.get('id') or '')
+        if path == '/speaker/rename':
+            ok = profiles.rename(pid, body.get('label'))
+        else:
+            ok = profiles.delete(pid)
+        return self._json({'ok': bool(ok), 'profiles': profiles.list()})
 
     def log_message(self, *_a):         # the log stays for real problems
         pass
