@@ -181,6 +181,70 @@ def _addressed(toks):
     return False
 
 
+_WAKES = frozenset(('юми', 'yumi'))
+
+
+def _named_other(raw, toks, labels):
+    """A phrase that opens by calling somebody else is not a word for her.
+
+    ``labels`` are the names of the voices already in the dialogue; a bare
+    «Борис, где ключи?» counts too, because a name followed by a comma is an
+    address to a person, not a question thrown at the room.
+    """
+    for label in labels or ():
+        head = words(label)
+        if head and toks[:len(head)] == head:
+            return True
+    if ',' in raw or '，' in raw:
+        first = raw.strip().split(',', 1)[0].strip()
+        if first and ' ' not in first and first[0].isupper() and len(first) <= 24:
+            return True
+    return False
+
+
+def addressee(text, labels=()):
+    """'yumi' — said to her, 'other' — said to another person, 'unclear' — no sign.
+
+    Unlike route(), a bare question mark is not enough: «Борис, где ключи?»
+    must not become her wish just because whisper kept the '?'.  This is the
+    check the multi-speaker gate uses; route() stays backward compatible.
+    """
+    raw = str(text or '')
+    toks = words(raw)
+    if not toks:
+        return 'unclear'
+    if _named_other(raw, toks, labels):
+        return 'other'
+    if any(token in _WAKES for token in toks):
+        return 'yumi'
+    for token in toks:
+        head = token.split('-')[0]
+        if head in SECOND_PERSON or head in ADDRESS_WORDS:
+            return 'yumi'
+    if 'мне' in toks and any(token in MOOD_WORDS for token in toks):
+        return 'yumi'
+    if any(token in ('я', 'i') for token in toks) \
+            and any(token in MOOD_WORDS or token in WISH_WORDS for token in toks):
+        return 'yumi'
+    for token in toks[:2]:
+        head = token.split('-')[0]
+        if head in QUESTION_WORDS or any(head.startswith(stem) for stem in QUESTION_STEMS):
+            return 'yumi'
+    if _command(toks):
+        return 'yumi'
+    return 'unclear'
+
+
+def route_strict(text, labels=(), hints=()):
+    """route() with the addressee gate: another person's words stay ignored."""
+    if addressee(text, labels) == 'other':
+        return 'ignore'
+    result = route(text, hints)
+    if result == 'chat' and addressee(text, labels) == 'unclear':
+        return 'ignore'
+    return result
+
+
 def route(text, hints=()):
     """'command' — run it, 'chat' — it is meant for her, 'ignore' — background talk."""
     raw = str(text or '')
