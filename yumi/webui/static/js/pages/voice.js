@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import {
-  el, tr, errToast, toast, sectionTitle, buildSetting, emptyBox, badge,
+  el, tr, errToast, toast, sectionTitle, buildSetting, emptyBox, badge, confirmDialog,
 } from '../ui.js';
 
 const CARD_KEYS = {
@@ -449,12 +449,19 @@ export function render(view, ctx) {
       placeholder: say('новое имя', 'a new name'),
       oninput: (ev) => { speakerName = ev.target.value; },
     });
-    const change = (label, fn, needsLabel = false) => el('button', {
-      class: 'btn btn-small', type: 'button', text: label, disabled: !profiles.length,
+    const change = (label, fn, needsLabel = false, confirm = false) => el('button', {
+      class: `btn btn-small${confirm ? ' btn-danger' : ''}`, type: 'button', text: label,
+      disabled: !profiles.length,
       onclick: async () => {
         const id = speakerPick;
         if (!id) { setNotice(say('сначала выбери профиль', 'pick a profile first')); return; }
         if (speakerBusy) return;
+        if (confirm && !await confirmDialog({
+          title: say('Удалить голос?', 'Delete the voice?'),
+          message: `${labelOf(id)} — ${say('профиль будет удалён, Юми перестанет узнавать этот голос.',
+            'the profile will be deleted, Yumi will stop recognising this voice.')}`,
+          confirmLabel: say('Удалить', 'Delete'), danger: true,
+        })) return;
         const labelText = rename.value.trim();
         if (needsLabel && !labelText) {
           setNotice(say('введи новое имя', 'type a new name'));
@@ -466,11 +473,12 @@ export function render(view, ctx) {
         try {
           const before = labelOf(id);
           const data = await fn(id, labelText);
+          if (confirm) { speakerPick = ''; speakerName = ''; }
+          if (needsLabel) speakerName = labelText;
           await refresh();
           setNotice(needsLabel
             ? say(`«${before}» → «${labelText}»`, `“${before}” → “${labelText}”`)
             : (data?.error || say('профиль удалён', 'profile deleted')));
-          if (needsLabel) speakerName = labelText;
         } catch (err) {
           setNotice(err.message);
           errToast(err);
@@ -489,7 +497,7 @@ export function render(view, ctx) {
       field(say('новое имя', 'new name'), rename)));
     speakerBox.append(el('div', { class: 'row', style: { marginTop: '8px' } },
       change(say('Переименовать', 'Rename'), (id, next) => api.speakerRename(id, next), true),
-      change(say('Удалить', 'Delete'), (id) => api.speakerDelete(id))));
+      change(say('Удалить', 'Delete'), (id) => api.speakerDelete(id), false, true)));
     const infoBox = el('div', { class: 'card-hint', style: { marginTop: '10px', whiteSpace: 'pre-wrap' } });
     const renderInfo = () => {
       const p = profiles.find((x) => x.id === speakerPick);
