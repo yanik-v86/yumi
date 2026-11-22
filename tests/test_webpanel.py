@@ -36,6 +36,7 @@ class Bridge:
         self.applied = []
         self.saved = []
         self.voice_calls = []
+        self.speaker_calls = []
         self.allowed = set()
         self.actions = [{'label': 'Term', 'label_ru': 'Терм', 'icon': 'terminal',
                          'command': 'foot', 'phrases': []}]
@@ -70,6 +71,14 @@ class Bridge:
                                          'exchanges': 0, 'timeout': 10,
                                          'waiting_answer': False, 'reason': '', 'id': 0},
                         'conversation_active': False,
+                        'speaker': {'enabled': bool(self.settings.get('speaker_verify')),
+                                    'profiles': [{'id': 'v1', 'label': 'Голос 1'}],
+                                    'participants': ['v1'],
+                                    'current': {'id': 'v1', 'label': 'Голос 1',
+                                                'status': 'known', 'score': 0.91},
+                                    'last_event': 'recognized',
+                                    'policy': self.settings.get('speaker_join_policy'),
+                                    'model': {'ready': True, 'name': 'test', 'error': ''}},
                         'outfit': 'auto', 'shelf_count': 0, 'recent_count': 0,
                         'timer': {'seconds': 0, 'text': '', 'running': False,
                                   'pending': False, 'paused': False, 'done': False}},
@@ -203,6 +212,39 @@ class Bridge:
 
     def voice_release(self):
         return {'state': 'missing', 'generation': 6}
+
+    def speaker_status(self):
+        self.speaker_snapshot = {
+            'enabled': bool(self.settings.get('speaker_verify')),
+            'profiles': [{'id': 'v1', 'label': 'Голос 1'}],
+            'participants': ['v1'],
+            'current': {'id': 'v1', 'label': 'Голос 1', 'status': 'known', 'score': 0.91},
+            'last_event': 'recognized',
+            'policy': self.settings.get('speaker_join_policy'),
+            'model': {'ready': True, 'name': 'test', 'error': ''},
+        }
+        return self.speaker_snapshot
+
+    def speaker_enroll(self):
+        self.speaker_calls.append(('enroll',))
+        return {'ok': True, 'id': 'v1', 'profiles': [{'id': 'v1', 'label': 'Голос 1'}]}
+
+    def speaker_test(self):
+        self.speaker_calls.append(('test',))
+        return {'ok': True, 'speaker': {'id': 'v1', 'label': 'Голос 1',
+                                        'status': 'known', 'score': 0.91}}
+
+    def speaker_rename(self, pid, label):
+        self.speaker_calls.append(('rename', pid, label))
+        return {'ok': True, 'label': label, 'profiles': [{'id': pid, 'label': label}]}
+
+    def speaker_delete(self, pid):
+        self.speaker_calls.append(('delete', pid))
+        return {'ok': True, 'deleted': pid, 'profiles': []}
+
+    def speaker_clear_participants(self):
+        self.speaker_calls.append(('clear',))
+        return {'participants': [], 'current': None, 'last_event': ''}
 
     def permission_answer(self, decision, origin='panel'):
         return {'decided': True, 'decision': decision, 'origin': origin}
@@ -526,6 +568,37 @@ try:
                                       ('tts', 'Привет', 'ru')], bridge.voice_calls
     code, data, _ = call('GET', '/api/voice/mics')
     assert code == 200 and data['mics'] == [{'name': 'plughw:1,0', 'label': 'Headset'}], data
+
+    # voice profiles: public status, CSRF on mutations, shared actions, live setting
+    code, data, _ = call('GET', '/api/speaker')
+    assert code == 200 and data['speaker']['profiles'] == [{'id': 'v1', 'label': 'Голос 1'}]
+    assert 'embedding' not in json.dumps(data) and 'vector' not in json.dumps(data)
+    for path, payload in (('enroll', {}), ('test', {}),
+                          ('rename', {'id': 'v1', 'label': 'Голос 2'}),
+                          ('delete', {'id': 'v1'}), ('clear', {})):
+        code, data, _ = call('POST', '/api/speaker/' + path, payload)
+        assert code == 403, (path, code, data)
+    code, data, _ = call('POST', '/api/speaker/enroll', {}, csrf=csrf)
+    assert code == 200 and data['id'] == 'v1', (code, data)
+    code, data, _ = call('POST', '/api/speaker/test', {}, csrf=csrf)
+    assert code == 200 and data['speaker']['score'] == 0.91, (code, data)
+    code, data, _ = call('POST', '/api/speaker/rename',
+                         {'id': 'v1', 'label': 'Голос 2'}, csrf=csrf)
+    assert code == 200 and data['label'] == 'Голос 2', (code, data)
+    code, data, _ = call('POST', '/api/speaker/delete', {'id': 'v1'}, csrf=csrf)
+    assert code == 200 and data['deleted'] == 'v1', (code, data)
+    code, data, _ = call('POST', '/api/speaker/clear', {}, csrf=csrf)
+    assert code == 200 and data['speaker']['participants'] == [], (code, data)
+    assert [c[0] for c in bridge.speaker_calls] == [
+        'enroll', 'test', 'rename', 'delete', 'clear'], bridge.speaker_calls
+    code, data, _ = call('PATCH', '/api/settings',
+                         {'patch': {'speaker_verify': True}}, csrf=csrf)
+    assert code == 200 and data['settings']['speaker_verify'] is True
+    code, data, _ = call('GET', '/api/status')
+    assert code == 200 and data['runtime']['speaker']['enabled'] is True
+    code, data, _ = call('PATCH', '/api/settings',
+                         {'patch': {'speaker_verify': False}}, csrf=csrf)
+    assert code == 200 and data['settings']['speaker_verify'] is False
 
     # notes: list, add (CSRF), search, edit, delete, clear
     code, data, _ = call('GET', '/api/notes')

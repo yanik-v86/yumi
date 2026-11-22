@@ -421,6 +421,12 @@ def _make_handler(panel):
                 ('POST', '/api/voice/release'): self._voice_release,
                 ('POST', '/api/voice/test-wake'): self._voice_test_wake,
                 ('POST', '/api/voice/test'): self._voice_test,
+                ('GET', '/api/speaker'): self._speaker_get,
+                ('POST', '/api/speaker/enroll'): self._speaker_enroll,
+                ('POST', '/api/speaker/test'): self._speaker_test,
+                ('POST', '/api/speaker/rename'): self._speaker_rename,
+                ('POST', '/api/speaker/delete'): self._speaker_delete,
+                ('POST', '/api/speaker/clear'): self._speaker_clear,
                 ('GET', '/api/security'): self._security,
                 ('POST', '/api/security/rotate'): self._security_rotate,
                 ('POST', '/api/security/link'): self._security_link,
@@ -955,6 +961,43 @@ def _make_handler(panel):
             result = panel.bridge.voice_test(text, lang)
             panel.audit(self._ip(), 'voice-test', (text or 'sample')[:120])
             return self._json(200, {'ok': True, **result})
+
+        # ---------------------------------------------------------------- voices
+        def _speaker_get(self, _q):
+            return self._json(200, {'ok': True, 'speaker': panel.bridge.speaker_status()})
+
+        def _speaker_enroll(self, _q):
+            result = panel.bridge.speaker_enroll()
+            panel.audit(self._ip(), 'speaker-enroll', result.get('id') or '')
+            return self._json(200, {'ok': bool(result.get('ok')), **result})
+
+        def _speaker_test(self, _q):
+            result = panel.bridge.speaker_test()
+            return self._json(200, {'ok': bool(result.get('ok')), **result})
+
+        def _speaker_rename(self, _q):
+            body = self._body()
+            pid = str(body.get('id') or '')
+            label = str(body.get('label') or '').strip()[:64]
+            if not pid or not label:
+                raise ValueError('id and label are needed')
+            result = panel.bridge.speaker_rename(pid, label)
+            panel.audit(self._ip(), 'speaker-rename', pid)
+            return self._json(200, {'ok': bool(result.get('ok')), **result})
+
+        def _speaker_delete(self, _q):
+            body = self._body()
+            pid = str(body.get('id') or '')
+            if not pid:
+                raise ValueError('id is needed')
+            result = panel.bridge.speaker_delete(pid)
+            panel.audit(self._ip(), 'speaker-delete', pid)
+            return self._json(200, {'ok': bool(result.get('ok')), **result})
+
+        def _speaker_clear(self, _q):
+            result = panel.bridge.speaker_clear_participants()
+            panel.audit(self._ip(), 'speaker-clear', '')
+            return self._json(200, {'ok': True, 'speaker': result})
 
         # ---------------------------------------------------------------- security
         def _security(self, _q):

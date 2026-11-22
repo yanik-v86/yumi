@@ -10,7 +10,8 @@ from pathlib import Path
 from gi.repository import Gdk, GLib
 
 from yumi import (chat, config, doctor, ears, engines, memory, models, music,
-                  notes, permission, pixui, system, tts, webpanel)
+                  notes, permission, pixui, speaker, speaker_sherpa, system,
+                  tts, webpanel)
 from yumi.sprites import ui_colors
 from yumi.webpanel import catalog as webcatalog
 
@@ -288,6 +289,41 @@ class PanelMixin:
         except (TypeError, ValueError):
             return fallback or '#c7a8db'
 
+    def _web_speaker_snapshot(self):
+        """voices in the current talk: ids and labels only, never a vector"""
+        try:
+            snap = dict(self.brain.speaker_snapshot())
+        except Exception:                   # an older Brain: still give the panel a shape
+            try:
+                profiles = [{'id': str(p.get('id') or ''), 'label': str(p.get('label') or '')}
+                            for p in (speaker.snapshot().get('profiles') or [])]
+            except Exception:
+                profiles = []
+            snap = {'enabled': bool(self.settings.get('speaker_verify', False)),
+                    'profiles': profiles, 'participants': [], 'current': None,
+                    'last_event': '', 'policy': ''}
+        snap['model'] = speaker_sherpa.model_info()
+        return snap
+
+    def _web_speaker_changed(self, removed=None):
+        """a profile was renamed or deleted: the talk must not keep a dead id"""
+        b = self.brain
+        if removed is not None:
+            b.conversation.remove_participant(str(removed))
+        if getattr(b, '_speaker_current', None) and (removed is None or
+                                                     b._speaker_current.get('id') == str(removed)):
+            b._speaker_current = None
+        return self._web_speaker_snapshot()
+
+    def _web_speaker_clear(self):
+        """forget the voices in the open window; profiles in speakers.json stay"""
+        b = self.brain
+        b.conversation.clear_participants()
+        b._pending_speaker = None
+        b._speaker_current = None
+        b._speaker_last_event = ''
+        return self._web_speaker_snapshot()
+
     def _web_snapshot(self, light=False):
         b = self.brain
         s = self.settings
@@ -367,6 +403,7 @@ class PanelMixin:
                         'pending_permission': (b.permission_snapshot()
                                                if hasattr(b, 'permission_snapshot') else None)},
                 'wake_on': bool(self.wake_on),
+                'speaker': self._web_speaker_snapshot(),
                 'conversation': conv,
                 'conversation_active': bool(conv.get('active')),
                 'voice_state': (self.voice_state.snapshot() if hasattr(self, 'voice_state')
@@ -414,6 +451,16 @@ class PanelMixin:
                 b.conversation_close('wake off')
         if 'conversation_mode' in patch and not self.settings.get('conversation_mode'):
             b.conversation_close('setting')
+        if 'speaker_verify' in patch and bool(old.get('speaker_verify')) != bool(
+                self.settings.get('speaker_verify')):
+            if self.settings.get('speaker_verify'):
+                b.say('speaker_on')
+            else:
+                b.conversation.clear_participants()   # profiles stay, only the window forgets
+                b._pending_speaker = None
+                b._speaker_current = None
+                b._speaker_last_event = ''
+                b.say('speaker_off')
         if 'conversation_timeout_s' in patch:
             try:
                 b.conversation.timeout = float(self.settings.get('conversation_timeout_s', 10))

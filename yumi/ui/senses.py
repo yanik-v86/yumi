@@ -492,6 +492,69 @@ class SensesMixin:
         self.wake_set(True)
         self._vs('wake_resumed')
 
+    # ---- voice profiles from the in-world menu (the panel uses the same daemon routes)
+    def speaker_action(self, action, pid=None, label=None):
+        """record/check/rename/forget a voice in a worker: the wake ear is lent to the mic"""
+        if action not in ('speaker_enroll', 'speaker_test', 'speaker_clear',
+                          'speaker_delete', 'speaker_rename'):
+            return
+        was_on = self.wake_pause()
+
+        def work():
+            try:
+                if action == 'speaker_enroll':
+                    result = ears.speaker_enroll()
+                elif action == 'speaker_test':
+                    result = ears.speaker_test()
+                elif action == 'speaker_delete':
+                    result = ears.speaker_delete(pid)
+                elif action == 'speaker_rename':
+                    result = ears.speaker_rename(pid, label)
+                    if isinstance(result, dict):
+                        result.setdefault('label', label)
+                else:
+                    result = {'ok': True}
+            except Exception as exc:                 # noqa: BLE001 - she says the failure
+                result = {'ok': False, 'error': str(exc)[:160]}
+
+            def done():
+                self.wake_resume(was_on)
+                self._speaker_action_done(action, result, pid)
+                return False
+            GLib.idle_add(done)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _speaker_action_done(self, action, result, pid=None):
+        b = self.brain
+        if not isinstance(result, dict) or not result.get('ok'):
+            b.say('speaker_fail')
+            return
+        if action == 'speaker_enroll':
+            pid = result.get('id') or pid
+            label = next((p.get('label') for p in (result.get('profiles') or [])
+                          if p.get('id') == pid), None) or str(pid or '')
+            b._speaker_remember({'status': 'known', 'id': pid, 'score': 1.0,
+                                 'joined_id': None})
+            b.say('speaker_ready', label=label)
+        elif action == 'speaker_test':
+            field = result.get('speaker') or {}
+            if field.get('id'):
+                b.say('speaker_found', label=b._voice_label(field['id']))
+            else:
+                b.say('speaker_unknown')
+        elif action == 'speaker_rename':
+            b.say('speaker_renamed', label=(result.get('label') or ''))
+        elif action == 'speaker_delete':
+            b.conversation.remove_participant(str(pid))
+            if (getattr(b, '_speaker_current', None) or {}).get('id') == str(pid):
+                b._speaker_current = None
+        else:                                       # clear the participants, not the profiles
+            b.conversation.clear_participants()
+            b._pending_speaker = None
+            b._speaker_current = None
+            b._speaker_last_event = ''
+
     def tap_set(self, on):
         """the ears' diary: while it is on, the daemon records everything the ears hear
         into /tmp/yumi (the sound and the words), in its own thread beside her work"""

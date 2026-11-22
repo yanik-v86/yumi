@@ -108,6 +108,12 @@ DEFAULT_SETTINGS = {
     'stt_echo': True,         # the webrtc echo canceller around the mic; false = plain mic only
     'stt_selfmute': True,     # the ears close while she speaks, so she never hears
                               # herself; works with the plain mic too (no canceller)
+    'speaker_verify': False,  # recognise voices: a known voice may continue the
+                              # dialogue without the wake word, strangers stay out
+    'speaker_threshold': 0.65,  # cosine line for a known voice (0..1)
+    'speaker_min_ms': 1200,   # minimum clean voice for a new profile
+    'speaker_join_policy': 'addressed',  # addressed / strict / off: how a new
+                              # voice joins an open dialogue
     'phrase_tail_ms': 1200,   # ms of quiet that ends a phrase: raise it when she cuts you
                               # off during your pauses, lower it when answers come too slow
     'wake_after': 1.5,        # s of quiet after the name before the half-heard words count
@@ -376,7 +382,7 @@ UI = {
         'tts_ru_speaker': 'Russian voice', 'tts_en_speaker': 'English voice',
         'tts_ru_model': 'Russian voice model', 'tts_pitch': 'Voice pitch',
         'cat_her': 'Her', 'cat_sound': 'Sound', 'cat_look': 'Look', 'cat_lang': 'Language', 'n_a': 'not available yet', 'o_auto': 'auto', 'o_off': 'none', 'o_halloween': 'Halloween', 'o_newyear': 'New Year',
-        'o_valentine': 'Valentine', 'o_spring': 'March 8', 'min': 'min', 'monitor': 'Screen',
+        'o_valentine': 'Valentine', 'o_spring': 'March 8', 'min': 'min', 'ms': 'ms', 'monitor': 'Screen',
         'cat_ring': 'Buttons', 'ring_done': 'Done', 'ring_new': 'New button', 'ring_change': 'Edit button', 'ring_save': 'Save',
         'ring_cmd': 'Command', 'ring_name': 'Button name', 'ring_icon': 'Icon', 'ring_file': 'Your own picture...',
         'ring_phrases': 'Say', 'ring_keywords': 'Keywords', 'ring_speak': 'Reply',
@@ -414,6 +420,25 @@ UI = {
         'polza_url': 'Polza.ai address', 'polza_api_key': 'Polza.ai API key',
         'tap_ears': 'Write everything it hears (/tmp/yumi)',
         'stt_echo': 'Echo canceller (she never hears herself)',
+        'speaker_verify': 'Recognise voices in a talk',
+        'speaker_threshold': 'Voice match line',
+        'speaker_min_ms': 'Clean voice needed (ms)',
+        'speaker_join_policy': 'When a new voice joins',
+        'sp_addressed': 'when addressed', 'sp_strict': 'twice in a row',
+        'sp_off': 'never',
+        'speaker_enroll': 'Record my voice', 'speaker_test': 'Check my voice',
+        'speaker_list': 'Voice profiles', 'speaker_rename': 'Rename',
+        'speaker_delete': 'Delete', 'speaker_rename_title': 'New voice name',
+        'speaker_rename_save': 'Save',
+        'speaker_clear': 'Forget the voices in this talk',
+        'speaker_status': 'Voices here now',
+        'speaker_on': 'I know your voice now.',
+        'speaker_off': 'I won\'t tell voices apart now.',
+        'speaker_fail': 'I could not hear a clean voice (recording took too long).',
+        'speaker_ready': 'Your voice is recorded: {label}',
+        'speaker_renamed': 'That voice is now called {label}.',
+        'speaker_found': 'That is {label}, I think.',
+        'speaker_unknown': 'That voice is new to me.',
         'hourly_chimes': 'She says the time every hour',
         'tour1': "Hi! I'm Yumi. I live at the bottom edge of your screen. Let me show you around.",
         'tour2': 'Click me and round buttons appear: files, shelf, pipette, timer, Do Not Disturb and settings.',
@@ -454,7 +479,7 @@ UI = {
         'tts_ru_model': 'Модель русского голоса', 'tts_pitch': 'Высота голоса',
         'cat_her': 'Поведение', 'cat_sound': 'Звук', 'cat_look': 'Внешний вид', 'cat_lang': 'Язык', 'n_a': 'пока недоступно', 'o_auto': 'авто', 'o_off': 'нет', 'o_halloween': 'Хэллоуин', 'o_newyear': 'Новый год',
         'hourly_chimes': 'Каждый час она говорит время',
-        'o_valentine': 'Валентинка', 'o_spring': '8 Марта', 'min': 'мин', 'monitor': 'Экран',
+        'o_valentine': 'Валентинка', 'o_spring': '8 Марта', 'min': 'мин', 'ms': 'мс', 'monitor': 'Экран',
         'cat_ring': 'Кнопки', 'ring_done': 'Готово', 'ring_new': 'Новая кнопка', 'ring_change': 'Изменить кнопку', 'ring_save': 'Сохранить',
         'ring_cmd': 'Команда', 'ring_name': 'Название кнопки', 'ring_icon': 'Иконка', 'ring_file': 'Своя картинка...',
         'ring_phrases': 'Фразы', 'ring_keywords': 'Ключевые слова', 'ring_speak': 'Ответ',
@@ -494,6 +519,25 @@ UI = {
         'chat_provider': 'Провайдер мозгов', 'polza_url': 'Адрес Polza.ai', 'polza_api_key': 'Ключ Polza.ai',
         'tap_ears': 'Записывать всё услышанное (/tmp/yumi)',
         'stt_echo': 'Подавление эха (не слышит себя)',
+        'speaker_verify': 'Различать голоса в разговоре',
+        'speaker_threshold': 'Порог совпадения голоса',
+        'speaker_min_ms': 'Чистого голоса нужно (мс)',
+        'speaker_join_policy': 'Когда присоединяется новый голос',
+        'sp_addressed': 'когда обратился', 'sp_strict': 'дважды подряд',
+        'sp_off': 'никогда',
+        'speaker_enroll': 'Записать мой голос', 'speaker_test': 'Проверить мой голос',
+        'speaker_list': 'Список голосов', 'speaker_rename': 'Переименовать',
+        'speaker_delete': 'Удалить', 'speaker_rename_title': 'Новое имя голоса',
+        'speaker_rename_save': 'Сохранить',
+        'speaker_clear': 'Забыть голоса в этом разговоре',
+        'speaker_status': 'Голоса сейчас тут',
+        'speaker_on': 'Теперь я знаю твой голос.',
+        'speaker_off': 'Больше не буду различать голоса.',
+        'speaker_fail': 'Не расслышала чистый голос (запись заняла слишком много времени).',
+        'speaker_ready': 'Голос записан: {label}',
+        'speaker_renamed': 'Теперь этот голос зовётся {label}.',
+        'speaker_found': 'Кажется, это {label}.',
+        'speaker_unknown': 'Этот голос мне незнаком.',
         'hourly_chimes': 'Каждый час она говорит время',
         'tour1': 'Привет! Я Юми. Я живу у нижнего края твоего экрана. Давай я всё покажу.',
         'tour2': 'Нажми на меня, и вокруг появятся кружочки: файлы, полка, пипетка, таймер, «Не мешать» и настройки.',

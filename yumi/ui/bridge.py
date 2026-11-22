@@ -49,6 +49,49 @@ class WebBridge:
     def apply_settings(self, patch):
         return self._on(lambda: self.app._web_apply_settings(patch), 60)
 
+    # ---- voice profiles (nothing but ids, labels and verdicts crosses this line)
+    @staticmethod
+    def _speaker_public(data):
+        """allow-list the daemon's answer: a raw embedding must never reach the panel"""
+        if not isinstance(data, dict):
+            return {'ok': False, 'error': 'bad answer from the ears'}
+        out = {'ok': bool(data.get('ok', True))}
+        for key in ('id', 'error', 'label'):
+            if key in data:
+                out[key] = str(data[key])[:160]
+        if isinstance(data.get('speaker'), dict):
+            out['speaker'] = {k: data['speaker'][k]
+                              for k in ('status', 'id', 'score', 'quality', 'ms', 'joined_id')
+                              if k in data['speaker']}
+        if isinstance(data.get('profiles'), list):
+            out['profiles'] = [
+                {k: str(p[k])[:160] for k in ('id', 'label', 'source') if k in p}
+                for p in data['profiles'] if isinstance(p, dict)]
+        return out
+
+    def speaker_status(self):
+        return self._on(self.app._web_speaker_snapshot)
+
+    def speaker_enroll(self):
+        """record a clean voice through the daemon; the background wake ear pauses"""
+        return self._speaker_public(self._ears_exclusive(ears.speaker_enroll))
+
+    def speaker_test(self):
+        return self._speaker_public(self._ears_exclusive(ears.speaker_test))
+
+    def speaker_rename(self, pid, label):
+        result = ears.speaker_rename(pid, label)
+        self._on(self.app._web_speaker_changed)
+        return self._speaker_public(result)
+
+    def speaker_delete(self, pid):
+        result = ears.speaker_delete(pid)
+        self._on(lambda: self.app._web_speaker_changed(str(pid)))
+        return self._speaker_public(result)
+
+    def speaker_clear_participants(self):
+        return self._on(self.app._web_speaker_clear)
+
     # ---- diagnostics and explicit model checks
     def doctor(self, sections=None, text=None):
         """one full self-test with the wake loop parked; the audio calls run on

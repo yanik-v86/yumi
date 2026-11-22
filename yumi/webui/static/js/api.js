@@ -102,6 +102,13 @@ export const api = {
   modelsVerify: () => api.post('/api/models/verify'),
   modelsRecord: (names) => api.post('/api/models/record', { names: names || null }),
 
+  speakerGet: () => api.get('/api/speaker'),
+  speakerEnroll: () => api.post('/api/speaker/enroll'),
+  speakerTest: () => api.post('/api/speaker/test'),
+  speakerRename: (id, label) => api.post('/api/speaker/rename', { id, label }),
+  speakerDelete: (id) => api.post('/api/speaker/delete', { id }),
+  speakerClear: () => api.post('/api/speaker/clear'),
+
   voiceState: () => api.get('/api/voice/state'),
   voicePause: () => api.post('/api/voice/pause'),
   voiceResume: () => api.post('/api/voice/resume'),

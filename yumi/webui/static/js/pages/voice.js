@@ -12,7 +12,9 @@ const CARD_KEYS = {
     'tts_pitch', 'tts_ru_model'],
   rest: ['stt_mic', 'stt_echo', 'stt_selfmute', 'name_duck', 'tap_ears', 'timer_sound'],
 };
-const ALL_KEYS = [...new Set(Object.values(CARD_KEYS).flat())];
+const SPEAKER_KEYS = ['speaker_verify', 'speaker_threshold', 'speaker_min_ms',
+  'speaker_join_policy'];
+const ALL_KEYS = [...new Set([...Object.values(CARD_KEYS).flat(), ...SPEAKER_KEYS])];
 
 export function render(view, ctx) {
   const lang = () => ctx.lang;
@@ -90,9 +92,12 @@ export function render(view, ctx) {
   const judgeBox = el('div', { class: 'card' });
   const voiceBox = el('div', { class: 'card' });
   const restBox = el('div', { class: 'card', style: { marginTop: '16px' } });
+  const speakerBox = el('div', { class: 'card', style: { marginTop: '16px' } });
 
   view.append(sectionTitle(say('Активация, судья и голос', 'Activation, judge and voice')));
   view.append(el('div', { class: 'stack' }, activationBox, judgeBox, voiceBox));
+  view.append(sectionTitle(say('Голоса в разговоре', 'Voices in a talk')));
+  view.append(speakerBox);
   view.append(sectionTitle(say('Тонкая настройка', 'Fine tuning')));
   view.append(restBox);
 
@@ -250,6 +255,87 @@ export function render(view, ctx) {
       say('Микрофон, эхо, тишина и дневник ушек.', 'Microphone, echo, quiet and the ears’ diary.'));
   }
 
+  function drawSpeaker() {
+    const spk = status.runtime?.speaker || {};
+    const profiles = Array.isArray(spk.profiles) ? spk.profiles : [];
+    const names = new Map(profiles.map((p) => [p.id, p.label || p.id]));
+    const labelOf = (id) => names.get(id) || id || '—';
+    fill(speakerBox, SPEAKER_KEYS,
+      say('Чьи голоса она слышит', 'Whose voices she hears'),
+      say('Знакомый голос продолжает диалог без имени; чужой требует обращения. Векторы голосов хранятся только в приложении.',
+        'A known voice can continue a talk without the name; a stranger must address her. Voice vectors stay inside the app.'));
+    speakerBox.append(engineLine(say('модель голосов', 'voice model'),
+      { available: Boolean(spk.model?.ready) }, spk.model?.error || ''));
+    const events = {
+      joined: say('новый голос вошёл', 'a new voice joined'),
+      recognized: say('узнала голос', 'voice recognised'),
+      ignored: say('чужую речь пропустила', 'other talk ignored'),
+    };
+    const facts = el('div', { class: 'stack', style: { marginTop: '10px' } });
+    facts.append(el('div', { class: 'card-hint', text:
+      `${say('сейчас в разговоре', 'in this talk')}: ${(spk.participants || []).map(labelOf).join(', ') || '—'}` }));
+    facts.append(el('div', { class: 'card-hint', text:
+      `${say('последний голос', 'last voice')}: ${spk.current ? labelOf(spk.current.id) : '—'}` }));
+    facts.append(el('div', { class: 'card-hint', text:
+      `${say('последнее событие', 'last event')}: ${events[spk.last_event] || spk.last_event || '—'}` }));
+    speakerBox.append(facts);
+
+    const out = el('div', { class: 'bubble', text: say('результат появится здесь', 'the result will appear here') });
+    const run = (label, fn) => el('button', {
+      class: 'btn btn-small', type: 'button', text: label,
+      onclick: async () => {
+        out.textContent = say('подожди…', 'wait…');
+        try {
+          const data = await fn();
+          out.textContent = data?.error || data?.speaker?.error || say('готово', 'done');
+          await ctx.refreshStatus();
+          drawAll(true);
+        } catch (err) {
+          out.textContent = err.message;
+          errToast(err);
+        }
+      },
+    });
+    speakerBox.append(el('div', { class: 'row', style: { marginTop: '10px' } },
+      run(say('Записать голос', 'Record a voice'), api.speakerEnroll),
+      run(say('Проверить голос', 'Check a voice'), async () => {
+        const data = await api.speakerTest();
+        const verdict = data?.speaker || {};
+        return { ...data, error: verdict.id
+          ? say(`узнала: ${verdict.id} (${Number(verdict.score || 0).toFixed(2)})`,
+            `recognised: ${verdict.id} (${Number(verdict.score || 0).toFixed(2)})`)
+          : say('голос незнаком', 'the voice is new') };
+      }),
+      run(say('Забыть участников', 'Clear participants'), api.speakerClear)));
+
+    const picker = el('select');
+    picker.append(el('option', { value: '', text: say('выбери профиль', 'pick a profile') }));
+    for (const p of profiles) picker.append(el('option', { value: p.id, text: labelOf(p.id) }));
+    const rename = el('input', { type: 'text', placeholder: say('новое имя', 'a new name') });
+    const change = (label, fn) => el('button', {
+      class: 'btn btn-small', type: 'button', text: label,
+      onclick: async () => {
+        const id = picker.value;
+        if (!id) { out.textContent = say('сначала выбери профиль', 'pick a profile first'); return; }
+        out.textContent = say('подожди…', 'wait…');
+        try {
+          const data = await fn(id);
+          out.textContent = data?.error || say('готово', 'done');
+          await ctx.refreshStatus();
+          drawAll(true);
+        } catch (err) {
+          out.textContent = err.message;
+          errToast(err);
+        }
+      },
+    });
+    speakerBox.append(el('div', { class: 'row', style: { marginTop: '8px' } },
+      picker, rename,
+      change(say('Переименовать', 'Rename'), (id) => api.speakerRename(id, rename.value.trim())),
+      change(say('Удалить', 'Delete'), (id) => api.speakerDelete(id))));
+    speakerBox.append(out);
+  }
+
   function drawLive() {
     const runtime = status.runtime || {};
     const mics = (runtime.mics || [])
@@ -354,6 +440,13 @@ export function render(view, ctx) {
     const voice = status.runtime?.voice || {};
     parts.push(voice.activation?.oww?.available, voice.activation?.vosk?.available,
       voice.judge?.nemotron?.available, voice.tts?.available);
+    const spk = status.runtime?.speaker || {};
+    parts.push(JSON.stringify({
+      enabled: spk.enabled, policy: spk.policy, last: spk.last_event,
+      profiles: (spk.profiles || []).map((p) => `${p.id}:${p.label || ''}`),
+      participants: spk.participants || [], current: spk.current?.id || null,
+      ready: spk.model?.ready, error: spk.model?.error || null,
+    }));
     return JSON.stringify(parts);
   }
 
@@ -364,6 +457,7 @@ export function render(view, ctx) {
     drawActivation();
     drawJudge();
     drawVoice();
+    drawSpeaker();
     drawRest();
   }
 

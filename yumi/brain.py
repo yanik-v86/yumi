@@ -275,6 +275,9 @@ class Brain(Extras):
         self.last_chat_exchange_at = 0.0  # monotonic time of the last voice-chat exchange
         self.conversation = dialogue.Conversation(
             timeout=self.settings.get('conversation_timeout_s', 10))
+        self._pending_speaker = None    # the wake word's voice, before the window opens
+        self._speaker_current = None    # the last voice's public card, for the panel
+        self._speaker_last_event = ''   # 'joined' / 'recognized' / 'ignored'
         self.listening = False          # the mic button was pressed: she is waiting for a phrase
         self.thinking = False           # the question is away at Ollama
         self.chat_streaming = False     # the mind is answering in a stream right now
@@ -534,6 +537,9 @@ class Brain(Extras):
                 'conversation_timeout_s': [5, 8, 10, 15, 20],
                 'conversation_gap_reset_min': [5, 15, 30, 60],
                 'conversation_history_n': [4, 10, 16, 20, 30],
+                'speaker_threshold': [0.5, 0.65, 0.8, 0.9],
+                'speaker_min_ms': [800, 1200, 2000, 3000],
+                'speaker_join_policy': ['addressed', 'strict', 'off'],
                 'music_source': ['auto', 'jellyfin', 'local']}
 
     outfit_names = []                 # outfit folders found in sprites/outfits (set by the app)
@@ -568,6 +574,12 @@ class Brain(Extras):
             return t('we_' + str(val)) if f'we_{val}' in UI['en'] else str(val)
         if arg == 'wake_judge_log':
             return t('on') if val else t('off')
+        if arg == 'speaker_threshold':
+            return f'{float(val):.2f}' if val is not None else t('n_a')
+        if arg == 'speaker_min_ms':
+            return f'{val} {t("ms")}' if val is not None else t('n_a')
+        if arg == 'speaker_join_policy':
+            return t('sp_' + str(val)) if f'sp_{val}' in UI['en'] else str(val)
         if arg == 'music_source':
             return t('m_' + str(val)) if f'm_{val}' in UI['en'] else str(val)
         if arg == 'stt_mic':
@@ -947,7 +959,9 @@ class Brain(Extras):
             # the mic list is fetched once: «Find the microphone» looks again after it changed
             if not self.mics and 'stt_mic' not in self.unavailable:
                 self.requests.append(('mics',))
-            rows = [('set', 'wake_ears', t('wake_ears')), ('set', 'name_duck', t('name_duck')),
+            rows = [('set', 'wake_ears', t('wake_ears')),
+                    ('set', 'speaker_verify', t('speaker_verify')),
+                    ('set', 'name_duck', t('name_duck')),
                     ('set', 'stt_engine', t('stt_engine'))]
             if (self.settings.get('stt_engine') or 'whisper') == 'whisper':
                 # the whisper ear's size: with the nemotron ear named, this row does nothing
@@ -957,9 +971,29 @@ class Brain(Extras):
                     ('set', 'wake_confirm', t('wake_confirm')), ('set', 'wake_ear', t('wake_ear')),
                     ('set', 'wake_model_size', t('wake_model_size')),
                     ('set', 'wake_judge_log', t('wake_judge_log'))]
+            if self.settings.get('speaker_verify'):
+                rows += [('set', 'speaker_threshold', t('speaker_threshold')),
+                         ('set', 'speaker_min_ms', t('speaker_min_ms')),
+                         ('set', 'speaker_join_policy', t('speaker_join_policy')),
+                         ('speaker_enroll', None, t('speaker_enroll')),
+                         ('speaker_test', None, t('speaker_test')),
+                         ('speaker_show_list', None, t('speaker_list')),
+                          ('speaker_clear', None, t('speaker_clear'))]
             if self.mics:
                 rows.append(('mic_refresh', None, t('mic_refresh')))
             rows.append(('menu', 'settings', t('back')))
+        elif kind == 'speaker_list':
+            title = t('speaker_list')
+            for p in self.speaker_snapshot().get('profiles') or ():
+                pid = str(p.get('id') or '')
+                label = p.get('label') or pid
+                if not pid:
+                    continue
+                rows.append(('speaker_rename', pid, f"{t('speaker_rename')}: {label}"))
+                rows.append(('speaker_delete', pid, f"{t('speaker_delete')}: {label}"))
+            if not rows:
+                rows.append(('speaker_enroll', None, t('speaker_enroll')))
+            rows.append(('menu', 'set_ears', t('back')))
         elif kind == 'set_look':
             s = self.settings
             rows = [('set', 'recolor', t('follow'))]
@@ -1166,6 +1200,15 @@ class Brain(Extras):
                 self.conversation.timeout = float(s[arg])
             if arg == 'tap_ears':
                 self.requests.append(('tap_set', s[arg]))
+            if arg == 'speaker_verify':
+                if s[arg]:
+                    self.say('speaker_on')
+                else:
+                    self.conversation.clear_participants()
+                    self._pending_speaker = None
+                    self._speaker_current = None
+                    self._speaker_last_event = ''
+                    self.say('speaker_off')
             if arg in ('voice_vol', 'voice_kind') and s[arg]:
                 self.say_sample()
             if arg.startswith('tts_') and (s.get('voice_kind') or 'blips') == 'tts':
@@ -1194,6 +1237,14 @@ class Brain(Extras):
             self.requests.append(('web_copy',))
         elif action == 'web_rotate':
             self.requests.append(('web_rotate',))
+        elif action == 'speaker_show_list':
+            self.open_menu('speaker_list')
+        elif action in ('speaker_enroll', 'speaker_test', 'speaker_clear',
+                        'speaker_delete', 'speaker_rename'):
+            self.menu = None
+            self.close_radial()
+            self.requests.append((action, data.get('id')
+                                  if action in ('speaker_delete', 'speaker_rename') else None))
         elif action == 'mic_refresh':
             self.unavailable.discard('stt_mic')     # a new look, whatever the last one found
             self.requests.append(('mics',))
@@ -1309,6 +1360,15 @@ class Brain(Extras):
         except Exception:                   # noqa: BLE001 - never break a chat over a label
             return str(pid)
 
+    def _speaker_card(self, pid, status='known', score=0.0):
+        """the public card of a voice: an id and a label, never an embedding"""
+        try:
+            score = round(float(score or 0.0), 3)
+        except (TypeError, ValueError):
+            score = 0.0
+        return {'id': str(pid), 'label': self._voice_label(pid),
+                'status': str(status), 'score': score}
+
     def _speaker_remember(self, spk):
         """the wake word always belongs in the current dialogue: remember its
         voice now, before her answer opens the follow-up window"""
@@ -1318,8 +1378,29 @@ class Brain(Extras):
         if not pid:
             return
         self._pending_speaker = str(pid)
+        self._speaker_current = self._speaker_card(
+            pid, 'known' if spk.get('status') == 'known' else 'joined', spk.get('score'))
+        self._speaker_last_event = 'joined' if spk.get('joined_id') else 'recognized'
         if self.conversation.active:
             self.conversation.add_participant(str(pid))
+
+    def speaker_snapshot(self):
+        """what the panel may see: profiles, participants, the last voice, no vectors"""
+        try:
+            from . import speaker as voices
+            profiles = [{'id': str(p.get('id') or ''), 'label': str(p.get('label') or '')}
+                        for p in (voices.snapshot().get('profiles') or [])]
+        except Exception:                   # noqa: BLE001 - a status call must never throw
+            profiles = []
+        conv = self.conversation.snapshot(self.now)
+        return {
+            'enabled': bool(self.settings.get('speaker_verify', False)),
+            'profiles': profiles,
+            'participants': list(conv.get('participants') or []),
+            'current': getattr(self, '_speaker_current', None),
+            'last_event': getattr(self, '_speaker_last_event', ''),
+            'policy': str(self.settings.get('speaker_join_policy', 'addressed')),
+        }
 
     def _speaker_gate(self, text, raw, spk, join):
         """'pass' — her words, 'join' — a newcomer, 'ignore' — somebody else's talk.
@@ -1337,15 +1418,22 @@ class Brain(Extras):
         spoken = strip_wake_raw(raw, self.settings.get('wake_word') or 'юми')
         who = addressing.addressee(spoken, labels)
         conv.last_route = who if who == 'other' else route
+        pid = spk.get('joined_id') or spk.get('id')
+        self._speaker_current = (self._speaker_card(pid, spk.get('status', 'unknown'),
+                                                    spk.get('score')) if pid else None)
         if route == 'ignore' or who == 'other':
+            self._speaker_last_event = 'ignored'
             return 'ignore'
         if spk.get('status') == 'known' and str(spk.get('id')) in conv.participants:
             conv.participant_seen(str(spk.get('id')))
+            self._speaker_last_event = 'recognized'
             return 'pass'
         policy = self.settings.get('speaker_join_policy', 'addressed')
         if (spk.get('status') == 'unknown' and join and spk.get('quality')
                 and spk.get('joined_id') and policy != 'off'):
+            self._speaker_last_event = 'joined'
             return 'join'
+        self._speaker_last_event = 'ignored'
         return 'ignore'
 
     # ------------------------------------------------------------------ her ears and her chat

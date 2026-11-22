@@ -513,6 +513,10 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                 self.web_copy()
             elif kind == 'web_rotate':
                 self.web_rotate()
+            elif kind == 'speaker_rename':
+                self.speaker_rename_dialog(r[1] if len(r) > 1 else None)
+            elif kind in ('speaker_enroll', 'speaker_test', 'speaker_clear', 'speaker_delete'):
+                self.speaker_action(kind, r[1] if len(r) > 1 else None)
             elif kind == 'memory_clear_sassy':
                 # «Дерзкая 18+» went off: its talks and jokes leave the diary,
                 # vectors and all (yumi/memory.py, tag «sassy…»)
@@ -528,6 +532,50 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                 self.state.save()
                 self.close()
                 self.restart()
+
+    def speaker_rename_dialog(self, pid):
+        """ask for a new label in a small GTK window, then use the same bridge call as the panel"""
+        if not pid:
+            return
+        profiles = self.brain.speaker_snapshot().get('profiles') or []
+        current = next((str(p.get('label') or '') for p in profiles
+                        if str(p.get('id')) == str(pid)), '')
+        entry = Gtk.Entry(text=current)
+        entry.set_activates_default(True)
+        dlg = Gtk.Window(title=config.tr(self.settings, 'speaker_rename_title'),
+                         transient_for=self.active, modal=True)
+        dlg.set_default_size(300, -1)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_top(16)
+        box.set_margin_bottom(16)
+        box.set_margin_start(16)
+        box.set_margin_end(16)
+        box.append(entry)
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        cancel = Gtk.Button(label=config.tr(self.settings, 'cancel'))
+        save = Gtk.Button(label=config.tr(self.settings, 'speaker_rename_save'))
+        save.add_css_class('suggested-action')
+        buttons.append(cancel)
+        buttons.append(save)
+        box.append(buttons)
+        dlg.set_child(box)
+
+        def close():
+            self.form_picking = False
+            dlg.destroy()
+
+        def do_save(*_a):
+            label = entry.get_text().strip()
+            close()
+            if label:
+                self.speaker_action('speaker_rename', pid, label)
+
+        cancel.connect('clicked', lambda *_a: close())
+        save.connect('clicked', do_save)
+        entry.connect('activate', do_save)
+        dlg.connect('close-request', lambda *_a: (close(), True)[1])
+        self.form_picking = True       # the dialog owns the keyboard while it is open
+        dlg.present()
 
     def restart(self):
         """start a fresh Yumi a moment from now (the app id is single-instance, so after we are gone)"""

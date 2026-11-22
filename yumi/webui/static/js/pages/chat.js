@@ -37,9 +37,11 @@ export function render(view, ctx) {
 
   // All dialogue knobs live in Settings; this card only reports the live state.
   const convState = el('div', { class: 'bubble', text: '…' });
+  const speakerState = el('div', { class: 'card-hint', style: { marginTop: '8px' }, text: '' });
   const convCard = el('div', { class: 'card' },
     el('h3', { text: lang() === 'ru' ? 'Диалог без имени' : 'Hands-free talk' }),
     convState,
+    speakerState,
     el('p', { class: 'card-hint', style: { marginTop: '12px' }, text: lang() === 'ru'
       ? 'Тумблер и параметры — в «Настройках → Диалог без имени». Пауза или «стоп» закроют диалог.'
       : 'The switch and all parameters live in “Settings → Hands-free talk”. A pause or “stop” closes the talk.' }));
@@ -61,6 +63,14 @@ export function render(view, ctx) {
         ? 'Включён: после ответа она слушает следующую фразу.'
         : 'On: after an answer she listens for your next phrase.';
     }
+    const spk = rt.speaker || {};
+    const names = new Map((spk.profiles || []).map((p) => [p.id, p.label || p.id]));
+    const label = (id) => names.get(id) || id || '—';
+    const parts = (spk.participants || []).map(label).join(', ');
+    speakerState.textContent = spk.enabled
+      ? `${lang() === 'ru' ? 'Голоса в разговоре' : 'Voices here'}: ${parts || '—'}`
+        + (spk.current ? ` · ${lang() === 'ru' ? 'говорит' : 'speaking'}: ${label(spk.current.id)}` : '')
+      : (lang() === 'ru' ? 'Различение голосов выключено.' : 'Voice recognition is off.');
   }
 
   const prompts = lang() === 'ru'
