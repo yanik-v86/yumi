@@ -80,6 +80,89 @@ assert chat.weather_speak('Yalta, this week: Wed +8/+14°', 'en') == \
 assert chat.weather_speak('Завтра, Ялта: пасмурно, от +4 до +10°C', 'ru') == \
     'Завтра, Ялта: пасмурно, от плюс 4 до плюс 10 градусов'
 
+# the clock in the weather line becomes words for her ears, in both languages
+assert chat.weather_speak('дождь в 11:00', 'ru') == 'дождь в одиннадцать часов'
+assert chat.weather_speak('в 16:30 дождь', 'ru') == 'в шестнадцать часов тридцать дождь'
+assert chat.weather_speak('rain at 11:00', 'en') == "rain at eleven o'clock"
+assert chat.weather_speak('at 16:30 rain', 'en') == 'at sixteen thirty rain'
+
+# the hour as words: «одиннадцать часов», «двадцать один час», полночь — «двадцать четыре часа»
+assert chat._hour_words_ru(11, 0) == 'одиннадцать часов'
+assert chat._hour_words_ru(11, 30) == 'одиннадцать часов тридцать'
+assert chat._hour_words_ru(1, 0) == 'один час'
+assert chat._hour_words_ru(2, 0) == 'два часа'
+assert chat._hour_words_ru(5, 0) == 'пять часов'
+assert chat._hour_words_ru(0, 0) == 'двадцать четыре часа'
+
+# the same clock in English: «eleven o'clock», 'sixteen thirty', midnight — 'twelve o'clock'
+assert chat._hour_words_en(11, 0) == "eleven o'clock"
+assert chat._hour_words_en(11, 30) == 'eleven thirty'
+assert chat._hour_words_en(16, 30) == 'sixteen thirty'
+assert chat._hour_words_en(11, 5) == 'eleven oh five'
+assert chat._hour_words_en(0, 0) == "twelve o'clock"
+
+# the rain window from hourly rows: (start, end) or None
+rows = [{'time': '2026-11-22T10:00', 'code': 3},
+        {'time': '2026-11-22T11:00', 'code': 61},
+        {'time': '2026-11-22T12:00', 'code': 63},
+        {'time': '2026-11-22T17:00', 'code': 3}]
+assert chat._rain_window(rows) == (11, 12)
+assert chat._rain_window([{'time': '2026-11-22T10:00', 'code': 3}]) is None
+# scattered showers stay separate: the longest unbroken spell wins, not min/max of the day
+rows_gaps = [{'time': '2026-11-22T22:00', 'code': 61},   # out of order on purpose
+             {'time': '2026-11-22T00:00', 'code': 61},
+             {'time': '2026-11-22T01:00', 'code': 63},
+             {'time': '2026-11-22T11:00', 'code': 61},
+             {'time': '2026-11-22T12:00', 'code': 63},
+             {'time': '2026-11-22T13:00', 'code': 65}]
+assert chat._rain_window(rows_gaps) == (11, 13)
+
+# the new today format: place, now, today range, rain spell
+now = {'temp': 7.2, 'code': 0}
+daily = [{'min': 6.1, 'max': 11.3}]
+hourly = [{'time': '2026-11-22T10:00', 'code': 3},
+          {'time': '2026-11-22T11:00', 'code': 61},
+          {'time': '2026-11-22T12:00', 'code': 63},
+          {'time': '2026-11-22T17:00', 'code': 3}]
+out = chat._fmt_today_ru('Ялта', now, daily, hourly, 'ru')
+assert 'погода в Ялта сейчас' in out
+assert 'Сегодня от +6 до +11°C' in out
+# the bubble keeps the clock as digits; only the voice turns it into words
+assert 'Дождь начнется в 11:00 и закончится до 12:00' in out
+spoken_ru = chat.weather_speak(out, 'ru')
+assert 'Дождь начнется в одиннадцать часов' in spoken_ru
+assert 'закончится до двенадцать часов' in spoken_ru
+# no rain → no rain sentence
+hourly_norain = [{'time': '2026-11-22T10:00', 'code': 3},
+                 {'time': '2026-11-22T11:00', 'code': 3}]
+out2 = chat._fmt_today_ru('Ялта', now, daily, hourly_norain, 'ru')
+assert 'Дождь' not in out2
+
+# the same today format in English, with the hours spoken as words by her ears
+out_en = chat._fmt_today_en('Yalta', now, daily, hourly, 'en')
+assert 'weather in Yalta now 7 degrees, clear' in out_en
+assert 'Today from +6 to +11°C' in out_en
+assert 'Rain starts at 11:00' in out_en and 'ends by 12:00' in out_en
+spoken_en = chat.weather_speak(out_en, 'en')
+assert 'Today from 6 to 11 degrees' in spoken_en
+assert "Rain starts at eleven o'clock and ends by twelve o'clock" in spoken_en
+out_en2 = chat._fmt_today_en('Yalta', now, daily, hourly_norain, 'en')
+assert 'Rain' not in out_en2
+
+# the report picks the language: the same data, two lines
+_geo0, _now0, _daily0, _hourly0 = (chat._geo_open_meteo, chat._now,
+                                  chat._daily, chat._hourly_open_meteo)
+try:
+    chat._geo_open_meteo = lambda where, lang, timeout: (0, 0, 'Yalta')
+    chat._now = lambda lat, lon, timeout: now
+    chat._daily = lambda lat, lon, days, timeout: daily
+    chat._hourly_open_meteo = lambda lat, lon, timeout: hourly
+    assert chat.weather_report('Yalta', 'en').startswith('weather in Yalta now')
+    assert chat.weather_report('Ялта', 'ru').startswith('погода в Yalta сейчас')
+finally:
+    chat._geo_open_meteo, chat._now, chat._daily, chat._hourly_open_meteo = (
+        _geo0, _now0, _daily0, _hourly0)
+
 # her lines format cleanly when the clock or the window answers
 text, _face = phrases.Speech({'speech_lang': 'ru'}).line('chat_time', time='14:32')
 assert '14:32' in text and '{' not in text, text

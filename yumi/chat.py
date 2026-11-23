@@ -17,6 +17,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from .tts import (_EN_SMALL, _RU_SMALL, _en_words, _ru_words)  # numbers as words for the spoken clock
+
 DEFAULT_MODEL = 'lakomoor/vikhr-llama-3.2-1b-instruct:1b'
 DEFAULT_URL = 'http://127.0.0.1:11434'
 POLZA_MODEL = 'deepseek/deepseek-v4-flash'
@@ -488,7 +490,9 @@ def the_time(lang='en', now=None):
     t = time.localtime() if now is None else time.localtime(now)
     if str(lang) == 'ru':
         return time.strftime('%H:%M', t)
-    return time.strftime('%I:%M %p', t).lstrip('0').lower()
+    # not strftime('%p'): a Russian system locale has no am/pm at all
+    return '{}:{:02d} {}'.format(t.tm_hour % 12 or 12, t.tm_min,
+                                  'am' if t.tm_hour < 12 else 'pm')
 
 
 def weather_question(text):
@@ -699,12 +703,15 @@ def _degrees_ru(n):
 TEMP_RE = re.compile(r'([+-]?\d+)\s*/\s*([+-]?\d+)\s*°(?:C|F)?'
                      r'|([+-]?\d+)\s*°(?:C|F)?'
                      r'|([+-]?\d+)')
+# the clock of a weather line: «11:00» → «одиннадцать часов» / «eleven o'clock»
+TIME_RE = re.compile(r'\b(\d{1,2}):(\d{2})\b')
 
 
 def weather_speak(text, lang='en'):
     """the weather line as her ears should hear it: «+5°C» is «плюс 5 градусов»,
     «+8/+14°» is «от плюс 8 до плюс 14 градусов» (English keeps it shorter:
-    'minus 3 degrees', '8 to 14 degrees'); the bubble keeps its compact signs"""
+    'minus 3 degrees', '8 to 14 degrees'); the clock becomes words too:
+    «11:00» is «одиннадцать часов» / «eleven o'clock»; the bubble keeps the signs"""
     ru = str(lang) == 'ru'
     sign = {'+': 'плюс ' if ru else '', '-': 'минус ' if ru else 'minus '}
 
@@ -730,7 +737,13 @@ def weather_speak(text, lang='en'):
             out.append(s + n)
         at = m.end()
     out.append(t[at:])
-    return ''.join(out)
+    result = ''.join(out)
+
+    def _time_repl(m):
+        hour, minute = int(m.group(1)), int(m.group(2))
+        return _hour_words_ru(hour, minute) if ru else _hour_words_en(hour, minute)
+
+    return TIME_RE.sub(_time_repl, result)
 
 
 _CYR_RE = re.compile(r'[\u0400-\u04ff]')
@@ -814,6 +827,88 @@ def _now(lat, lon, timeout=8):
         return None
 
 
+def _hourly_open_meteo(lat, lon, timeout=8):
+    """hourly rows for today: {'time': 'YYYY-MM-DDTHH:00', 'temp', 'code',
+    'precip'} from Open-Meteo; [] when the net is out"""
+    url = ('https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}'
+           '&hourly=temperature_2m,weather_code,precipitation_probability'
+           '&timezone=auto&forecast_days=1').format(lat, lon)
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            data = json.loads(r.read().decode(errors='replace'))
+        h = data['hourly']
+        times = h.get('time') or []
+        temps = h.get('temperature_2m') or []
+        codes = h.get('weather_code') or []
+        preps = h.get('precipitation_probability') or []
+        rows = []
+        for i in range(len(times)):
+            rows.append({'time': times[i],
+                         'temp': float(temps[i]) if i < len(temps) else None,
+                         'code': int(codes[i]) if i < len(codes) else 3,
+                         'precip': float(preps[i]) if i < len(preps) else 0.0})
+        return rows
+    except (urllib.error.URLError, OSError, ValueError, TypeError, KeyError, IndexError):
+        return []
+
+
+# WMO codes that mean rain (drizzle, rain, showers, freezing rain)
+_RAIN_CODES = {51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82}
+
+
+def _rain_window(rows):
+    """(start_hour, end_hour) of the longest unbroken spell of rain today,
+    or None when there is no rain at all; a dry gap must not turn two showers
+    into one 'from midnight till night' window"""
+    hours = sorted({int(r['time'][11:13]) for r in rows
+                    if r.get('code') in _RAIN_CODES})
+    if not hours:
+        return None
+    best, run = [], []
+    for hour in hours:                       # rows need not be in order
+        if run and hour != run[-1] + 1:
+            if len(run) > len(best):          # ties keep the earlier spell
+                best = run
+            run = []
+        run.append(hour)
+    if len(run) > len(best):
+        best = run
+    return best[0], best[-1]
+
+
+def _hour_words_ru(hour, minute=0):
+    """«одиннадцать часов», «двенадцать часов», «шестнадцать часов тридцать»"""
+    h = hour % 24 or 24
+    if 11 <= h <= 14:
+        num = _RU_SMALL[h]
+    else:
+        num = _ru_words(h)
+    if 11 <= h % 100 <= 14:
+        hour_word = 'часов'
+    else:
+        d = h % 10
+        if d == 1:
+            hour_word = 'час'
+        elif 2 <= d <= 4:
+            hour_word = 'часа'
+        else:
+            hour_word = 'часов'
+    if minute == 0:
+        return '{} {}'.format(num, hour_word)
+    return '{} {} {}'.format(num, hour_word, _ru_words(minute))
+
+
+def _hour_words_en(hour, minute=0):
+    """«eleven o'clock», «sixteen thirty», «eleven oh five» — the same 24-hour
+    clock as the Russian line, with midnight simply «twelve o'clock»"""
+    words = _en_words(hour % 24 or 12)
+    if minute == 0:
+        return "{} o'clock".format(words)
+    if minute < 10:
+        return '{} oh {}'.format(words, _EN_SMALL[minute])
+    return '{} {}'.format(words, _en_words(minute))
+
+
 def _geo(where, timeout=8):
     """(lat, lon, name) of the place, from the same wttr.in lookup the one-line report
     uses ('' looks wherever she is); None when the net is out or the place is unknown"""
@@ -880,6 +975,44 @@ def _fmt_week(name, rows, lang='en'):
     return f'{name}, this week: {days}'
 
 
+def _fmt_today_ru(name, now, daily_rows, hourly_rows, lang='ru'):
+    """«погода в Ялта сейчас плюс 4 градуса. Сегодня от +6 до +11°C.
+    Дождь начнется в 11:00 и закончится до 12:00» — the bubble keeps the clock,
+    her ears get «одиннадцать часов» from weather_speak"""
+    desc = wmo_desc(now.get('code', 3), lang)
+    temp = now.get('temp', 0)
+    mn = daily_rows[0].get('min') if daily_rows else None
+    mx = daily_rows[0].get('max') if daily_rows else None
+    now_words = weather_speak('{:+.0f}°C, {}'.format(temp, desc), lang)
+    parts = ['погода в {} сейчас {}'.format(name, now_words)]
+    if mn is not None and mx is not None:
+        parts.append('Сегодня от {:+.0f} до {:+.0f}°C'.format(mn, mx))
+    rain = _rain_window(hourly_rows) if hourly_rows else None
+    if rain:
+        start, end = rain
+        parts.append('Дождь начнется в {:02d}:00 и закончится до {:02d}:00'.format(start, end))
+    return '. '.join(parts) + '.'
+
+
+def _fmt_today_en(name, now, daily_rows, hourly_rows, lang='en'):
+    """«weather in Yalta now +7°C, clear. Today from +6 to +11°C.
+    Rain starts at 11:00 and ends by 12:00» — the bubble keeps the signs,
+    her ears get the degrees and the hours as words"""
+    desc = wmo_desc(now.get('code', 3), lang)
+    temp = now.get('temp', 0)
+    mn = daily_rows[0].get('min') if daily_rows else None
+    mx = daily_rows[0].get('max') if daily_rows else None
+    now_words = weather_speak('{:+.0f}°C, {}'.format(temp, desc), lang)
+    parts = ['weather in {} now {}'.format(name, now_words)]
+    if mn is not None and mx is not None:
+        parts.append('Today from {:+.0f} to {:+.0f}°C'.format(mn, mx))
+    rain = _rain_window(hourly_rows) if hourly_rows else None
+    if rain:
+        start, end = rain
+        parts.append('Rain starts at {:02d}:00 and ends by {:02d}:00'.format(start, end))
+    return '. '.join(parts) + '.'
+
+
 def weather_report(where, lang='en', when='today', timeout=8):
     """one line about the sky, with the place up front («Ялта: +4°C, Пасмурно») — today from
     Open-Meteo (wttr.in only as a fallback), tomorrow or the whole week from Open-Meteo
@@ -894,8 +1027,10 @@ def weather_report(where, lang='en', when='today', timeout=8):
                 lat, lon, name = geo
                 now = _now(lat, lon, timeout)
                 if now:
-                    return '{}: {:+.0f}°C, {}'.format(name, now['temp'],
-                                                      wmo_desc(now['code'], lang))[:120]
+                    fmt = _fmt_today_ru if str(lang) == 'ru' else _fmt_today_en
+                    daily = _daily(lat, lon, 1, timeout)
+                    hourly = _hourly_open_meteo(lat, lon, timeout)
+                    return fmt(name, now, daily, hourly, lang)[:240]
         loc = urllib.parse.quote(where, safe=',%')
         fmt = urllib.parse.quote('%l: %t, %C')   # the place, the temperature, the clouds
         url = 'https://wttr.in/{}?format={}&lang={}'.format(loc or '~', fmt, lang)

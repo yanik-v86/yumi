@@ -55,6 +55,11 @@ English · [Русский](README.ru.md)
   [Open-Meteo](https://open-meteo.com). Her own city can be written into
   `~/.config/yumi/settings.json` as `"weather_city": "Yalta"` — then «юми погода» looks
   there (the default is «Anapa», while `""` looks wherever the computer stands).
+  Today she says it out in full: «weather in <city> now 7 degrees, clear. Today from +6 to +11°C.
+  Rain starts at 11:00 and ends by 12:00» — the bubble keeps the digits, her voice says the
+  hours as words; in Russian the same line reads «погода в <город> сейчас
+  плюс 7 градусов, ясно. Сегодня от +6 до +11°C. Дождь начнется в одиннадцать часов ...».
+  Tomorrow and the week stay as before («Tomorrow, Yalta: ...» / «Завтра, Ялта: ...»).
   Ask «кто играет» or «что за трек» («who plays», «what's playing») and she names the artist
   and the track that is sounding — from any MPRIS player (vlc, spotify, a browser) or her own library.
   Say «Юми, лайк» ("Yumi, like") and she adds the playing track to favorites.
