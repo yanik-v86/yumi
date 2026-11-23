@@ -252,6 +252,9 @@ class Brain(Extras):
         self.face = None
         self.face_until = 0.0
         self.talk_until = 0.0
+        self._reveal_bid = None         # the answer whose first sound brings her out
+        self._stream_started = False    # the first chunk already made a bubble
+        self._stream_spoke_first = False  # the first, short piece went to the voice
         self.bubble_n = 0
         self.blink_until = 0.0
         self.next_blink = now + 3
@@ -408,10 +411,12 @@ class Brain(Extras):
             return False
         return self.say_text(line[0], face=line[1])
 
-    def say_text(self, text, face=None, voice=True, spoken=None):
+    def say_text(self, text, face=None, voice=True, spoken=None, appear=True, reveal=False):
         """her own words (a chat reply too) in the usual bubble, typed out and voiced;
         `spoken` is what the real voice says when the written words are too compact
-        (the weather signs, «+5°C», that a voice reads poorly)"""
+        (the weather signs, «+5°C», that a voice reads poorly).  `appear=False` keeps
+        her hidden until the sound is ready; `reveal=True` makes that first sound the
+        moment she comes out and starts moving her mouth."""
         text = ' '.join(str(text).split())
         if not text:
             return False
@@ -420,15 +425,38 @@ class Brain(Extras):
         self.bubble_n += 1
         self.bubble = {'text': text, 'until': self.now + dur, 'start': self.now, 'times': times,
                        'id': self.bubble_n}
-        self.talk_until = self.now + typed
+        # No mouth movement here: talk_until is set when the WAV actually starts
+        # playing (see SensesMixin._voice_started), so she never talks to silence.
         vol = self.settings.get('voice_vol', 50)
-        if voice and vol and not self.sleeping:
+        sounding = bool(voice and vol and not self.sleeping)
+        if sounding:
             blips = [t for t, ch in zip(times, text) if ch.isalnum()]
             self.requests.append(('voice', blips, self.bubble_n,
                                   1 if text.rstrip().endswith('?') else 0, vol / 100.0,
                                   spoken if spoken is not None else text))
+        if reveal:
+            self._reveal_bid = self.bubble_n
+            if not sounding:
+                self.reveal_answer(self.bubble_n)   # no sound will come: show her now
         if face:
             self.set_face(face, dur)
+        if appear and self.mode == 'docked' and not self.out and not self.sleeping:
+            self.pop(True, temporary=True)
+        return True
+
+    def reveal_answer(self, bid, secs=0.0):
+        """this bubble's first sound is ready: she comes out with the words, and her
+        mouth moves exactly as long as the sound lasts.  Called from the GTK thread
+        by SensesMixin as the WAV goes to the player."""
+        if getattr(self, '_reveal_bid', None) != bid:
+            return False
+        self._reveal_bid = None
+        if self.bubble and self.bubble.get('id') == bid:
+            # the text types out together with the voice, not seconds before it
+            self.bubble['start'] = self.now
+            self.bubble['until'] = max(self.bubble['until'], self.now + secs + 2.0)
+        self.talk_until = self.now + secs
+        self.thinking = False           # the answer is out: the ears may listen again
         if self.mode == 'docked' and not self.out and not self.sleeping:
             self.pop(True, temporary=True)
         return True
@@ -1502,16 +1530,18 @@ class Brain(Extras):
         self.listening = False
         self.heard_text(text, wake=True, alt=alt, followup=followup)
 
-    def wake_form(self):
+    def wake_form(self, appear=True):
         """her name passed by («юми»): the moth that marks where she hides becomes
         the girl — asleep she rises from the blanket, hidden she comes out of the
-        edge, right now: the transformation is the first thing the name does"""
+        edge, right now: the transformation is the first thing the name does.
+        A voice question waits for its answer: `appear=False` wakes her but keeps
+        her at the edge until the first words and the first sound are ready."""
         if self.sleeping:
             nap = self.nap
             self.nap = False                # she was woken: the stale-DND guard
                                              # must not swallow it (moth_girl:768)
             self.set_sleep(False, nap=nap)  # yoff springs her up: the moth is the girl
-        elif self.mode == 'docked' and not self.out:
+        elif appear and self.mode == 'docked' and not self.out:
             self.pop(True)                  # the moth by the edge: she comes out
 
     def wake_up(self, text, alt=None, fallback=False, speaker=None):
@@ -1524,7 +1554,7 @@ class Brain(Extras):
             return                          # the mic is lent to a click-listen: not her name
         if self.thinking:
             return                          # an answer is in flight: the word is spent
-        self.wake_form()                    # the moth becomes the girl: at once, the phrase waits
+        self.wake_form(appear=False)        # awake, but the reveal waits for words + sound
         self._speaker_remember(speaker)
         if text:
             self.heard_text(text, wake=True, alt=alt, fallback=fallback,
@@ -1618,7 +1648,9 @@ class Brain(Extras):
                 return
         lang = self.settings.get('speech_lang', 'en')
         if not fallback:
-            self.say_text(text, voice=False)   # back to you, quietly: you just said it
+            # back to you, quietly: you just said it.  No mouth, no early appearance —
+            # the answer will bring her out together with its first sound.
+            self.say_text(text, voice=False, appear=False)
         # Music first: «включи музыку» is her own library, «пауза» quiets what
         # plays — the built-in skill owns the sayings before any custom button,
         # whose «playerctl play-pause» would only toggle a stranger's player
@@ -2098,30 +2130,30 @@ class Brain(Extras):
             self.say('joke_fail')
 
     def reply_stream_begin(self):
-        """the mind starts answering in a stream: an empty bubble grows as words arrive"""
+        """the mind is thinking: only prepare the stream state.  No empty bubble,
+        no mouth and no appearance until the first words and the first sound exist."""
         self.thinking = True
         self.chat_streaming = True
         self._stream_typed = 0.0        # the typing cursor: new letters follow the old ones
         self._stream_spoken = ''        # the text not yet sent to the voice
         self._stream_full = ''          # everything the mind said so far
-        self.bubble_n += 1
-        self.bubble = {'text': '', 'until': self.now + 30, 'start': self.now, 'times': [],
-                       'id': self.bubble_n, 'stream': True}
-        self.talk_until = self.now + 30
-        if self.mode == 'docked' and not self.out and not self.sleeping:
-            self.pop(True, temporary=True)
+        self._stream_started = False
+        self._stream_spoke_first = False
+        self._stream_voice_sent = False
+        self._reveal_bid = None
 
     def reply_stream_chunk(self, chunk):
         """a piece of the mind's answer arrived: it grows in the bubble right away"""
-        if not (self.chat_streaming and self.bubble and self.bubble.get('stream')):
+        if not self.chat_streaming:
             return
-        self.thinking = False
+        # still busy until the first sound: the wake loop must not take the mic
+        # back while the answer is being written and synthesized
         chunk = str(chunk or '').replace('\r', '')
         if not chunk:
             return
         # keep the text readable: collapse runs of whitespace, but let a trailing
         # space through (the next token may finish the word it belongs to)
-        prev = self.bubble['text']
+        prev = self.bubble['text'] if (self._stream_started and self.bubble) else ''
         add = chunk
         if prev:
             if prev[-1].isspace() and add[:1].isspace():
@@ -2133,6 +2165,13 @@ class Brain(Extras):
         add = add.replace('\n', ' ')
         if not add:
             return
+        if not self._stream_started:
+            # the first real word makes the bubble — not the thought before it
+            self._stream_started = True
+            self.bubble_n += 1
+            self.bubble = {'text': '', 'until': self.now + 30, 'start': self.now, 'times': [],
+                           'id': self.bubble_n, 'stream': True}
+            self._reveal_bid = self.bubble_n
         self.bubble['text'] += add
         self._stream_full += add
         self._stream_spoken += add
@@ -2140,7 +2179,7 @@ class Brain(Extras):
         self.bubble['times'].extend(times)
         self._stream_typed = typed
         self.bubble['until'] = self.now + typed + 30
-        self.talk_until = self.now + typed
+        # talk_until stays quiet: the WAV's start sets it, so the mouth follows sound
         self._reply_stream_flush(force=False)
 
     def _reply_stream_flush(self, force=False):
@@ -2155,6 +2194,7 @@ class Brain(Extras):
         vol = self.settings.get('voice_vol', 50)
         if not vol or self.sleeping:
             self._stream_spoken = ''
+            self.reveal_answer(self.bubble['id'])  # nobody will speak: show the words now
             return
         cut = -1
         # speak whole sentences as soon as they are complete
@@ -2171,14 +2211,24 @@ class Brain(Extras):
             j = buf.rfind(' ')
             if j > 24:
                 cut = j
+        if cut < 0 and not self._stream_spoke_first:
+            # the very first piece goes out early: waiting for a whole sentence
+            # (or 90 characters) kept her hidden in silence for seconds.
+            # Cut after a real word, never after a lone preposition.
+            for j in range(len(buf) - 1, 11, -1):
+                if buf[j] == ' ' and j - (buf.rfind(' ', 0, j) + 1) >= 3:
+                    cut = j
+                    break
         if cut < 0 and force:
             cut = len(buf)
         if cut < 0:
             return
         seg = buf[:cut].strip()
         self._stream_spoken = buf[cut:]
+        self._stream_spoke_first = True
         if not seg:
             return
+        self._stream_voice_sent = True
         real = self.settings.get('voice_kind') == 'tts'
         if real:
             self.requests.append(('voice_stream', seg, self.bubble['id'], vol / 100.0))
@@ -2194,8 +2244,10 @@ class Brain(Extras):
         self.chat_streaming = False
         if not was:
             return
-        self.thinking = False
         self._reply_stream_flush(force=True)
+        if getattr(self, '_reveal_bid', None) and not self._stream_voice_sent:
+            self.reveal_answer(self._reveal_bid)   # no voice was queued: show the words
+        self.thinking = bool(getattr(self, '_reveal_bid', None))
         self.requests.append(('voice_stream_done', self.bubble['id'] if self.bubble else None))
         reply = ' '.join(getattr(self, '_stream_full', '').split())
         if self.bubble and self.bubble.get('stream'):
@@ -2207,7 +2259,7 @@ class Brain(Extras):
             typed = self._stream_typed
             self.bubble['until'] = max(self.now + typed + 2.2 + 0.04 * len(reply),
                                        self.now + 60)
-            self.talk_until = self.now + typed
+            # the WAV's start owns talk_until: the mouth must not outlast the sound
         if not reply:
             self.chat_history.pop()     # the question got no answer: do not confuse her later
             self.conversation_close('chat fail')
@@ -2225,9 +2277,11 @@ class Brain(Extras):
         if not getattr(self, 'chat_streaming', False):
             return
         self.chat_streaming = False
-        self.thinking = False
         reply = ' '.join(getattr(self, '_stream_full', '').split())
         self._reply_stream_flush(force=True)
+        if getattr(self, '_reveal_bid', None) and not self._stream_voice_sent:
+            self.reveal_answer(self._reveal_bid)
+        self.thinking = bool(getattr(self, '_reveal_bid', None))
         self.requests.append(('voice_stream_done', self.bubble['id'] if self.bubble else None))
         if self.bubble and self.bubble.get('stream'):
             self.bubble.pop('stream', None)
@@ -2239,7 +2293,6 @@ class Brain(Extras):
                 typed = self._stream_typed
                 self.bubble['until'] = max(self.now + typed + 2.2 + 0.04 * len(reply),
                                            self.now + 60)
-                self.talk_until = self.now + typed
             self.requests.append(('chat_reply_done', reply))
         else:
             self.chat_history.pop()
@@ -2258,7 +2311,7 @@ class Brain(Extras):
         self.chat_history.append({'role': 'assistant', 'content': reply})
         self.last_chat_exchange_at = self.now
         self.conversation_begin('chat')
-        self.say_text(reply)
+        self.say_text(reply, appear=False, reveal=True)
 
     def hour_joked(self, payload):
         """the mind answered with a joke for the hour; she speaks the time + the joke"""
@@ -2321,6 +2374,10 @@ class Brain(Extras):
         self.chat_streaming = False
         self._stream_full = ''
         self._stream_spoken = ''
+        self._stream_started = False
+        self._stream_spoke_first = False
+        self._stream_voice_sent = False
+        self._reveal_bid = None
         self.listening = False
         self.note_pending = False
         self.pending_permission = None

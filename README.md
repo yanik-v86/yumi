@@ -420,8 +420,10 @@ the small vosk one (~45 MB, Russian and English) and the small whisper one (~460
 understands far better than its size suggests).
 What she hears shows in her bubble, then a local [Ollama](https://ollama.com) answers (by default
 `lakomoor/vikhr-llama-3.2-1b-instruct:1b`); she repeats the answer in her bubble and with her voice
-(see "Her real voice" above — with Silero she speaks Russian aloud). She remembers her last five
-turns until you quit her. To set the ears up:
+(see "Her real voice" above — with Silero she speaks Russian aloud). Her appearance, the first
+words and the first sound now happen together: no empty bubble and no silent mouth while the mind
+thinks and the voice is prepared. She remembers her last five turns until you quit her.
+To set the ears up:
 
 ```sh
 ./tools/stt_setup.sh

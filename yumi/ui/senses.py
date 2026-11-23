@@ -125,6 +125,8 @@ class SensesMixin:
                 try:
                     if p:
                         self.voice_start(p, bid)
+                    else:
+                        self.brain.reveal_answer(bid)   # no WAV: still show the answer
                 finally:
                     self.voice_pending = max(0, self.voice_pending - 1)
                 return False
@@ -194,8 +196,12 @@ class SensesMixin:
         if seq is None:
             if path:
                 self.voice_queue.append(path)
+            else:
+                b.reveal_answer(bid)            # synthesis failed: do not wait forever
             self._voice_pump()
             return False
+        if seq == 1 and not path:
+            b.reveal_answer(bid)                # the first piece failed: reveal anyway
         self._voice_ready[seq] = path
         while self._voice_next in self._voice_ready:
             p = self._voice_ready.pop(self._voice_next)
@@ -215,9 +221,7 @@ class SensesMixin:
             path = self.voice_queue.pop(0)
             if self.voice_id is None or not b.bubble or b.bubble.get('id') != self.voice_id:
                 continue
-            secs = tts.wav_len(path)
-            if secs:
-                b.bubble['until'] = max(b.bubble['until'], b.now + secs + 1.2)
+            self._voice_started(self.voice_id, tts.wav_len(path) or 0.0)
             self.voice_proc = system.play_file(path)
             if self.voice_proc:
                 return
@@ -239,12 +243,20 @@ class SensesMixin:
                   'the 8-bit blips speak instead', file=sys.stderr)
         return first
 
+    def _voice_started(self, bid, secs):
+        """the WAV begins now: this is the moment she may appear and move her mouth"""
+        b = self.brain
+        if b.reveal_answer(bid, secs):
+            return                             # reveal_answer already set mouth and bubble
+        if b.bubble and b.bubble.get('id') == bid:
+            # the voice may be longer than the typed words
+            b.bubble['until'] = max(b.bubble['until'], b.now + secs + 1.2)
+        b.talk_until = b.now + secs
+
     def voice_start(self, path, bid):
         b = self.brain
         if bid == self.voice_id and b.bubble and b.bubble.get('id') == bid:
-            secs = tts.wav_len(path)
-            if secs:                          # the voice may be longer than the typed words
-                b.bubble['until'] = max(b.bubble['until'], b.now + secs + 1.2)
+            self._voice_started(bid, tts.wav_len(path) or 0.0)
             self.voice_proc = system.play_file(path)
 
     def play_voice_file(self, path):
@@ -510,10 +522,10 @@ class SensesMixin:
                 GLib.idle_add(self.duck_begin)   # her name passed: quiet now, whatever comes
                 if b.thinking or b.listening:
                     continue            # she got busy in those seconds: the word is spent
-                # the name was heard: the moth that marks where she hides becomes the
-                # girl — asleep she wakes, hidden she comes out, right now, while the
-                # phrase (or the wait for it) is still going
-                GLib.idle_add(lambda: self.ev(lambda br: br.wake_form()) and False)
+                # the name was heard: she wakes at once, but stays at the edge until
+                # her answer has both first words and first sound (reveal_answer)
+                GLib.idle_add(lambda: self.ev(
+                    lambda br: br.wake_form(appear=False)) and False)
                 if b.now < b.talk_until or self.talking():
                     self.hush()         # her own line was still sounding: it dies, your turn now
                 if tail:
