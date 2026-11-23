@@ -80,7 +80,7 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
             'wifi': lambda ssid: self.ev(lambda b: b.world('wifi_on', ssid=ssid) if ssid else b.world('wifi_off')),
             'dnd': lambda on: self.ev(lambda b: b.set_sleep(on)),
             'music': lambda on: self.ev(lambda b: b.world('music', playing=on)),
-            'beat': lambda v: self.ev(lambda b: b.world('beat', level=v)),
+            'beat': self.on_beat,
             'idle': lambda kind: self.ev(lambda b: b.idle_event(kind)),
             'palette': self.on_palette,
             'caps': self.on_caps,
@@ -119,6 +119,7 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
         GLib.timeout_add_seconds(3600, lambda: self.apply_outfit() or True)    # the calendar moves on
         self.queue = jobs.Queue(self.job_progress, self.job_done, self.job_start)
         self.ops = []
+        self.empty_drawn = False        # the last frame was already cleared to transparent
         self.timer = None
         self.dl_announced = {}          # the model a daemon fetches now: src -> name, told about
         GLib.timeout_add_seconds(4, self.watch_downloads)
@@ -315,6 +316,17 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
         """run a frame now and make sure the timer keeps running at the brain's pace"""
         self.frame()
 
+    def on_beat(self, level):
+        """cava talks ~30 times a second; only remember the level, let the frame timer draw.
+
+        A full ev()/kick() here forced a whole transparent window repaint on every bass
+        bar, so the compositor redrew at its refresh rate (~60 fps) instead of the
+        brain's 12–24 fps.  World.emit already marshals this into the GTK thread.
+        """
+        b = getattr(self, 'brain', None)
+        if b is not None:
+            b.world('beat', level=level)
+
     def frame(self):
         b = self.brain
         b.update(time.monotonic())
@@ -342,14 +354,17 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
         self._conversation_tick()
         self.ops = b.scene()
         self.web_tick()
+        empty = not self.ops
         for w in self.windows:
             if w is self.active:
-                w.area.queue_draw()
+                if not empty or not self.empty_drawn:
+                    w.area.queue_draw()             # one clear when she disappears, then idle
                 w.update_input()
                 w.set_keyboard(LayerShell.KeyboardMode.EXCLUSIVE if b.form and not self.form_picking else
                                LayerShell.KeyboardMode.ON_DEMAND if b.kb_hover else LayerShell.KeyboardMode.NONE)
             elif b.mode == 'held' or w.drew:
                 w.area.queue_draw()                 # carried across / one last clear
+        self.empty_drawn = empty
         fps = b.fps()
         if self.painter.old is not None:
             fps = 60

@@ -2504,8 +2504,12 @@ class Brain(Extras):
         if self.mode == 'held' or self.x.v or self.y.v or self.yoff.v or self.pile_t.v or self.radial_t.v \
                 or self.pile and any(0.01 < v < 0.99 for v in self.pull_v.values()):
             return 60
+        if self.beat > 0.05 or self.music:
+            # she dances only when she is out; a hidden girl leaves just her moth,
+            # whose own animation runs at 10 fps (16 with the bass)
+            return 24 if self.visible() or self.mode != 'docked' else 16
         if self.moth.visible() and self.moth.state in ('wander', 'emerge', 'hide'):
-            return 24
+            return 16                               # her moth's own animation runs at 10 fps
         return 12
 
     # ------------------------------------------------------------------ drawing
