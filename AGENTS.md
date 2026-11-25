@@ -41,7 +41,10 @@
 
 ```bash
 python3 tests/test_webpanel.py
-python3 -m py_compile yumi/webpanel/*.py yumi/config.py yumi/brain.py yumi/ui/*.py
+python3 tests/test_user_intents.py
+python3 tests/test_addressing.py
+bash tests/smoke_user_intents.sh
+python3 -m py_compile yumi/webpanel/*.py yumi/config.py yumi/brain.py yumi/ui/*.py yumi/user_intents.py
 for f in yumi/webui/static/js/*.js yumi/webui/static/js/pages/*.js; do
   node --input-type=module --check < "$f" || echo "FAIL $f"
 done
@@ -52,6 +55,7 @@ done
 ```
 yumi/
   config.py          DEFAULT_SETTINGS, Store, пути
+  user_intents.py    пользовательские фразы: схема, валидация, запись, match
   brain.py           поведение, меню, действия в мире
   memory.py          дневник (SQLite)
   chat.py            разговор с умом
@@ -73,7 +77,7 @@ yumi/
     index.html       оболочка SPA
     static/css/app.css
     static/js/{app,api,ui}.js
-    static/js/pages/*.js
+    static/js/pages/*.js       включая user-intents.js (свои фразы)
 bin/yumi             запуск, флаги (включая --web)
 tests/               pytest и интеграционные тесты
 ```
@@ -92,6 +96,59 @@ tests/               pytest и интеграционные тесты
 - Код и docstring'и — в стиле окружающих файлов; не переписывать чужие модули без
   необходимости.
 
+## Пользовательские интенты (свои фразы)
+
+Источник истины — `~/.config/yumi/user_intents.json` (`config.INTENTS_FILE`). Агент должен
+создавать интенты через страницу панели `user-intents` (`#/user-intents`) или её API.
+Отдельного GTK-редактора **нет** — это явное исключение из главного правила: в GTK
+остаётся только исполнение фраз. Если панель недоступна, допустимо править JSON руками,
+но по той же схеме и с увеличенным `revision`.
+
+Минимальный документ:
+
+```json
+{
+  "version": 1,
+  "revision": 1,
+  "intents": [
+    {
+      "id": "lights_on",
+      "name": "Свет",
+      "enabled": true,
+      "phrases": ["включи свет", "lights on"],
+      "keywords": ["свет", "лампа"],
+      "action": {"type": "command", "value": "python3 /home/user/scripts/lights.py on"},
+      "speak": "Включаю свет",
+      "priority": 0,
+      "requires_confirmation": true
+    }
+  ]
+}
+```
+
+Правила, которые нельзя обходить:
+
+- Валидация только в `yumi/user_intents.py`; не дублировать её в GTK, панели или скриптах.
+  `id` — уникальный `[a-zA-Z0-9_-]{1,64}`; нужны `phrases` и/или `keywords`; не более 50
+  строк в списке, строка ≤200, `command` ≤1000, `url` — только `http(s)://`, `priority`
+  −100..100 и только разрешает ничью после score.
+- `action.type`: `command`, `url` или `say`. Подтверждение по умолчанию включено для
+  `command` и выключено для `url`/`say`. Для `say` говорится `speak`, а `action.value`
+  используется только если `speak` пуст.
+- Пользовательские интенты проверяются **после** встроенных навыков и кнопок
+  `actions.json`, поэтому кнопка выигрывает спор за ту же фразу. Это обычные правила
+  `nlu`, а не дообучение ONNX: новая фраза подхватывается по mtime без перезапуска.
+- Правка файла вручную увеличивает `revision`. Запись из панели (`PUT /api/user-intents`)
+  обязана прислать текущий `revision`; при расхождении сервер отдаёт `409`, а не
+  перезаписывает чужую правку.
+- Импорт — `POST /api/user-intents/import` (multipart-файл или `{"text": "..."}`), не
+  `/api/upload`. Проверка фразы — `POST /api/user-intents/test` и ничего не выполняет.
+  Аудит изменений не содержит текста команд.
+
+Ключевые файлы: `yumi/user_intents.py`, `yumi/brain.py` (`voice_user_intent()`),
+`yumi/ui/webpanel.py` (`_web_user_intents_*`), `yumi/webpanel/server.py` (роуты),
+`yumi/webui/static/js/pages/user-intents.js`. Подробности — `docs/handoff-user-intents.md`.
+
 ## Тесты
 
 ```bash
@@ -105,6 +162,7 @@ pytest tests/ -q
 ## Чего не делать
 
 - Не добавлять функцию только в GTK или только в панель, если она должна быть в обоих.
+- Не создавать GTK-редактор `user_intents.json`: свои фразы правятся в панели или в файле.
 - Не импортировать GTK в `yumi/webpanel/` и не обращаться к виджетам из HTTP-потока.
 - Не отдавать секреты и токен панели в открытом виде.
 - Не ломать обратную совместимость `settings.json` без миграции/значения по умолчанию.
