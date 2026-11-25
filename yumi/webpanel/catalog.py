@@ -26,6 +26,9 @@ PAGES = [
     {'id': 'notes', 'icon': 'pencil', 'title': {'en': 'Notes', 'ru': 'Заметки'},
      'hint': {'en': 'Write by voice or type here, and find them again',
               'ru': 'Записать голосом или вручную и потом найти'}},
+    {'id': 'facts', 'icon': 'book', 'title': {'en': 'Facts', 'ru': 'Факты'},
+     'hint': {'en': 'Checked facts with sources for her idle chatter',
+              'ru': 'Проверенные факты с источниками для её болтовни'}},
     {'id': 'files', 'icon': 'box', 'title': {'en': 'Files', 'ru': 'Файлы'},
      'hint': {'en': 'Recent files, the shelf, convert and compress',
               'ru': 'Недавние, полка, конвертация и сжатие'}},
@@ -98,6 +101,7 @@ SECTIONS = [
 # key -> section (anything not named lands in "extra")
 KEY_SECTION = {
     'pinned': 'behavior', 'reactions': 'behavior', 'chatter': 'behavior',
+    'chatter_facts': 'behavior', 'chatter_facts_file': 'behavior',
     'hourly_chimes': 'behavior', 'idle_nap': 'behavior', 'breaks': 'behavior',
     'gaze': 'behavior', 'voice_vol': 'sound', 'voice_kind': 'sound',
     'tts_ru_speaker': 'sound', 'tts_en_speaker': 'sound',
@@ -145,6 +149,7 @@ KEY_SECTION = {
 CHOICES = {
     'ui_lang': ['en', 'ru'],
     'speech_lang': ['en', 'ru'],
+    'chatter_facts': ['off', 'mixed', 'only'],
     'breaks': [0, 20, 30, 45, 60],
     'voice_vol': [0, 25, 50, 75, 100],
     'voice_kind': ['blips', 'tts'],
@@ -174,6 +179,9 @@ CHOICES = {
 CHOICE_LABELS = {
     'ui_lang': {'en': 'English', 'ru': 'Русский'},
     'speech_lang': {'en': 'English', 'ru': 'Русский'},
+    'chatter_facts': {'off': {'en': 'none', 'ru': 'нет'},
+                      'mixed': {'en': 'mixed with small talk', 'ru': 'вперемешку'},
+                      'only': {'en': 'facts only', 'ru': 'только факты'}},
     'voice_kind': {'blips': {'en': '8-bit blips', 'ru': 'Пищалка'},
                    'tts': {'en': 'Real voice', 'ru': 'Настоящий'}},
     'tts_ru_speaker': {'kseniya': 'Kseniya', 'baya': 'Baya', 'xenia': 'Xenia',
@@ -252,6 +260,8 @@ TITLES = {
     'pinned': {'en': 'Stay out', 'ru': 'Не прятаться'},
     'reactions': {'en': 'System reactions', 'ru': 'Реакции на систему'},
     'chatter': {'en': 'Chatter', 'ru': 'Болтовня'},
+    'chatter_facts': {'en': 'Facts in chatter', 'ru': 'Факты в болтовне'},
+    'chatter_facts_file': {'en': 'Your fact book (JSON)', 'ru': 'Свой справочник фактов (JSON)'},
     'hourly_chimes': {'en': 'Time every hour', 'ru': 'Время каждый час'},
     'idle_nap': {'en': 'Nap when idle', 'ru': 'Дремать без тебя'},
     'breaks': {'en': 'Health breaks', 'ru': 'Перерывы для здоровья'},
@@ -366,6 +376,10 @@ HINTS = {
                   'ru': 'Зарядка, Wi-Fi, загрузки, скриншоты, музыка.'},
     'chatter': {'en': 'Quiet small talk while she is out, at most every 10 minutes.',
                 'ru': 'Тихая болтовня, пока она снаружи, не чаще раза в 10 минут.'},
+    'chatter_facts': {'en': 'Short real facts with sources, mixed into chatter or instead of it. The model never invents them.',
+                      'ru': 'Короткие настоящие факты с источниками: вперемешку с болтовнёй или вместо неё. Модель их не придумывает.'},
+    'chatter_facts_file': {'en': 'Empty = the built-in checked book. Add your own JSON on the Facts page (a path on this computer).',
+                           'ru': 'Пусто = встроенный проверенный справочник. Свой JSON можно указать на странице «Факты» (путь на этом компьютере).'},
     'hourly_chimes': {'en': 'She reads the clock with a small joke every hour.',
                       'ru': 'Каждый час она говорит время с шуткой.'},
     'idle_nap': {'en': 'Dozes off when you have been away for a while.',
@@ -595,6 +609,11 @@ def coerce(key, value):
         if isinstance(value, str):
             return value.strip().lower() in ('1', 'true', 'on', 'yes')
         return bool(value)
+    if key == 'chatter_facts':
+        mode = str(value or '').strip().lower()
+        if mode not in CHOICES[key]:
+            raise ValueError(f'{key} must be one of {", ".join(CHOICES[key])}')
+        return mode
     if isinstance(default, int) and not isinstance(default, bool):
         number = int(value)
         rng = RANGES.get(key)

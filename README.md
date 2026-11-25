@@ -224,8 +224,8 @@ Add **Yumi** to the autostart apps in the system settings, then add a custom sho
 | Stroke her head (move the pointer back and forth over it) | she blushes; hearts, sparkles behind the pointer |
 | DND | Do Not Disturb on; she naps in a blanket and stays quiet. Hover or use her and she half-opens her eyes, DND stays on. Wake is in her menu |
 
-Settings come in groups: **Her** (stay out, system reactions, idle chatter, napping when you
-are away, health breaks every 20 / 30 / 45 / 60 min: water, eyes, stretch), **Sound** (her
+Settings come in groups: **Her** (stay out, system reactions, idle chatter, facts in chatter,
+napping when you are away, health breaks every 20 / 30 / 45 / 60 min: water, eyes, stretch), **Sound** (her
 voice volume, the timer sound: her bell or any audio file), **Her ears** (microphone, hearing
 accuracy, wake on «Yumi»), **Look** (wallpaper colors or a
 color by hand, outfit, which screen she lives on) and **Language**. The first-run tour can be
@@ -551,6 +551,25 @@ the polite ones and the «Sassy 18+» ones apart. And «кто играет» (�
 answers by herself too:
 the artist and the track of whatever is sounding right now.
 
+**Facts, not fiction.** **Settings → Her → Facts in chatter** (`chatter_facts`) decides what
+she says while idle: `mixed` (the default — facts alternate with her usual chatter, and the
+first line is a fact), `only` (facts only) or `off` (as before). The facts come from a
+built-in book of 24 short, checked claims with sources (NASA, Britannica, Smithsonian, NOAA
+and others); the model is never asked to invent them, so there is no hallucination. The
+browser panel's **Facts** page (`/#/facts`) shows the whole book, links to each source,
+has **Say a fact** / **Say it** buttons and lets you attach your own JSON file:
+
+```json
+{"facts": [{"id": "my-1", "ru": "Короткий факт", "en": "A short fact",
+            "source": "My notes", "url": "https://example.com"}]}
+```
+
+`url` is optional; both languages are required. `chatter_facts_file` is a path to that
+JSON on the same machine: **Check and enable** validates it, and on any error Yumi falls
+back to the built-in book and shows why. An edited file is re-read automatically. The
+panel's **Fact** button on the Overview also speaks one at once, skipping the usual
+chatter gap; while she sleeps she stays quiet.
+
 **Notes.** Say «Юми, запиши заметку купить молоко» and she writes it down. Ask
 «найди заметку про молоко» («find a note about milk») or «покажи заметки» («show my
 notes») and she reads the closest note aloud, naming the count when there are several.
@@ -731,8 +750,8 @@ met” about her own wake word. If you edit `speakers.json` by hand, run
 - **Signing in:** Yumi prints a link with a one-time token (`http://127.0.0.1:8765/?t=…`).
   It is exchanged for an HttpOnly session. You can rotate the token on the Security page
   without signing out the tabs that are already open.
-- **What is inside:** overview, talk, notes, files, music, ears and voice, diagnostics,
-  buttons, look, every setting, memory, config files, security and logs. Changes apply
+- **What is inside:** overview, talk, facts, notes, files, music, ears and voice,
+  diagnostics, buttons, look, every setting, memory, config files, security and logs. Changes apply
   live and are saved to the same files the desktop Yumi uses. The chat uses a revision
   and Insert/Update/Remove/Clear ops over SSE, so two tabs stay in sync and a missed
   event triggers a full resync.

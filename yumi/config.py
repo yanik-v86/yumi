@@ -23,6 +23,8 @@ DEFAULT_SETTINGS = {
     'reactions': True,        # reactions to the system (charger, Wi-Fi, downloads...)
     'pinned': False,          # she stays out and does not hide at the bottom edge
     'chatter': True,          # idle small talk (at most every 10 minutes, only while she is out)
+    'chatter_facts': 'mixed',  # off / mixed / only: vetted real facts in idle chatter
+    'chatter_facts_file': '',  # optional JSON fact book of your own (empty = built-in)
     'voice_vol': 50,          # her voice while her words type out, % (0 = silent)
     'voice_kind': 'blips',    # her voice: blips (8-bit) / tts (a real one, tools/tts_setup.sh)
     'tts_ru_speaker': 'kseniya',  # her Russian Silero voice: kseniya/baya/xenia/aidar/eugene
@@ -426,6 +428,7 @@ UI = {
         'unkeep': 'Off the shelf', 'back': 'Back', 'empty_recent': 'Nothing new yet',
         'empty_shelf': 'Drop files on me to keep them here', 'ui_lang': 'Interface',
         'speech_lang': 'Speech', 'reactions': 'System reactions', 'chatter': 'Chatter', 'pinned': 'Stay out',
+        'chatter_facts': 'Facts in chatter', 'cf_off': 'none', 'cf_mixed': 'mixed', 'cf_only': 'facts only',
         'on': 'on', 'off': 'off', 'colors': 'Colors', 'to': 'to', 'working': 'Working',
         'open': 'Open', 'files': '{n} files', 'cancel': 'Cancel',
         'p_small': 'Smaller', 'p_1mb': 'Under 1 MB', 'p_half': 'Half size',
@@ -529,6 +532,7 @@ UI = {
         'unkeep': 'Убрать с полки', 'back': 'Назад', 'empty_recent': 'Пока ничего нового',
         'empty_shelf': 'Кидай на меня файлы, я их тут сохраню', 'ui_lang': 'Интерфейс',
         'speech_lang': 'Реплики', 'reactions': 'Реакции на систему', 'chatter': 'Болтовня', 'pinned': 'Не прятаться',
+        'chatter_facts': 'Факты в болтовне', 'cf_off': 'нет', 'cf_mixed': 'вперемешку', 'cf_only': 'только факты',
         'on': 'вкл', 'off': 'выкл', 'colors': 'Цвета', 'to': 'в', 'working': 'Работаю',
         'open': 'Открыть', 'files': 'файлов: {n}', 'cancel': 'Отмена',
         'p_small': 'Поменьше', 'p_1mb': 'До 1 МБ', 'p_half': 'В два раза меньше',

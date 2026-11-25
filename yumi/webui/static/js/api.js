@@ -89,6 +89,10 @@ export const api = {
   status: () => api.get('/api/status'),
   schema: () => api.get('/api/schema'),
 
+  factsList: (lang = '') => api.get(`/api/facts?lang=${encodeURIComponent(lang || '')}`),
+  factsCheck: (path = '') => api.post('/api/facts/check', { path: String(path || '') }),
+  factsSay: (id = '') => api.post('/api/facts/say', { id: String(id || '') }),
+
   nluConfirm: (ok) => api.post('/api/nlu/confirm', { ok: Boolean(ok) }),
 
   chatHistory: () => api.get('/api/chat/history'),

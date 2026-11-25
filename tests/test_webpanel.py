@@ -45,6 +45,7 @@ class Bridge:
         self.chat_items = []
         self.chat_journal = []
         self.chat_rev = 0
+        self.said_facts = []
 
     def file_allowed(self, path):
         try:
@@ -184,6 +185,19 @@ class Bridge:
 
     def state_action(self, name, payload):
         return {'action': name}
+
+    def facts_list(self, lang=None):
+        return {'items': [{'id': 'test', 'text': 'A checked fact.',
+                           'source': 'Test', 'url': 'https://example.org'}],
+                'info': {'builtin': 24, 'custom': 0, 'total': 24, 'error': '', 'ok': True}}
+
+    def facts_check(self, path=''):
+        return {'path': path, 'builtin': 24, 'custom': 1, 'total': 25,
+                'error': '', 'ok': True}
+
+    def facts_say(self, fact_id=None):
+        self.said_facts.append(fact_id)
+        return {'ok': True, 'text': 'A checked fact.', 'fact': {'id': fact_id or 'test'}}
 
     # ---- the transfer: diagnostics, mic state, permissions, chat ops
     def doctor(self, sections=None, text=None):
@@ -350,11 +364,20 @@ try:
     assert set(config.DEFAULT_SETTINGS) <= keys, set(config.DEFAULT_SETTINGS) - keys
     assert {'web_panel', 'web_panel_host', 'web_panel_port', 'web_panel_open',
             'web_panel_session_hours'} <= keys
-    assert len(schema['pages']) == 14
+    assert len(schema['pages']) == 15
     assert {page['id'] for page in schema['pages']} == {
-        'dashboard', 'chat', 'notes', 'files', 'music', 'voice', 'doctor', 'buttons',
+        'dashboard', 'chat', 'notes', 'facts', 'files', 'music', 'voice', 'doctor', 'buttons',
         'appearance', 'settings', 'memory', 'configs', 'security', 'logs'}
     entries = {entry['key']: entry for entry in schema['settings']}
+    assert entries['chatter_facts']['type'] == 'select'
+    assert entries['chatter_facts']['choices'] == ['off', 'mixed', 'only']
+    assert entries['chatter_facts_file']['section'] == 'behavior'
+    assert catalog.validate_settings_patch({'chatter_facts': 'ONLY'}) == {'chatter_facts': 'only'}
+    try:
+        catalog.validate_settings_patch({'chatter_facts': 'sometimes'})
+        raise AssertionError('bad chatter fact mode accepted')
+    except ValueError:
+        pass
     assert entries['wake_sensitivity']['type'] == 'select'
     assert entries['ui_lang']['type'] == 'select'
     assert entries['stt_echo']['type'] == 'switch'
@@ -464,6 +487,18 @@ try:
     assert code == 200 and data['version'] and data['pages']
     code, data, _ = call('GET', '/api/actions')
     assert code == 200 and data['icon_patterns']['folder']
+
+    # the fact book: no model, explicit sources, CSRF on every mutation
+    code, data, _ = call('GET', '/api/facts?lang=ru')
+    assert code == 200 and data['items'][0]['id'] == 'test', (code, data)
+    code, data, _ = call('POST', '/api/facts/check', {'path': '/tmp/facts.json'})
+    assert code == 403
+    code, data, _ = call('POST', '/api/facts/check', {'path': '/tmp/facts.json'}, csrf=csrf)
+    assert code == 200 and data['ok'] and data['custom'] == 1, (code, data)
+    code, data, _ = call('POST', '/api/facts/say', {'id': 'test'})
+    assert code == 403
+    code, data, _ = call('POST', '/api/facts/say', {'id': 'test'}, csrf=csrf)
+    assert code == 200 and data['ok'] and bridge.said_facts[-1] == 'test', (code, data)
 
     # a browser save of a button keeps its declarative voice metadata
     full = {'label': 'Term', 'label_ru': 'Терм', 'icon': 'terminal', 'command': 'foot',

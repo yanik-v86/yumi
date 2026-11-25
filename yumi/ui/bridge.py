@@ -3,7 +3,7 @@ import threading
 import time
 from pathlib import Path
 
-from yumi import (chat, config, doctor as doctor_mod, ears, engines, files, jobs,
+from yumi import (chat, config, doctor as doctor_mod, ears, engines, facts, files, jobs,
                   memory, models, music, notes, permission, system, tts)
 
 
@@ -555,6 +555,30 @@ class WebBridge:
     def tools_joke(self):
         s = self.app.settings
         return {'joke': chat.joke(s, s.get('speech_lang', 'en'))}
+
+    # ---- the vetted fact book (no model call: facts must not be invented)
+    def facts_list(self, lang=None):
+        s = self.app.settings
+        book = facts.get_book(s)
+        return {'items': book.items(lang or s.get('speech_lang', 'en')),
+                'info': book.info()}
+
+    def facts_check(self, path=''):
+        return facts.FactBook(path).info()
+
+    def facts_say(self, fact_id=None):
+        """show one checked fact in the world; an explicit panel action ignores the gap"""
+
+        def run():
+            b = self.app.brain
+            if b.sleeping:
+                return {'ok': False, 'reason': 'sleeping'}
+            if str(self.app.settings.get('chatter_facts') or 'off') == 'off':
+                return {'ok': False, 'reason': 'off'}
+            ok = bool(b.say('fact', force=True, fact_id=fact_id or None))
+            return {'ok': ok, 'fact': getattr(b.speech, 'last_fact', None) if ok else None,
+                    'text': ((b.bubble or {}).get('text') or '') if ok else ''}
+        return self._on(run)
 
     def tools_params(self):
         lang = self.app.settings.get('speech_lang', 'en')

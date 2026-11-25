@@ -9,7 +9,7 @@ from pathlib import Path
 
 from gi.repository import Gdk, GLib
 
-from yumi import (chat, config, doctor, ears, engines, memory, models, music,
+from yumi import (chat, config, doctor, ears, engines, facts, memory, models, music,
                   notes, permission, pixui, speaker, speaker_sherpa, system,
                   tts, webpanel)
 from yumi.sprites import ui_colors
@@ -408,6 +408,9 @@ class PanelMixin:
                         'pending_permission': (b.permission_snapshot()
                                                if hasattr(b, 'permission_snapshot') else None)},
                 'wake_on': bool(self.wake_on),
+                'facts': {**facts.get_book(s).info(),
+                          'mode': str(s.get('chatter_facts') or 'off'),
+                          'last': getattr(getattr(b, 'speech', None), 'last_fact', None)},
                 'speaker': self._web_speaker_snapshot(),
                 'conversation': conv,
                 'conversation_active': bool(conv.get('active')),
@@ -483,6 +486,8 @@ class PanelMixin:
                              daemon=True).start()
         if 'nlu' in patch and not self.settings.get('nlu'):
             b.intent_confirm = None         # voice commands switched off: no pending answer
+        if 'chatter_facts_file' in patch:
+            facts.clear_cache()             # the new book is read on the next fact
         # nlu_confidence is read from settings on every phrase, so it applies at once
         # stt_hotwords is read by the ears daemon from settings.json on the next
         # /listen or /wake (refresh_tune there) — the panel needs no extra call

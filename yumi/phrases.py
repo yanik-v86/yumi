@@ -16,6 +16,15 @@ import random
 import time
 from collections import deque
 
+try:
+    from . import facts
+except ImportError:  # some tests load this file as a bare module
+    import importlib.util
+    from pathlib import Path
+    _spec = importlib.util.spec_from_file_location('yumi_facts', Path(__file__).with_name('facts.py'))
+    facts = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(facts)
+
 SYSTEM_GAP = 150.0
 CHATTER_GAP = 600.0
 BYPASS = {'battery_low'}
@@ -578,7 +587,7 @@ KIND = {  # which rate limit an event falls under; everything else is an "action
     'charger_on': 'system', 'charger_off': 'system', 'battery_low': 'system',
     'wifi_on': 'system', 'wifi_off': 'system', 'download': 'system', 'screenshot': 'system',
     'model_dl': 'system', 'model_dl_done': 'system',
-    'chatter': 'chatter',
+    'chatter': 'chatter', 'fact': 'chatter',
 }
 
 
@@ -601,6 +610,19 @@ class Speech:
         self.recent = {}
         self.last_system = -1e9
         self.last_chatter = clock()          # no small talk right after start
+        self.last_fact = None                # the last vetted fact shown, for the panel
+
+    def fact(self, lang=None, fact_id=None):
+        """a short checked fact (and a face) from the built-in book, never the model"""
+        lang = lang or self.settings.get('speech_lang', 'en')
+        book = facts.get_book(self.settings)
+        fact = book.find(fact_id) if fact_id else book.pick(lang, self.rng)
+        if not fact:
+            return None
+        text = fact.ru if lang == 'ru' else fact.en
+        self.last_fact = {'id': fact.id, 'text': text, 'source': fact.source,
+                          'url': fact.url, 'at': time.time()}
+        return text, self.rng.choice((None, 'wink', 'surprised'))
 
     def line(self, event, lang=None, **fmt):
         lang = lang or self.settings.get('speech_lang', 'en')
@@ -639,7 +661,7 @@ class Speech:
                 return False
             if event not in BYPASS and now - self.last_system < SYSTEM_GAP:
                 return False
-        if kind == 'chatter':
+        if kind == 'chatter' and not force:
             if not self.settings.get('chatter', True) or not out:
                 return False
             if now - self.last_chatter < CHATTER_GAP:
@@ -648,7 +670,8 @@ class Speech:
 
     def say(self, event, out=True, asleep=False, force=False, **fmt):
         """the line to show, or None when the rules say she stays quiet;
-        force is for the startup hello: it comes even while Do Not Disturb is on"""
+        force is for the startup hello and an explicit panel action: it comes even
+        while Do Not Disturb is on"""
         if not self.allowed(event, out, asleep, force):
             return None
         kind = KIND.get(event, 'action')
@@ -656,4 +679,6 @@ class Speech:
             self.last_system = self.clock()
         elif kind == 'chatter':
             self.last_chatter = self.clock()
+        if event == 'fact':
+            return self.fact(**fmt)
         return self.line(event, **fmt)

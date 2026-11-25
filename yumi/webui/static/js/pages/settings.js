@@ -111,6 +111,17 @@ export function render(view, ctx) {
   }
 
   function linkNote(section) {
+    if (section.id === 'behavior') {
+      return el('div', { class: 'card-hint', style: { marginBottom: '12px' } },
+        lang() === 'ru'
+          ? 'Справочник фактов, источники и свой JSON — на странице «Факты».'
+          : 'The fact book, its sources and your own JSON live on the Facts page.',
+        el('button', {
+          class: 'btn btn-small', type: 'button', style: { marginLeft: '8px' },
+          text: lang() === 'ru' ? 'Открыть' : 'Open',
+          onclick: () => ctx.navigate('facts'),
+        }));
+    }
     if (section.id === 'web') {
       return el('div', { class: 'ok-box', style: { marginBottom: '12px' } },
         el('div', { class: 'row between' },

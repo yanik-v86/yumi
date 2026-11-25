@@ -35,13 +35,14 @@ yumi/
       js/app.js        сессия, навигация, hash-роутер, живой статус, топбар, баннер
       js/api.js        единственное место, где ходят HTTP и SSE
       js/ui.js         DOM-хелперы, иконки, тосты, модалки, контролы настроек
-      js/pages/*.js    14 страниц (добавилась doctor.js)
+      js/pages/*.js    15 страниц (добавились doctor.js и facts.js)
 bin/yumi               флаги --web и --doctor
 yumi/ui/app.py         жизненный цикл панели, ревизия и журнал чата
 yumi/ui/bridge.py      WebBridge — контракт HTTP ↔ приложение
 yumi/config.py         настройки web_panel_*, бэкап сломанного settings.json
 yumi/brain.py          пункты меню, голосовые команды и разрешения
 yumi/doctor.py         один отчёт самопроверки для CLI и панели (без GTK)
+yumi/facts.py          встроенный справочник фактов и валидация своего JSON (без GTK)
 yumi/models.py         явные SHA-256 отпечатки моделей, кэш для статуса
 yumi/permission.py     правила ALLOW/ALWAYS/DENY, безопасные пути
 yumi/voice_state.py    единое состояние микрофона (владелец, поколение)
@@ -50,6 +51,7 @@ yumi/entities.py       общие сущности фразы: громкост�
 yumi/memory.py         хелперы дневника для страницы «Память»
 yumi/notes.py          заметки: sqlite + векторы, голосовые команды, страница «Заметки»
 tests/test_webpanel.py интеграционный тест API и безопасности
+tests/test_facts.py    тест справочника и выбора фактов в болтовне
 tests/test_notes.py    тест книжки заметок и разбора голосовых фраз
 tests/test_doctor.py   мок-тест отчёта врача и CLI
 tests/test_models.py   запись/сравнение хэшей моделей
@@ -83,6 +85,7 @@ WebBridge (yumi.ui.bridge)  ── GLib.idle_add ──▶  App / Brain / Memory
 |----|-------------------|------------|
 | `dashboard` | Обзор | портрет, реплика, режим, аптайм, таймер, музыка, очередь файлов, быстрые действия |
 | `chat` | Разговор | чат с умом, история с ревизией и SSE-операциями Insert/Update/Remove/Clear, «сказать в мир», быстрый старт, живая реплика |
+| `facts` | Факты | встроенные проверенные факты с источниками, поиск, «Сказать факт» / «Сказать», подключение своего JSON со страницы; переключатель `chatter_facts` в Настройках → Поведение |
 | `notes` | Заметки | поиск по заметкам, создание и правка, удаление, очистка, запись голосом через `/api/voice/listen` |
 | `files` | Файлы | очередь обработки, drag-and-drop загрузка, недавние, полка, открыть, конвертировать, сжать |
 | `music` | Музыка | текущий трек, play/pause/next/stop/продолжи, громкость, поиск по Jellyfin/папкам |
@@ -196,6 +199,9 @@ ctx.navigate(id)
 | GET | `/api/audit` | хвост журнала панели |
 | GET | `/api/logs?source=&lines=` | логи |
 | GET | `/api/events` | SSE: hello/status/bubble/settings/files/jobs/actions/chat/notes/server/doctor |
+| GET | `/api/facts?lang=ru|en` | список фактов с источниками и сводка по книге (`builtin`, `custom`, `total`, `error`) |
+| POST | `/api/facts/check` | `{path}` — проверить свой JSON, не меняя настроек |
+| POST | `/api/facts/say` | `{id?}` — сказать факт (или случайный) сразу, минуя лимит болтовни; во сне отказ |
 | GET | `/api/tools/time|weather|joke|params` | мелкие инструменты |
 
 Важно: `/api/security/link` намеренно **не** отдаёт токен по GET, чтобы он не попал в
@@ -226,6 +232,16 @@ pending_permission}`. `confirm: true` (совместимость) или неп
 **не** входит в `CONFIG_FILES`: биометрию нельзя редактировать как обычный JSON через
 панель.
 
+`runtime.facts` — сводка книги фактов (`path`, `builtin`, `custom`, `total`, `error`, `ok`),
+текущий `mode` (`off` / `mixed` / `only`) и `last` (последний выбранный факт). Модель для
+фактов не вызывается: встроенный справочник из 24 фактов лежит в `yumi/facts.py`, а свой
+файл (`chatter_facts_file`) проверяется перед сохранением и перечитывается при изменении.
+Формат: `{"facts": [{"id": "…", "ru": "…", "en": "…", "source": "…", "url": "https://…"}]}`;
+`url` необязателен и допускает только `http(s)`. Ошибка файла не ломает болтовню:
+показывается причина, и работают встроенные факты. Явный `/api/facts/say` не ждёт
+10-минутного перерыва между репликами, но не говорит во сне. Путь к файлу — не секрет,
+он виден и в `/api/status`.
+
 Состояние микрофона включает `awaiting_followup` (владелец `conversation`): она ответила
 и ждёт реплику без wake-word. Рядом лежат `runtime.conversation` (снимок
 `{active, source, since, until, remaining, last_at, exchanges, timeout,
@@ -255,6 +271,7 @@ music_play, music_control, voice_listen(seconds, engine), voice_stop, voice_spea
 voice_engines, voice_mics, voice_test_wake(seconds, ear), voice_test(text, lang),
 speaker_status, speaker_enroll, speaker_test, speaker_rename(id, label),
 speaker_delete(id), speaker_clear_participants,
+facts_list(lang), facts_check(path), facts_say(id),
 tools_*, logs`.
 
 Проверки слуха и голоса (`voice_listen`, `voice_test_wake`, `/api/speaker/test`) на время
@@ -361,6 +378,7 @@ tools_*, logs`.
 cd /home/nikolas/Projects/yumi
 
 python3 tests/test_webpanel.py
+python3 tests/test_facts.py
 python3 tests/test_doctor.py
 python3 tests/test_models.py
 python3 tests/test_permission.py
@@ -381,7 +399,7 @@ python3 tests/test_voice_intent.py
 for f in tests/test_*.py; do python3 "$f" || echo "FAIL $f"; done
 
 python3 -m py_compile yumi/webpanel/*.py yumi/ui/*.py yumi/config.py yumi/brain.py \
-  yumi/doctor.py yumi/models.py yumi/permission.py yumi/voice_state.py \
+  yumi/doctor.py yumi/facts.py yumi/models.py yumi/permission.py yumi/voice_state.py \
   yumi/ears.py yumi/stt_daemon.py yumi/memory.py yumi/notes.py
 for f in yumi/webui/static/js/*.js yumi/webui/static/js/pages/*.js; do
   node --input-type=module --check < "$f" || echo "FAIL $f"
@@ -390,12 +408,13 @@ bash -n bin/yumi
 ```
 
 `tests/test_webpanel.py` поднимает настоящий сервер на свободном порту и проверяет:
-покрытие схемы (14 страниц), вход по токену, cookie и CSRF, лимит попыток, logout,
-PATCH настроек, ссылку и ротацию, статику и защиту от path traversal, а также новые
-роуты диагностики, моделей, разрешений, состояния микрофона и журнала чата (включая
-отказ без CSRF). Отдельные скрипты проверяют чистую логику без GTK: врача с моками
-ушек/голоса, хэши моделей, правила разрешений, машину состояния микрофона и бэкап
-сломанного `settings.json`.
+покрытие схемы (15 страниц), вход по токену, cookie и CSRF, лимит попыток, logout,
+PATCH настроек, ссылку и ротацию, статику и защиту от path traversal, а также роуты
+диагностики, моделей, разрешений, состояния микрофона, журнала чата и фактов (включая
+отказ без CSRF). `tests/test_facts.py` проверяет встроенный справочник, валидацию своего
+JSON, безопасную ссылку и чередование фактов с болтовнёй. Отдельные скрипты проверяют
+чистую логику без GTK: врача с моками ушек/голоса, хэши моделей, правила разрешений,
+машину состояния микрофона и бэкап сломанного `settings.json`.
 
 Визуальная проверка без GTK: можно поднять `Panel` с заглушкой-мостом (см. пример в
 истории работы) и обойти все `#/…` в браузере. При этом надо помнить, что заглушка
@@ -422,8 +441,8 @@ PATCH настроек, ссылку и ротацию, статику и защ
 
 ## 10. Статус
 
-Готово и проверено: сервер, авторизация, CSRF, схема настроек, все 14 страниц
-(включая «Заметки» с поиском и записью голосом и новую «Диагностику»),
+Готово и проверено: сервер, авторизация, CSRF, схема настроек, все 15 страниц
+(включая «Заметки» с поиском и записью голосом, «Диагностику» и «Факты»),
 пиксельная тема с двумя breakpoint'ами, живые события, бэкапы, аудит, флаги `--web` и
 `--doctor`, интеграционные тесты. Добавлены: единый doctor,
 явное состояние микрофона, ALLOW/ALWAYS/DENY с «отказ сильнее согласия», вердикт пробуждения,
@@ -435,6 +454,11 @@ PATCH настроек, ссылку и ротацию, статику и защ
 Страница «Ушки и голос» получила три карточки выбора и живые проверки: активация
 (openWakeWord/vosk), судья фраз (whisper/nemotron) и голос Silero с прослушиванием.
 Подробности и оставшаяся живая приёмка — в `docs/handoff-voice-controls.md`.
+
+Добавлены страница «Факты», настройки `chatter_facts` / `chatter_facts_file` и
+встроенный справочник с источниками: болтовня говорит только проверенные факты,
+модель не участвует. Конкретика — в разделах 2–3.
+
 Добавлена настройка `stt_hotwords` (**Подсказки слов**) в карточку «Судья фраз»:
 демон читает её из `settings.json` на следующей фразе. Подробности — в
 `docs/handoff-stt-hotwords.md`.

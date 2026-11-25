@@ -240,6 +240,15 @@ export function render(view, ctx) {
         },
       }),
       el('button', {
+        class: 'btn btn-small', type: 'button', text: lang() === 'ru' ? 'Факт' : 'Fact',
+        onclick: async () => {
+          try {
+            const d = await api.factsSay();
+            toolOut.textContent = d.text || d.error || '…';
+          } catch (err) { errToast(err); }
+        },
+      }),
+      el('button', {
         class: 'btn btn-small', type: 'button', text: lang() === 'ru' ? 'Параметры' : 'Params',
         onclick: async () => {
           try {

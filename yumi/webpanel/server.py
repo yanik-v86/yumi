@@ -434,6 +434,9 @@ def _make_handler(panel):
                 ('GET', '/api/audit'): self._audit,
                 ('GET', '/api/logs'): self._logs,
                 ('GET', '/api/events'): self._events,
+                ('GET', '/api/facts'): self._facts_list,
+                ('POST', '/api/facts/check'): self._facts_check,
+                ('POST', '/api/facts/say'): self._facts_say,
                 ('GET', '/api/tools/time'): self._tool_time,
                 ('GET', '/api/tools/weather'): self._tool_weather,
                 ('GET', '/api/tools/joke'): self._tool_joke,
@@ -1040,6 +1043,23 @@ def _make_handler(panel):
             except ValueError:
                 limit = 300
             return self._json(200, {'ok': True, **panel.bridge.logs(name, limit)})
+
+        # ---------------------------------------------------------------- fixed facts
+        def _facts_list(self, q):
+            lang = str((q.get('lang') or [''])[0]) or None
+            return self._json(200, {'ok': True, **panel.bridge.facts_list(lang)})
+
+        def _facts_check(self, _q):
+            body = self._body()
+            result = panel.bridge.facts_check(body.get('path') or '')
+            panel.audit(self._ip(), 'facts-check', str(body.get('path') or '')[:200])
+            return self._json(200, {'ok': True, **result})
+
+        def _facts_say(self, _q):
+            body = self._body()
+            result = panel.bridge.facts_say(body.get('id') or None)
+            panel.audit(self._ip(), 'facts-say', str(body.get('id') or '')[:200])
+            return self._json(200, {'ok': bool(result.get('ok')), **result})
 
         # ---------------------------------------------------------------- small tools
         def _tool_time(self, _q):

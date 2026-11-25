@@ -272,6 +272,7 @@ class Brain(Extras):
         self.last_ptr = None
         self.drops = []
         self.next_chatter_check = now + 30
+        self._chatter_fact_next = True  # the first idle line in "mixed" mode is a fact
         self.last_hour = int(time.localtime().tm_hour)  # the hour she last chimed, so she does not repeat
         self.moth = Moth(self)
         self.chat_history = []          # what you asked and what she answered, the last few turns
@@ -544,6 +545,7 @@ class Brain(Extras):
     def cycles(self):
         """settings that step through a short list when clicked"""
         return {'ui_lang': ['en', 'ru'], 'speech_lang': ['en', 'ru'],
+                'chatter_facts': ['off', 'mixed', 'only'],
                 'breaks': [0, 20, 30, 45, 60], 'outfit': ['auto', 'off'] + self.outfit_names,
                 'voice_vol': [0, 25, 50, 75, 100], 'voice_kind': ['blips', 'tts'],
                 'tts_ru_speaker': ['kseniya', 'baya', 'xenia', 'aidar', 'eugene'],
@@ -576,6 +578,8 @@ class Brain(Extras):
         t = lambda k: tr(self.settings, k)
         if arg in ('ui_lang', 'speech_lang'):
             return (val or 'en').upper()
+        if arg == 'chatter_facts':
+            return t('cf_' + str(val)) if f'cf_{val}' in UI['en'] else str(val)
         if arg == 'breaks':
             return t('off') if not val else f'{val} {t("min")}'
         if arg == 'voice_vol':
@@ -961,7 +965,8 @@ class Brain(Extras):
             rows.append(('menu', 'main', t('back')))
         elif kind == 'set_her':
             rows = [('set', 'pinned', t('pinned')), ('set', 'reactions', t('reactions')),
-                    ('set', 'chatter', t('chatter')), ('set', 'hourly_chimes', t('hourly_chimes')),
+                    ('set', 'chatter', t('chatter')), ('set', 'chatter_facts', t('chatter_facts')),
+                    ('set', 'hourly_chimes', t('hourly_chimes')),
                     ('set', 'idle_nap', t('idle_nap')), ('set', 'breaks', t('breaks')),
                     ('menu', 'settings', t('back'))]
         elif kind == 'set_sound':
@@ -2540,11 +2545,15 @@ class Brain(Extras):
             target = 0 if self.peek else self.hidden_off()
             if abs(self.yoff.t - target) > 0.5:
                 self.yoff.to(target, 10.0, 1.0)
-        # small talk
+        # small talk: every other line is a vetted fact in the "mixed" mode
         if now >= self.next_chatter_check:
             self.next_chatter_check = now + 30
             if self.visible() and not self.sleeping and not self.bubble:
-                self.say('chatter')
+                mode = str(self.settings.get('chatter_facts') or 'off')
+                use_fact = mode == 'only' or (mode == 'mixed' and self._chatter_fact_next)
+                spoke = self.say('fact' if use_fact else 'chatter')
+                if spoke and mode == 'mixed':
+                    self._chatter_fact_next = not self._chatter_fact_next
         # the hour strikes: she speaks the time with a joke
         hour = int(time.localtime().tm_hour)
         if self.settings.get('hourly_chimes', True) and self.last_hour != hour:

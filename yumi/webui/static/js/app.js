@@ -8,6 +8,7 @@ const PAGES = {
   dashboard: './pages/dashboard.js',
   chat: './pages/chat.js',
   notes: './pages/notes.js',
+  facts: './pages/facts.js',
   files: './pages/files.js',
   music: './pages/music.js',
   voice: './pages/voice.js',
