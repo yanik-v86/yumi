@@ -311,9 +311,10 @@ Intents mind**.
 ### Your own intents
 
 The **My phrases** page (`#/user-intents`) creates, edits, deletes, imports and exports your own
-rules, and the **Test phrase** button shows a match without running the action. The toggle is
-**Settings → Her mind → My own intents**. The same `~/.config/yumi/user_intents.json` can be
-edited by hand:
+rules. The card's **Test** button finds the phrase and **runs** the intent exactly as if it had
+been spoken — bubble, voice and command included. The separate **Match?** check only shows a
+match and never executes anything. The toggle is **Settings → Her mind → My own intents**. The
+same `~/.config/yumi/user_intents.json` can be edited by hand:
 
 ```json
 {

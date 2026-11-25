@@ -146,6 +146,10 @@ class Bridge:
     def user_intents_test(self, text):
         return user_intents.test_phrase(text)
 
+    def user_intents_run(self, text):
+        result = user_intents.test_phrase(text)
+        return {**result, 'ran': bool(result['matched'])}
+
     def notes_list(self, limit=50):
         return list(reversed(self.note_items))[:limit]
 
@@ -551,6 +555,17 @@ try:
     assert code == 200 and data['matched'] and data['intent']['capture'] is True
     code, data, _ = call('POST', '/api/user-intents/test', {'text': 'совсем другое'}, csrf=csrf)
     assert code == 200 and data['matched'] is False
+
+    # the card's Test button runs the matched intent through the same bridge path
+    code, data, _ = call('POST', '/api/user-intents/run', {'text': 'новости'})
+    assert code == 403, 'running an intent without CSRF must fail'
+    code, data, _ = call('POST', '/api/user-intents/run', {'text': 'новости'}, csrf=csrf)
+    assert code == 200 and data['matched'] and data['ran'] is True
+    assert data['intent']['id'] == 'news' and data['intent']['capture'] is True
+    code, data, _ = call('POST', '/api/user-intents/run',
+                         {'text': 'совсем другое'}, csrf=csrf)
+    assert code == 200 and data['matched'] is False and data['ran'] is False
+
     code, data, _ = call('PUT', '/api/user-intents',
                          {'version': 1, 'revision': 0, 'intents': []}, csrf=csrf)
     assert code == 409, (code, data)

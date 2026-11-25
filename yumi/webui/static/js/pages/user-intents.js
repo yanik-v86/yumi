@@ -62,10 +62,10 @@ export function render(view, ctx) {
   });
   const testResult = el('div', { class: 'card-hint' });
   view.append(el('div', { class: 'card', style: { marginTop: '16px' } },
-    el('h3', { text: L('Проверить фразу', 'Check a phrase') }),
+    el('h3', { text: L('Проверить совпадение', 'Check a match') }),
     el('div', { class: 'row' },
       testInput,
-      button(L('Проверить', 'Check'), {
+      button(L('Совпадение?', 'Match?'), {
         kind: 'btn-primary', iconName: 'search', onClick: async () => {
           try {
             const result = await api.userIntentsTest(testInput.value);
@@ -82,8 +82,8 @@ export function render(view, ctx) {
       })),
     testResult,
     el('p', { class: 'card-hint', text: L(
-      'Проверка ничего не запускает и не меняет файл.',
-      'Checking never runs the action or changes the file.') }),
+      'Здесь только совпадение: ничего не запускается и файл не меняется. Кнопка «Проверить» на карточке запускает интент.',
+      'Match only: nothing runs and the file is unchanged. The card’s “Test” button runs the intent.') }),
   ));
 
   async function load() {
@@ -125,14 +125,23 @@ export function render(view, ctx) {
         el('div', { class: 'row', style: { marginTop: 'auto', paddingTop: '8px' } },
           button(L('Править', 'Edit'), { small: true, onClick: () => edit(index) }),
           button(L('Проверить', 'Test'), {
-            small: true, onClick: async () => {
-              testInput.value = (intent.phrases || [])[0] || (intent.keywords || [])[0] || '';
+            small: true,
+            title: L('Найти фразу и запустить интент с озвучкой',
+                     'Match the phrase and run the intent with speech'),
+            onClick: async () => {
+              const phrase = (intent.phrases || [])[0] || (intent.keywords || [])[0] || '';
+              testInput.value = phrase;
               testInput.dispatchEvent(new Event('change'));
               try {
-                const result = await api.userIntentsTest(testInput.value);
-                toast(result.matched ? L('Фраза находится', 'Phrase matches')
-                  : L('Фраза не находится', 'Phrase does not match'),
-                result.matched ? 'good' : 'bad');
+                const result = await api.userIntentsRun(phrase);
+                if (!result.matched) {
+                  toast(L('Фраза не находится', 'Phrase does not match'), 'bad');
+                } else if (!result.ran) {
+                  toast(L('Интент найден, но не запущен', 'Matched, but not run'), 'bad');
+                } else {
+                  toast(L(`Запущено: ${result.intent?.name || result.intent?.id || ''}`,
+                          `Running: ${result.intent?.name || result.intent?.id || ''}`), 'good');
+                }
               } catch (err) { errToast(err); }
             },
           }),

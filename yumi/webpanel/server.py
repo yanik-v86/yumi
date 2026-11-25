@@ -382,6 +382,7 @@ def _make_handler(panel):
                 ('POST', '/api/user-intents/import'): self._user_intents_import,
                 ('GET', '/api/user-intents/export'): self._user_intents_export,
                 ('POST', '/api/user-intents/test'): self._user_intents_test,
+                ('POST', '/api/user-intents/run'): self._user_intents_run,
                 ('POST', '/api/nlu/confirm'): self._nlu_confirm,
                 ('POST', '/api/doctor'): self._doctor,
                 ('GET', '/api/models'): self._models_get,
@@ -670,6 +671,13 @@ def _make_handler(panel):
             body = self._body()
             result = panel.bridge.user_intents_test(str(body.get('text') or ''))
             panel.audit(self._ip(), 'user-intents-test',
+                        'matched' if result.get('matched') else 'no match')
+            return self._json(200, {'ok': True, **result})
+
+        def _user_intents_run(self, _q):
+            body = self._body()
+            result = panel.bridge.user_intents_run(str(body.get('text') or ''))
+            panel.audit(self._ip(), 'user-intents-run',
                         'matched' if result.get('matched') else 'no match')
             return self._json(200, {'ok': True, **result})
 

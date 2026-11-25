@@ -497,8 +497,8 @@ HINTS = {
                        'ru': '127.0.0.1 оставляет панель на этом компьютере. 0.0.0.0 открывает её в локальную сеть — только с надёжным токеном и файрволом.'},
     'web_panel_session_hours': {'en': 'How long the browser stays signed in before the token is asked again.',
                                 'ru': 'Сколько браузер остаётся в системе, прежде чем снова спросить токен.'},
-    'user_intents': {'en': 'Your own rules from user_intents.json. They are matched after the built-in skills and buttons, need no ONNX retraining and work without a restart. A command can answer with its output: turn on “Answer in bubble and voice” and put {stdout} in the reply. Edit them on the “My phrases” page or in the JSON file.',
-                     'ru': 'Свои правила из user_intents.json. Они проверяются после встроенных навыков и кнопок, не требуют дообучения ONNX и перезапуска. Команда может отвечать выводом: включи «Ответ команды в бабле и голосом» и поставь {stdout} в реплике. Прави их на странице «Мои фразы» или прямо в JSON.'},
+    'user_intents': {'en': 'Your own rules from user_intents.json. They are matched after the built-in skills and buttons, need no ONNX retraining and work without a restart. A command can answer with its output: turn on “Answer in bubble and voice” and put {stdout} in the reply. The Test button on a card runs a matched intent with speech; Match? only checks the phrase. Edit them on the “My phrases” page or in the JSON file.',
+                     'ru': 'Свои правила из user_intents.json. Они проверяются после встроенных навыков и кнопок, не требуют дообучения ONNX и перезапуска. Команда может отвечать выводом: включи «Ответ команды в бабле и голосом» и поставь {stdout} в реплике. Кнопка «Проверить» на карточке запускает найденный интент с озвучкой; «Совпадение?» только проверяет фразу. Прави их на странице «Мои фразы» или прямо в JSON.'},
 }
 
 CONFIG_FILES = {

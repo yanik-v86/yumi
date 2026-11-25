@@ -101,6 +101,9 @@ export const api = {
   userIntentsExport: () => api.get('/api/user-intents/export'),
   userIntentsTest: (text) => api.post('/api/user-intents/test', { text: String(text || '') }),
 
+  // Matches the phrase and runs the intent through Brain (bubble, voice, command).
+  userIntentsRun: (text) => api.post('/api/user-intents/run', { text: String(text || '') }),
+
   chatHistory: () => api.get('/api/chat/history'),
   chatOps: (since = 0) => api.get(`/api/chat/ops?since=${Number(since) || 0}`),
   chatClear: () => api.del('/api/chat/history'),

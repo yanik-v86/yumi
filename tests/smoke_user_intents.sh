@@ -82,6 +82,9 @@ class Bridge:
     def user_intents_test(self, text):
         return self.side._web_user_intents_test(text)
 
+    def user_intents_run(self, text):
+        return self.side._web_user_intents_run(text)
+
     def snapshot(self):
         return {}
 
@@ -150,6 +153,13 @@ try:
     assert ('run_capture', 'noop-answer', 'answer', 'Ответ: {stdout}') in brain.requests
     assert brain.user_intent_answer('свежие заголовки', 'answer', 'Ответ: {stdout}') is True
     assert brain.bubble['text'] == 'Ответ: свежие заголовки', brain.bubble
+
+    # the very same launch is available to the browser's card button
+    code, data, _ = call('POST', '/api/user-intents/run',
+                         {'text': 'ответь новостями'}, csrf=csrf)
+    assert code == 200 and data['matched'] and data['ran'] is True, (code, data)
+    assert data['intent']['id'] == 'answer'
+    assert ('run_capture', 'noop-answer', 'answer', 'Ответ: {stdout}') in brain.requests
 
     # 2. edit the file by hand: Brain must notice the new mtime without a restart
     raw = json.loads(intents_path.read_text(encoding='utf-8'))

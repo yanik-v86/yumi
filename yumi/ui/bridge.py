@@ -52,6 +52,10 @@ class WebBridge:
     def user_intents_test(self, text):
         return self._on(lambda: self.app._web_user_intents_test(text))
 
+    def user_intents_run(self, text):
+        """match and execute a custom rule as if the phrase had been heard"""
+        return self._on(lambda: self.app._web_user_intents_run(text))
+
     def action_run(self, index):
         b = self.app.brain
         self._on(lambda: b.extras_do('custom', int(index)))

@@ -190,8 +190,10 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
 Новая страница `user-intents` (`catalog.PAGES`, lazy import в `app.js`, `render(view, ctx)`):
 список карточек, форма, textarea фраз, select `action.type`, кнопки «Проверить» / «Импорт» /
 «Экспорт», тумблеры `enabled`, `requires_confirmation` и `capture` (только для `command`),
-скрытое поле `revision`. Подсказка у `speak` объясняет `{stdout}`. UX и DOM-безопасность —
-по образцу `buttons.js`: только `createElement`/`textContent`.
+скрытое поле `revision`. Подсказка у `speak` объясняет `{stdout}`. Кнопка карточки «Проверить»
+вызывает `/run` (нашла фразу — запустила с репликой/голосом/командой); блок «Совпадение?»
+вызывает `/test` и ничего не исполняет. UX и DOM-безопасность — по образцу `buttons.js`: только
+`createElement`/`textContent`.
 
 `api.js`: `userIntentsGet/Put/Import/Export/Test`.
 
@@ -201,7 +203,10 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
 - `PUT /api/user-intents` — полная замена, обязателен `revision`, конфликт → `409`;
 - `POST /api/user-intents/import` — multipart-файл **или** JSON-тело, валидация до записи;
 - `GET /api/user-intents/export` — `application/json` + `Content-Disposition: attachment`;
-- `POST /api/user-intents/test` — `{text}` → `{matched, intent, score, source}`, без выполнения.
+- `POST /api/user-intents/test` — `{text}` → `{matched, intent, score, source}`, без выполнения;
+- `POST /api/user-intents/run` — `{text}` → `{matched, ran, intent, score, source}`; через
+  `WebBridge.user_intents_run()` → `PanelMixin._web_user_intents_run()` (GTK-поток) вызывает
+  `Brain.voice_user_intent()`, то есть кнопка «Проверить» на карточке равна услышанной фразе.
 
 CSRF/origin проверяются общим кодом сервера (`server.py:364-368`). `/api/upload` не использовать.
 В `tests/test_webpanel.py` обновить stub `Bridge` и жёсткое ожидание 16 страниц.
@@ -239,11 +244,11 @@ GTK-этапа нет.
 - `tests/test_user_intents.py` (новый): load/save/validate, полный цикл import/export,
   `revision`, scoring `1.0/0.8/0.6`, `enabled`, `priority` как тай-брейк, горячая перезагрузка.
 - `tests/test_webpanel.py`: новые роуты, CSRF, схема, `revision`→409, invalid import→400,
-  заголовки export, `/test`; обновить stub `Bridge` и ожидание 16 страниц.
+  заголовки export, `/test` и `/run`; обновить stub `Bridge` и ожидание 16 страниц.
 - `tests/test_voice_intent.py` / `tests/test_nlu.py`: базовые кнопки и ONNX не сломаны; отдельно
   проверяется `run_capture` → `user_intent_answer()` (бабла + `voice`-запрос) и подтверждение.
 - `tests/smoke_user_intents.sh` (новый): API → ручная правка JSON → `Brain` видит →
-  test phrase → export → import → delete. Без GTK.
+  test phrase → `/run` через HTTP → export → import → delete. Без GTK.
 
 Быстрая проверка из `AGENTS.md` дополнена `test_user_intents.py` и `py_compile user_intents.py`.
 
@@ -269,6 +274,7 @@ GTK-этапа нет.
 - [x] GTK-редактор не добавлен; исполнение фраз в GTK работает как раньше + новый слой.
 - [x] Есть импорт/экспорт JSON через панель с валидацией и защитой от конфликта правок.
 - [x] Тест фразы показывает совпадение без выполнения действия.
+- [x] Кнопка «Проверить» в панели запускает найденный интент со всеми обычными эффектами.
 - [x] Ответ `capture`-интента появляется в бабле и озвучивается обычным путём `say_text()`.
 - [x] Кастомные интенты работают без перезапуска и без переобучения ONNX.
 - [x] Базовые навыки, кнопки и ONNX не сломаны; порядок зафиксирован тестами.

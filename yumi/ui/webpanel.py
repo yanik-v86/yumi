@@ -778,11 +778,29 @@ class PanelMixin:
 
     def _web_user_intents_test(self, text):
         data = user_intents.load(self._intents_path())
+        return user_intents.test_phrase(text, data, min_confidence=self._web_intent_line())
+
+    def _web_intent_line(self):
         try:
-            line = max(0.0, min(1.0, float(self.brain.settings.get('nlu_confidence', 0.6))))
+            return max(0.0, min(1.0,
+                                float(self.brain.settings.get('nlu_confidence', 0.6))))
         except (TypeError, ValueError):
-            line = 0.6
-        return user_intents.test_phrase(text, data, min_confidence=line)
+            return 0.6
+
+    def _web_user_intents_run(self, text):
+        """a panel button behaves like the phrase spoken to Yumi: match the
+        enabled rules and run the hit through the very same Brain path"""
+        text = str(text or '').strip()[:200]
+        if not text:
+            raise ValueError('text is required')
+        if not self.brain.settings.get('user_intents', True):
+            return {'matched': False, 'ran': False, 'intent': None, 'score': 0.0,
+                    'source': 'user-intents'}
+        data = self.brain.user_intents_check()
+        result = user_intents.test_phrase(text, data, min_confidence=self._web_intent_line())
+        if not result['matched']:
+            return {**result, 'ran': False}
+        return {**result, 'ran': bool(self.brain.voice_user_intent(text))}
 
     def _web_logs(self, name, lines):
         paths = {
