@@ -13,9 +13,11 @@ import urllib.parse
 import urllib.request
 from contextlib import redirect_stderr
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from yumi import config, user_intents  # noqa: E402
+from yumi.clock import Clock  # noqa: E402
 from yumi.ui.webpanel import PanelMixin  # noqa: E402
 from yumi.webpanel import auth, catalog, server  # noqa: E402
 
@@ -82,7 +84,11 @@ class Bridge:
                                     'model': {'ready': True, 'name': 'test', 'error': ''}},
                         'outfit': 'auto', 'shelf_count': 0, 'recent_count': 0,
                         'timer': {'seconds': 0, 'text': '', 'running': False,
-                                  'pending': False, 'paused': False, 'done': False}},
+                                  'pending': False, 'paused': False, 'done': False},
+                        'clock': {'enabled': True, 'now_wall': 1000.0,
+                                  'jobs_active': 2, 'jobs_persisted': 1,
+                                  'next_due_at': 1010.0, 'last_fired_at': 999.0,
+                                  'last_error': None}},
             'jobs': {'busy': False, 'current': None, 'queued': []},
             'panel': {'running': True},
             'features': {'ffmpeg': True},
@@ -520,6 +526,13 @@ try:
     assert code == 200 and data['runtime']['bubble'] == 'привет'
     assert data['runtime']['conversation_active'] is False
     assert data['runtime']['conversation']['active'] is False
+    assert data['runtime']['clock']['jobs_active'] == 2
+    assert data['runtime']['clock']['last_error'] is None
+    # the real snapshot helper reads the same shape from Brain.clock
+    snap_panel = PanelMixin.__new__(PanelMixin)
+    snap_panel.brain = SimpleNamespace(clock=Clock(now_wall=lambda: 1000.0))
+    assert snap_panel._web_clock_snapshot()['jobs_active'] == 0
+    assert snap_panel._web_clock_snapshot()['enabled'] is True
     code, data, _ = call('GET', '/api/schema')
     assert code == 200 and data['version'] and data['pages']
     code, data, _ = call('GET', '/api/actions')

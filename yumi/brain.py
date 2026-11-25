@@ -955,6 +955,7 @@ class Brain(Extras):
                 rows.append(('chips', None, ''))
             rows.append(('wake', None, t('wake')) if self.sleeping else ('sleep', None, t('sleep')))
             rows.append(('set', 'wake_ears', t('ears')))
+            rows.append(('clock_status', None, self.clock_status_text()))
             rows.append(('menu', 'settings', t('settings')))
             if self.mode != 'docked' or abs(self.dock_x - self.clamp_x(
                     self.W - EDGE_MARGIN * self.S - self.meta.bw * self.S / 2)) > 4:
@@ -2686,6 +2687,9 @@ class Brain(Extras):
         for sp in (self.x, self.y, self.yoff, self.pile_t, self.radial_t):
             moving |= sp.step(dt)
         self.timer_update(now)
+        clock = getattr(self, 'clock', None)     # one tick per frame, no second timer
+        if clock is not None:
+            clock.tick(time.time(), now)
         self.extras_update(dt, now)
         # single click waits for a possible double click
         if self.click_at and now >= self.click_at:

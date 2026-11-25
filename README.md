@@ -232,6 +232,30 @@ color by hand, outfit, which screen she lives on) and **Language**. The first-ru
 replayed from there too. The ears also have a quick **Ears** toggle on her ring, a row in the
 main menu and a chip in the browser panel's top bar — the same switch as «Wake on «Yumi»».
 
+### The internal clock
+
+Yumi has one shared time service (`yumi/clock.py`) — not to be confused with
+her scroll timer: `Brain.timer` draws the digits and plays the bell, while the
+clock just calls other subsystems' jobs on time. There is one tick:
+`App.frame()` → `Brain.update()` → `Clock.tick()`, with no extra
+`GLib.timeout_add`. The clock can `defer`, `skip`, pause and cancel jobs; repeats
+never stack up, and a job more than 15 minutes late is reported as missed
+instead of firing in the past. Jobs with `persist=True` survive a restart in
+`~/.local/state/yumi/clock-jobs.json`.
+
+Any consumer can attach a job without touching the core:
+
+```python
+clock.register('my_task', handler)
+clock.schedule('my_task', in_s=120, owner='health', payload={'cup': 1}, persist=True)
+```
+
+The clock knows nothing about phrases, reminders or the panel: what to say and
+do is the consumer handler's business. Its status is in `/api/status` →
+`runtime.clock` and on a read-only dashboard card; GTK shows the same as a line
+in the main menu. There is no job editor in either UI — it is an internal
+service. See [`docs/handoff-internal-clock.md`](docs/handoff-internal-clock.md).
+
 ## Her colors
 
 She takes the hue of your wallpaper and changes when it changes. She finds it by herself in:

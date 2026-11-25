@@ -8,9 +8,12 @@ actions 'custom', 'tour_next', 'tour_skip', 'tour_again' through extras_do.
 """
 import math
 import random
+import time
 from pathlib import Path
 
 from . import user_intents
+from .clock import Clock
+from .clock_store import ClockStore
 from .config import RING_SLOTS, ACTIONS_FILE, _as_bool, _as_int, load_actions, tr
 from .pixui import ICONS
 
@@ -59,6 +62,12 @@ class Extras:
         self.nap = False
         self.user_idle = False
         self.break_next, self.break_i = None, 0
+        # the internal clock: one tick per frame, no second GLib timer. The first
+        # consumers only have adapters here; their old logic still runs as before.
+        self.clock = Clock(store=ClockStore())
+        self.clock.register('timer', lambda job: self.timer_update(self.now))
+        self.clock.register('breaks', lambda job: self.breaks_tick(0.0, self.now))
+        self.clock.register('hourly_chimes', lambda job: self.hourly())
         self.tour = None
         self.custom = load_actions(ACTIONS_FILE)
         self.actions_path = ACTIONS_FILE
@@ -166,7 +175,14 @@ class Extras:
                 self.hearts.append({'x': r[0] + r[2] / 2 + random.uniform(-44, 44) * S, 'y': r[1] + 6 * S,
                                     't': now, 'vx': random.uniform(-6, 6) * S})
         self.hearts = [h for h in self.hearts if now - h['t'] < 1.5]
-        # health breaks wait for you: not while she dozes, nor while you are away
+        self.breaks_tick(dt, now)
+        # the first run: a tour a moment after she appears
+        if not self.state.get('intro_done') and self.tour is None and now > 5 and not self.sleeping:
+            self.start_tour()
+
+    # ---------------------------------------------------------------- time
+    def breaks_tick(self, dt, now):
+        """The old health-break logic; kept here so a clock adapter can call it too."""
         mins = self.settings.get('breaks') or 0
         if not mins:
             self.break_next = None
@@ -181,9 +197,17 @@ class Extras:
                 self.break_i += 1
                 if self.mode == 'docked' and not self.out:
                     self.pop(True, temporary=True)
-        # the first run: a tour a moment after she appears
-        if not self.state.get('intro_done') and self.tour is None and now > 5 and not self.sleeping:
-            self.start_tour()
+
+    def clock_status_text(self):
+        """One read-only line for her GTK menu: the same snapshot the panel shows."""
+        clock = getattr(self, 'clock', None)
+        snap = clock.snapshot() if clock else {
+            'jobs_active': 0, 'next_due_at': 0.0,
+        }
+        due = snap.get('next_due_at') or 0.0
+        at = (time.strftime('%H:%M', time.localtime(due)) if due
+              else tr(self.settings, 'n_a'))
+        return tr(self.settings, 'clock_status', n=snap.get('jobs_active', 0), at=at)
 
     # ---------------------------------------------------------------- dozing off
     def idle_event(self, kind):
@@ -363,6 +387,9 @@ class Extras:
                 self.close_all()
                 self.requests.append(('run', self.custom[arg]['command']))
                 self.set_face('happy', 1.5)
+            return True
+        if action == 'clock_status':
+            self.say_text(self.clock_status_text(), voice=False)
             return True
         if action == 'ring_edit':
             self.ring_edit = True

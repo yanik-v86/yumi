@@ -329,6 +329,19 @@ class PanelMixin:
         b._speaker_last_event = ''
         return self._web_speaker_snapshot()
 
+    def _web_clock_snapshot(self):
+        """Read-only status of the internal clock; never includes job payloads."""
+        empty = {'enabled': False, 'now_wall': time.time(), 'jobs_active': 0,
+                 'jobs_persisted': 0, 'next_due_at': 0.0, 'last_fired_at': 0.0,
+                 'last_error': None}
+        clock = getattr(self.brain, 'clock', None)
+        if clock is None:
+            return empty
+        try:
+            return dict(clock.snapshot())
+        except Exception:
+            return empty
+
     def _web_snapshot(self, light=False):
         b = self.brain
         s = self.settings
@@ -394,6 +407,7 @@ class PanelMixin:
                 'bubble': (b.bubble or {}).get('text') or '',
                 'face': b.face,
                 'timer': timer,
+                'clock': self._web_clock_snapshot(),
                 'monitors': int(getattr(b, 'monitors', 1) or 1),
                 'chat_models': list(b.chat_models or []),
                 'mics': list(b.mics or []),

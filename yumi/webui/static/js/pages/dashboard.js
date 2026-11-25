@@ -101,6 +101,43 @@ export function render(view, ctx) {
 
   view.append(el('div', { class: 'grid two', style: { marginTop: '14px' } }, timerCard, nowCard));
 
+  // ---------------------------------------------------------------- internal clock (read-only)
+  const clockJobs = el('div', { class: 'card-hint', text: '—' });
+  const clockNext = el('div', { class: 'card-hint', text: '—' });
+  const clockLast = el('div', { class: 'card-hint', text: '—' });
+  const clockError = el('div', { class: 'card-hint', text: '' });
+  const clockCard = el('div', { class: 'card', style: { marginTop: '14px' } },
+    el('h3', { text: lang() === 'ru' ? 'Внутренние часы' : 'Internal clock' }),
+    clockJobs, clockNext, clockLast, clockError,
+    el('p', {
+      class: 'card-hint',
+      text: lang() === 'ru'
+        ? 'Служба времени Юми; задач тут не добавляют.'
+        : 'Yumi’s time service; jobs are not edited here.',
+    }));
+  view.append(clockCard);
+
+  function fmtClockTime(stamp) {
+    if (!stamp) return '—';
+    const d = new Date(Number(stamp) * 1000);
+    if (Number.isNaN(d.getTime())) return '—';
+    return d.toLocaleTimeString(lang() === 'ru' ? 'ru-RU' : 'en-GB', {
+      hour: '2-digit', minute: '2-digit',
+    });
+  }
+
+  function drawClock(clock) {
+    const jobs = Number(clock?.jobs_active) || 0;
+    const kept = Number(clock?.jobs_persisted) || 0;
+    clockJobs.textContent = lang() === 'ru'
+      ? `задач: ${jobs} · сохраняемых: ${kept}`
+      : `jobs: ${jobs} · persisted: ${kept}`;
+    clockNext.textContent = `${lang() === 'ru' ? 'ближайшие' : 'next'}: ${fmtClockTime(clock?.next_due_at)}`;
+    clockLast.textContent = `${lang() === 'ru' ? 'последнее срабатывание' : 'last fired'}: ${fmtClockTime(clock?.last_fired_at)}`;
+    clockError.textContent = clock?.last_error
+      ? `${lang() === 'ru' ? 'ошибка' : 'error'}: ${clock.last_error}` : '';
+  }
+
   function musicBtn(cmd, iconName, title) {
     const b = el('button', { class: 'btn btn-small btn-icon', type: 'button', title: title || cmd });
     b.append(icon(iconName, 13));
@@ -351,6 +388,7 @@ export function render(view, ctx) {
       timerAt = Date.now();
     }
     drawTimer();
+    drawClock(runtime.clock);
 
     if (runtime.bubble) bubble.textContent = runtime.bubble;
     else bubble.textContent = settings.sassy

@@ -224,6 +224,12 @@ pending_permission}`. `confirm: true` (совместимость) или неп
 `requires_confirmation`, `entities`) проходят через `_clean_actions()` в `ui/webpanel.py` —
 он же используется и при записи `actions.json` из конфигов, и при PUT `/api/actions`.
 
+`runtime.clock` — read-only статус внутренних часов Юми: `enabled`, `now_wall`,
+`jobs_active`, `jobs_persisted`, `next_due_at`, `last_fired_at`, `last_error`.
+Task payload'ов в снимке нет; мутирующих HTTP-роутов у часов нет, как и редактора
+задач. Карточка «Внутренние часы» на дашборде только показывает эти поля; в GTK
+эквивалент — строка в главном меню («Часы: N задач, ближайшие HH:MM»).
+
 Ещё три поля снимка: `runtime.voice_state` (состояние микрофона), `runtime.models_check`
 (кэш явной проверки моделей, без хэширования на тике) и `runtime.doctor` (только короткое
 саммари последнего запуска). Полный отчёт живёт в ответе `POST /api/doctor` и в SSE
