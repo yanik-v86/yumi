@@ -1,9 +1,21 @@
 # Задачи: пользовательские интенты (свои команды и фразы)
 
 Статус: **список задач к реализации, код не изменён**.  
-Дата: 2026-11-21.  
+Дата: 2026-11-25 (уточнено: без GTK-редактора).  
 Связанный документ: `docs/handoff-user-intents.md` (архитектура, контракты, риски).  
-Правило проекта: см. `AGENTS.md` — каждая возможность должна работать **и в GTK, и в веб-панели**.
+Правило проекта: см. `AGENTS.md` — каждая возможность обычно должна работать **и в GTK, и в веб-панели**.
+
+## Решение по GTK (исключение из правила проекта)
+
+Управление пользовательскими интентами делается **только в веб-панели и через ручное
+редактирование `user_intents.json`**. Отдельный GTK-редактор не создаётся — это осознанное
+решение владельца, а не пропуск.
+
+- В GTK сохраняется только **исполнение** пользовательских интентов при распознавании фраз.
+- Источник истины — один и тот же JSON-файл; панель — полноценный CRUD с валидацией,
+  файл — офлайн/аварийный путь без запуска панели.
+- Эквивалент в панели: список, создание, правка, удаление, импорт, экспорт и «Проверить фразу».
+- Никаких скрытых GTK-форм, дублирующих логику валидации, не добавляем.
 
 ## Легенда
 
@@ -19,20 +31,33 @@
 ### T-01. Хранилище и схема пользовательских интентов (P0)
 
 **Зависит от:** —  
-**Файлы:** `yumi/config.py` (новый `INTENTS_FILE`, load/save-хелперы), `yumi/user_intents.py` (новый), `tests/test_user_intents.py` (новый).
+**Файлы:** `yumi/config.py` (только путь `INTENTS_FILE`), `yumi/user_intents.py` (новый), `tests/test_user_intents.py` (новый).
 
 **Что сделать:**
-- Добавить `INTENTS_FILE = USER_CONFIG_DIR / "user_intents.json"` рядом с `ACTIONS_FILE`.
-- Реализовать `load/save` с атомарной записью (по образцу `config.save_actions()`) и поддержкой `YUMI_CONFIG_DIR` для тестов.
-- Определить схему: `{version: 1, intents: [...]}`; поля `id`, `name`, `enabled`, `phrases`, `keywords`, `action{type,value}`, `speak`, `priority`, `requires_confirmation`, `created_at`, `updated_at`.
-- `validate(payload)`: уникальные `id` (`[a-zA-Z0-9_-]{1,64}`), непустые `phrases` или `keywords`, разрешённые `action.type` (`command|url|say`), ограничения длин, `url` только `http(s)://`.
-- `import_json(text)` — fail-fast: при ошибке не трогать существующий файл.
-- `export_json(data)` — стабильный формат с indentation для ручного редактирования.
+- Добавить `INTENTS_FILE = CONFIG_DIR / "user_intents.json"` рядом с `ACTIONS_FILE`.
+  Переменной `USER_CONFIG_DIR` / `YUMI_CONFIG_DIR` в коде нет: конфиг — это
+  `CONFIG_DIR = XDG_CONFIG_HOME/yumi` (`yumi/config.py:12-16`). Тесты используют временный
+  `XDG_CONFIG_HOME` либо monkeypatch `config.CONFIG_DIR` и `user_intents.INTENTS_FILE`.
+- Всю логику держать в `yumi/user_intents.py`: `load/save/validate/import_json/export_json`.
+  `config.py` не может заниматься записью — только константой пути.
+- Запись атомарная через `tmp` + `replace`, как в `config.save_actions()`
+  (`yumi/config.py:374-382`). Блокировки в текущем `save_actions()` нет — не утверждать обратного.
+- Схема: `{version: 1, revision: N, intents: [...]}`. `version` — версия формата,
+  `revision` — счётчик для конфликтов при `PUT` из панели (см. T-06). Поля интента:
+  `id`, `name`, `enabled`, `phrases`, `keywords`, `action{type,value}`, `speak`, `priority`,
+  `requires_confirmation`, `created_at`, `updated_at`.
+- `validate(payload)`: уникальные `id` (`[a-zA-Z0-9_-]{1,64}`), непустые `phrases` или
+  `keywords`, разрешённые `action.type` (`command|url|say`), ограничения длин
+  (≤50 фраз/ключевых слов, строка ≤200, `command` ≤1000), `url` только `http(s)://`.
+- `requires_confirmation` по умолчанию: `true` для `command`, `false` для `url` и `say`.
+  Для `say` реплика берётся из `speak`, а `action.value` — только если `speak` пуст.
+- `import_json(text)` — fail-fast: при ошибке существующий файл не трогается.
+- `export_json(data)` — стабильный формат с отступом для ручного редактирования.
 
 **Критерии приёмки:**
-- Полный цикл save→load→export→import без потери данных.
+- Полный цикл save→load→export→import без потери данных, `revision` инкрементится.
 - Некорректный JSON / дубли id / пустые фразы / `javascript:` URL отклоняются.
-- Тесты используют временный `YUMI_CONFIG_DIR`, не трогают домашний конфиг.
+- Тесты не трогают домашний конфиг и не создают GTK-зависимостей.
 
 ---
 
@@ -42,14 +67,24 @@
 **Файлы:** `yumi/user_intents.py`, `yumi/nlu.py`, `tests/test_user_intents.py`, `tests/test_nlu.py`.
 
 **Что сделать:**
-- `to_nlu_entries(user_intents)` — преобразование в формат, понятный `nlu.recognize()`.
-- Аккуратно снять ограничение `nlu.recognize()`, требующее `command` или `url`, не сломав вызовы из `Brain.voice_intent()` и `extras.py`. Для `say`/`skill` либо расширить `payload`, либо передавать валидную заглушку.
-- `match(text, intents) -> IntentResult | None` с уважением `enabled` и `priority`.
+- `to_nlu_entries(user_intents)` — преобразование в **плоский** формат, который уже понимает
+  `nlu.recognize()`: `phrases`, `keywords`, `priority`, `speak`, `id`; для `command`/`url`
+  пробрасываются одноимённые поля. Для `say` добавляется маркер `user_intent` — фиктивную
+  команду в shell передавать нельзя.
+- Аккуратно расширить фильтр в `nlu.recognize()` (`yumi/nlu.py:233`) с
+  `command or url` до `command or url or user_intent`, и научить `_intent_name()`
+  (`nlu.py:59`) понимать маркер. Старый контракт `match()` и все вызовы из
+  `Brain.voice_intent()`/`addressing.py` остаются прежними. `yumi/intents.py` не трогаем:
+  ONNX по-прежнему получает только записи из `actions.json`.
+- `match(text, intents) -> IntentResult | None` уважает `enabled` и `priority`.
+  Важно: в текущем коде `priority` — только разрешение ничьи после score
+  (`nlu.py:251-259`, `tests/test_nlu.py:102`), а не абсолютный приоритет. Эту семантику
+  зафиксировать тестом и не менять.
 - Публичный `test_phrase(text)` для кнопки «Проверить фразу» — **без выполнения действия**.
 
 **Критерии приёмки:**
-- Точная фраза, keyword и partial match дают ожидаемый score (1.0 / 0.8 / 0.6).
-- Отключённые интенты не матчатся.
+- Точная фраза, keyword и fuzzy-совпадение дают 1.0 / 0.8 / 0.6.
+- Отключённые интенты не матчатся; `say` матчится без фиктивной команды.
 - Существующие `tests/test_nlu.py` зелёные без изменений в их ожиданиях.
 
 ---
@@ -60,13 +95,13 @@
 **Файлы:** `yumi/user_intents.py`, `tests/test_user_intents.py`.
 
 **Что сделать:**
-- `from_actions(actions)` — конвертация записей кнопок в пользовательские интенты (`command`/`url`, `phrases`, `keywords`, `speak`, `priority`, `requires_confirmation`).
-- Никакой авто-миграции при старте: только явный вызов из UI/API.
-- Оригинальный `actions.json` не удаляется и не перезаписывается.
+- `from_actions(actions)` — конвертация записей кнопок (`label`/`label_ru` → `name`,
+  `command`/`url`, `phrases`, `keywords`, `speak`, `priority`, `requires_confirmation`).
+- Никакой авто-миграции при старте: только явный вызов из панели или из пользовательского
+  скрипта. Оригинальный `actions.json` не удаляется и не перезаписывается.
 
 **Критерии приёмки:**
-- Все существующие поля кнопок корректно маппятся; id дедуплицируются.
-- Повторный импорт не создаёт дубликаты.
+- Все поля кнопок корректно маппятся; id дедуплицируются; повторный импорт не создаёт дубли.
 
 ---
 
@@ -78,10 +113,14 @@
 **Файлы:** `yumi/config.py`, `yumi/webpanel/catalog.py`, `tests/test_webpanel.py`.
 
 **Что сделать:**
-- Добавить `user_intents: true` в `DEFAULT_SETTINGS`.
-- При желании `user_intents_confirm: false` (per-intent `requires_confirmation` всё равно имеет приоритет).
-- В `catalog.py`: `TITLES`, `HINTS`, `KEY_SECTION` (секция «Голос»/«Интенты»), при необходимости `TYPES`/`CHOICES`.
-- Новые строки ru/en в `config.UI`.
+- Добавить `user_intents: true` в `DEFAULT_SETTINGS`. Отдельного `user_intents_confirm` не нужно:
+  подтверждение решается per-intent полем `requires_confirmation`.
+- В `catalog.py`: `TITLES`, `HINTS`, `KEY_SECTION` — в существующую секцию `mind`
+  (`catalog.py:80`, `:102-146`). Новая секция «Интенты» не заводится: для неё потребовалось бы
+  править ещё `SECTIONS` и `SECTION_PAGE`.
+- Новые строки ru/en добавляются только в `config.UI`, если они нужны в самой Юми.
+- `_web_apply_settings()` отдельной ветки не требует: `Brain` читает флаг на каждую фразу.
+  Если появится кэш настроек — инвалидировать его здесь же.
 
 **Критерии приёмки:**
 - `python3 tests/test_webpanel.py` проходит: каждый ключ `DEFAULT_SETTINGS` есть в схеме.
@@ -89,23 +128,42 @@
 
 ---
 
-### T-05. Интеграция в Brain: приоритет, выполнение, горячая перезагрузка (P0)
+### T-05. Интеграция в Brain: порядок, выполнение, горячая перезагрузка (P0)
 
 **Зависит от:** T-02, T-04  
-**Файлы:** `yumi/brain.py`, `yumi/extras.py` (только если переиспользуем механизм горячей перезагрузки), `tests/test_voice_intent.py`, `tests/test_user_intents.py`.
+**Файлы:** `yumi/brain.py`, `yumi/user_intents.py`, `tests/test_voice_intent.py`, `tests/test_user_intents.py`.
 
 **Что сделать:**
-- Загружать `user_intents.json` в `Brain.__init__`, кэшировать и обновлять по mtime (как `extras.actions_check()`).
-- В `heard_text()` вызывать сопоставление пользовательских интентов **после built-in навыков** и перед/сразу после `voice_intent()` + ONNX fallback. Зафиксировать порядок: `built-in → user_intents → actions.json → ONNX`.
-- Выполнение действий переиспользовать существующие пути: `command` (subprocess/shell), `url` (webbrowser), `say` (TTS). Не выполнять действие в `test_phrase()`.
-- `requires_confirmation` — через существующий механизм подтверждения.
-- Уважать `user_intents = false` (тогда слой полностью выключен).
+- Загружать `user_intents.json`, кэшировать и обновлять по `mtime`/`revision`
+  (по образцу `extras.actions_check()`, `yumi/extras.py:322-331`), без перезапуска.
+- **Зафиксированный порядок в `heard_text()`** (по текущему коду,
+  `yumi/brain.py:1659-1748`) — существующие блоки не переставляем:
+
+  1. stop/ожидание подтверждения/заметка — как сейчас;
+  2. встроенный music-control (`brain.py:1663-1672`) — как сейчас;
+  3. `voice_intent()` = `actions.json` + ONNX fallback внутри `nlu.recognize()`
+     (`brain.py:1673`, `nlu.py:238-249`) — как сейчас;
+  4. notes / время / погода / шутка / параметры / имя (`brain.py:1686-1747`) — как сейчас;
+  5. **новый слой пользовательских интентов** — сразу после п. 4, до `fallback`/chat;
+  6. `addressing` + чат (`brain.py:1748+`) — как сейчас.
+
+  Так пользовательский интент не перехватывает встроенные навыки и не ломает кнопки/ONNX.
+  При конфликте с кнопкой из `actions.json` побеждает кнопка — это честно отражается в подсказке панели.
+- Матчить через `nlu.recognize(text, to_nlu_entries(...), use_intents=False, min_confidence=line)`
+  и по `text`, и по `alt`. ONNX внутри нового слоя отключён: он остаётся только в п. 3.
+- Выполнение переиспользовать существующие пути: `command` → `('run', ...)`, `url` → `('url', ...)`,
+  `say` → `say_text()`. `requires_confirmation` — через существующий
+  `pending_permission`/`permissions` (`brain.py:1883-1908`). Никакого выполнения в `test_phrase()`.
+- Уважать `user_intents = false` (слой полностью выключен).
+- Передавать фразы пользовательских интентов в `addressing.hints_from()` вместе с
+  `self.custom` (`yumi/addressing.py:105-115`), чтобы «уши» слышали их и в fallback-режиме.
 
 **Критерии приёмки:**
-- Новая фраза находится и выполняется без перезапуска Юми (мок TTS/команд в тестах).
-- Пользовательский интент **не перехватывает** встроенные навыки (music/notes/time/weather/joke/params).
+- Новая фраза находится и выполняется без перезапуска Юми (моки TTS/команд в тестах).
+- Встроенные навыки, кнопки и ONNX fallback ведут себя как раньше; приоритет зафиксирован тестом.
 - При выключенной настройке пользовательские интенты игнорируются.
-- ONNX fallback работает как раньше.
+- Для `command` по умолчанию спрашивается подтверждение; для `say` конфликт `speak`/`value`
+  решён в пользу `speak`.
 
 ---
 
@@ -117,75 +175,73 @@
 **Файлы:** `yumi/ui/bridge.py`, `yumi/ui/webpanel.py`, `yumi/webpanel/server.py`, `tests/test_webpanel.py`.
 
 **Что сделать:**
-- Методы `WebBridge`: `user_intents_get/put/import/export/test`.
-- Методы `PanelMixin`: `user_intents_get()` (list + version + mtime), `user_intents_put(payload)`, `user_intents_import(payload)`, `user_intents_export()`, `user_intents_test(text)`. Все вызовы — через `App._web_call` → `GLib.idle_add`.
+- Методы `WebBridge`: `user_intents_get/put/import/export/test` — все через `_on()`
+  → `App._web_call` → `GLib.idle_add` (`bridge.py:17-18`).
+- Методы `PanelMixin` в `yumi/ui/webpanel.py` с теми же именами; валидация — только в
+  `user_intents.py`.
 - Роуты в `server.py`:
-  - `GET /api/user-intents`
-  - `PUT /api/user-intents`
-  - `POST /api/user-intents/import` (multipart-файл **или** JSON-тело)
-  - `GET /api/user-intents/export` (attachment, `application/json`)
-  - `POST /api/user-intents/test` (`{text}` → `{matched, intent, score, source}`)
-- CSRF на всех POST/PUT, аудит изменений (без содержимого команд в логах).
-- **Не использовать** `/api/upload` как импорт: там нет валидации схемы.
+  - `GET /api/user-intents` → `{version, revision, mtime, intents}`;
+  - `PUT /api/user-intents` — полная замена, обязателен `revision`, при расхождении `409`;
+  - `POST /api/user-intents/import` — multipart-файл **или** JSON-тело, валидация до записи;
+  - `GET /api/user-intents/export` — `application/json` + `Content-Disposition: attachment`;
+  - `POST /api/user-intents/test` → `{matched, intent, score, source}`.
+- CSRF/origin уже проверяются централизованно для всех `POST/PUT/PATCH/DELETE`
+  (`server.py:364-368`) — отдельной проверки в роутах не добавляем. Аудит изменений ведём
+  без содержимого команд.
+- **Не использовать** `/api/upload` как импорт: он сохраняет файл в `CACHE_DIR/uploads`
+  без проверки схемы (`server.py:703-720`).
+- В `tests/test_webpanel.py` расширить stub `Bridge` новыми методами — сейчас он не знает
+  пользовательских интентов.
 
 **Критерии приёмки:**
-- `tests/test_webpanel.py`: авторизованный GET/PUT/import/export/test работает.
-- Без CSRF-токена POST/PUT → 403.
-- Invalid import → 400 и файл не изменён.
+- Авторизованные GET/PUT/import/export/test работают; без CSRF → 403.
+- Invalid import → 400 и файл не изменён; конфликт `revision` → 409.
 - Export отдаёт корректные `Content-Type`/`Content-Disposition`.
+- `test` ничего не выполняет и не меняет файл.
 
 ---
 
-### T-07. GTK-редактор пользовательских интентов (P0)
-
-**Зависит от:** T-05, T-06  
-**Файлы:** `yumi/brain.py` (меню), `yumi/extras.py` или новый `yumi/ui/user_intents_dialog.py`, `yumi/config.py` (строки UI).
-
-**Что сделать:**
-- Пункт меню «Свои интенты» рядом с «Свои кнопки».
-- Диалог: список карточек, добавление/редактирование/удаление, поля name/phrases/keywords/action/speak/priority/confirmation, кнопка «Проверить фразу».
-- Импорт/экспорт файла через GTK-диалог выбора файла (вызывает те же bridge-методы).
-- После сохранения — немедленное обновление кэша в `Brain` (mtime или прямой вызов).
-
-**Критерии приёмки:**
-- Из GTK можно создать, изменить, удалить, импортировать, экспортировать и протестировать интент.
-- Изменения сразу видны в панели и наоборот (общее хранилище).
-- Все новые строки — `config.UI` ru/en.
-
----
-
-### T-08. Страница веб-панели и JS API-клиент (P0)
+### T-07. Страница веб-панели и JS API-клиент (P0)
 
 **Зависит от:** T-06, T-04  
-**Файлы:** `yumi/webpanel/catalog.py`, `yumi/webui/static/js/api.js`, `yumi/webui/static/js/pages/user-intents.js` (new), `yumi/webui/static/js/app.js`, `yumi/webui/static/css/app.css` (при нужде).
+**Файлы:** `yumi/webpanel/catalog.py`, `yumi/webui/static/js/api.js`,
+`yumi/webui/static/js/pages/user-intents.js` (новый), `yumi/webui/static/js/app.js`,
+`tests/test_webpanel.py`, CSS — при нужде.
 
 **Что сделать:**
-- `PAGES["user-intents"]` с заголовками ru/en и иконкой.
-- `api.userIntentsGet/Put/Import/Export/Test()` в `api.js`.
-- `pages/user-intents.js` с `render(view, ctx)`: список, форма, textarea фраз, select `action.type`, кнопки «Проверить», «Импорт», «Экспорт», тумблер enabled.
-- UX и безопасность DOM — по образцу `pages/buttons.js`: только `createElement`/`textContent`, никакого `innerHTML` с данными.
-- Lazy import в `app.js`.
-- Переключатель настройки `user_intents` — через общую схему настроек (страница Settings), отдельный UI не нужен.
+- `PAGES["user-intents"]` с заголовками ru/en и иконкой рядом с `buttons`.
+  Отдельный раздел настроек не нужен: тумблер `user_intents` живёт в Settings → Mind.
+- `api.userIntentsGet/Put/Import/Export/Test()` в `api.js` (сейчас там нет даже
+  `actionsGet/Put` — страницы вызывают `api.get/put('/api/actions')` напрямую).
+- `pages/user-intents.js` с `render(view, ctx)`: список карточек, форма, textarea фраз,
+  `select` для `action.type`, кнопки «Проверить», «Импорт», «Экспорт», тумблер `enabled`,
+  скрытое поле `revision`.
+- DOM только через `createElement`/`textContent`, как в `pages/buttons.js`; никакого
+  `innerHTML` с данными. Lazy import в `app.js` (карта `PAGES` в `app.js:7-22`).
+- Обновить жёсткую проверку в `tests/test_webpanel.py:367-370`: страниц станет 16,
+  в множество id добавится `user-intents`.
 
 **Критерии приёмки:**
-- Страница открывается по hash `#/user-intents`, работает на ru/en.
-- CRUD + import/export + test фразы работают через API.
-- `node --input-type=module --check < file.js` проходит для всех JS.
+- Страница открывается по `#/user-intents`, работает на ru/en.
+- CRUD + import/export + test фразы идут через API; `node --input-type=module --check` зелёный.
 
 ---
 
 ## Фаза 4 — завершение
 
-### T-09. Тесты, smoke, документация (P0)
+### T-08. Тесты, smoke, документация (P0)
 
-**Зависит от:** T-01..T-08  
-**Файлы:** `tests/smoke_webpanel.sh` (или новый `tests/smoke_user_intents.sh`), `README.ru.md`, `README.md`, `docs/handoff-web-panel.md`, `docs/handoff-user-intents.md`.
+**Зависит от:** T-01..T-07  
+**Файлы:** `tests/smoke_user_intents.sh` (новый; готовых smoke-скриптов в репозитории нет),
+`README.ru.md`, `README.md`, `docs/handoff-web-panel.md`, `docs/handoff-user-intents.md`.
 
 **Что сделать:**
-- Добавить smoke-сценарий: создать интент через API → проверить, что `Brain` видит его → test phrase → export → import → delete.
-- Обновить README (ru/en): как создавать свои интенты, формат файла, импорт/экспорт, что это не ONNX.
-- В `docs/handoff-web-panel.md` дописать новые роуты и страницу.
-- Отметить завершённые пункты в `docs/handoff-user-intents.md` (Definition of done).
+- Smoke-сценарий без GTK: создать интент через API → поправить `user_intents.json` руками →
+  убедиться, что `Brain` подхватил его по mtime → test phrase → export → import → delete.
+- Обновить README (ru/en): как создавать интенты в панели и вручную в файле, формат JSON,
+  импорт/экспорт, что это правила `nlu`, а не дообучение ONNX, и что GTK-редактора нет.
+- В `docs/handoff-web-panel.md` дописать новые роуты и страницу (сейчас там 15 страниц).
+- Отметить завершённые пункты в `docs/handoff-user-intents.md`.
 
 **Критерии приёмки:**
 - Весь набор зелёный:
@@ -194,7 +250,8 @@
 python3 tests/test_webpanel.py
 python3 tests/test_voice_intent.py
 python3 tests/test_nlu.py
-python3 -m py_compile yumi/webpanel/*.py yumi/config.py yumi/brain.py yumi/ui/*.py
+python3 tests/test_user_intents.py
+python3 -m py_compile yumi/webpanel/*.py yumi/config.py yumi/brain.py yumi/ui/*.py yumi/user_intents.py
 for f in yumi/webui/static/js/*.js yumi/webui/static/js/pages/*.js; do
   node --input-type=module --check < "$f" || echo "FAIL $f"
 done
@@ -203,37 +260,41 @@ pytest tests/ -q
 
 ---
 
-### T-10 (P2, опционально). Действие типа `skill` и ONNX-дообучение из UI
+### T-09 (P2, опционально). Действие `skill` и ONNX-дообучение из панели
 
-**Зависит от:** T-05, T-09  
-**Файлы:** `yumi/user_intents.py`, `yumi/brain.py`, `tools/intents_train.py`, UI-формы.
+**Зависит от:** T-05, T-08  
+**Файлы:** `yumi/user_intents.py`, `yumi/brain.py`, `tools/intents_train.py`, веб-страница/API.
 
 **Что сделать:**
-- Белый список внутренних навыков (`id` существующих методов `Brain`) для `action.type = "skill"`.
-- Кнопка «Обучить классификатор на моих фразах» (добавляет intents в `data/intents-corpus.json` и запускает `tools/intents_train.py`). Осторожно: операция долгая, только по явному действию пользователя.
+- Белый список внутренних навыков (id существующих методов `Brain`) для `action.type = "skill"`.
+- Кнопка «Обучить классификатор на моих фразах» **только в веб-панели**. Адаптер должен
+  превращать интенты в формат corpus (`label`, `phrases`): `intents_train.py` читает
+  `--corpus` и `--actions` (`tools/intents_train.py:304-305,45`), а поле `name` не равно `label`.
+  Запуск — отдельным процессом/потоком, статус виден в панели; GTK-поток не блокируется.
 
 **Критерии приёмки:**
 - `skill` не может вызвать произвольный Python.
-- Обучение не блокирует GTK-поток (отдельный поток/процесс + статус в панели).
+- Обучение не блокирует приложение и запускается только явным действием пользователя.
 
 ---
 
 ## Итоговый Definition of Done (для всех агентов)
 
-- [ ] T-01 — T-09 выполнены (T-10 по решению владельца).
-- [ ] Пользователь может создавать/редактировать/удалять/импортировать/экспортировать/тестировать интенты из GTK **и** из веб-панели.
+- [ ] T-01 — T-08 выполнены (T-09 — по решению владельца).
+- [ ] Пользователь может создавать/редактировать/удалять/импортировать/экспортировать/
+      тестировать интенты **из веб-панели** и **вручную в `user_intents.json`**. GTK-редактора нет.
 - [ ] Кастомные интенты не требуют переобучения ONNX и работают без перезапуска.
-- [ ] Базовые intents и навыки не сломаны, приоритет зафиксирован тестами.
-- [ ] Секреты/токен не утекают; CSRF/аудит на месте.
-- [ ] README (ru/en) и handoff обновлены.
-- [ ] Все проверки из T-09 зелёные.
+- [ ] Встроенные навыки, кнопки `actions.json` и ONNX fallback не сломаны; порядок зафиксирован тестами.
+- [ ] Секреты/токен не утекают; CSRF, аудит и проверка `revision` на месте.
+- [ ] README (ru/en) и оба handoff обновлены; счётчик страниц в тесте панели обновлён.
+- [ ] Все проверки из T-08 зелёные.
 
 ## Порядок передачи между агентами
 
-1. Агент A: T-01 → T-02 → T-03 (ядро + тесты). Отчитаться результатами `pytest tests/test_user_intents.py tests/test_nlu.py`.
+1. Агент A: T-01 → T-02 → T-03 (ядро + тесты). Отчитаться `pytest tests/test_user_intents.py tests/test_nlu.py`.
 2. Агент B: T-04 → T-05 (настройки + Brain). Проверить `tests/test_voice_intent.py`.
-3. Агент C: T-06 → T-08 (API + панель). Проверить `tests/test_webpanel.py` и JS syntax check.
-4. Агент D: T-07 (GTK) — можно параллельно с C, но после T-05/T-06.
-5. Агент E: T-09 (финальные тесты/доки) — после всех.
+3. Агент C: T-06 → T-07 (API + панель). Проверить `tests/test_webpanel.py` и JS syntax check.
+4. Агент D: T-08 (финальные тесты/доки/smoke) — после всех.
+5. GTK-агента нет: по решению владельца редактор в GTK не делается.
 
 При передаче всегда обновляйте статусы задач в этом файле и оставляйте коммит-ид в строке задачи.
