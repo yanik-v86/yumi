@@ -530,15 +530,25 @@ try:
               'action': {'type': 'say', 'value': 'Я бы включила, но лампы нет'},
               'speak': 'Я бы включила, но лампы нет', 'priority': 0,
               'requires_confirmation': False}
+    captured = {'id': 'news', 'name': 'Новости', 'enabled': True,
+                'phrases': ['новости'], 'keywords': [],
+                'action': {'type': 'command', 'value': 'news'},
+                'speak': 'Новости: {stdout}', 'capture': True, 'priority': 0,
+                'requires_confirmation': False}
     code, data, _ = call('PUT', '/api/user-intents',
-                         {'version': 1, 'revision': 0, 'intents': [intent]})
+                         {'version': 1, 'revision': 0, 'intents': [intent, captured]})
     assert code == 403, 'user intents without CSRF must fail'
     code, data, _ = call('PUT', '/api/user-intents',
-                         {'version': 1, 'revision': 0, 'intents': [intent]}, csrf=csrf)
+                         {'version': 1, 'revision': 0, 'intents': [intent, captured]},
+                         csrf=csrf)
     assert code == 200 and data['revision'] == 1 and data['intents'][0]['id'] == 'lamp'
+    assert data['intents'][1]['id'] == 'news' and data['intents'][1]['capture'] is True
+    assert data['intents'][0]['capture'] is False
     code, data, _ = call('POST', '/api/user-intents/test', {'text': 'сделай свет'}, csrf=csrf)
     assert code == 200 and data['matched'] and data['intent']['id'] == 'lamp'
     assert data['score'] == 1.0 and data['source'] == 'user-intents'
+    code, data, _ = call('POST', '/api/user-intents/test', {'text': 'новости'}, csrf=csrf)
+    assert code == 200 and data['matched'] and data['intent']['capture'] is True
     code, data, _ = call('POST', '/api/user-intents/test', {'text': 'совсем другое'}, csrf=csrf)
     assert code == 200 and data['matched'] is False
     code, data, _ = call('PUT', '/api/user-intents',

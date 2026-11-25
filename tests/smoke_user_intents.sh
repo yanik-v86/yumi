@@ -130,14 +130,26 @@ try:
               'phrases': ['включи лампу'], 'keywords': [],
               'action': {'type': 'command', 'value': 'noop-one'},
               'speak': '', 'priority': 0, 'requires_confirmation': False}
+    answer = {'id': 'answer', 'name': 'Ответ', 'enabled': True,
+              'phrases': ['ответь новостями'], 'keywords': [],
+              'action': {'type': 'command', 'value': 'noop-answer'},
+              'speak': 'Ответ: {stdout}', 'capture': True, 'priority': 0,
+              'requires_confirmation': False}
     code, data, _ = call('PUT', '/api/user-intents',
-                         {'version': 1, 'revision': 0, 'intents': [intent]}, csrf=csrf)
+                         {'version': 1, 'revision': 0, 'intents': [intent, answer]},
+                         csrf=csrf)
     assert code == 200 and data['revision'] == 1, (code, data)
 
     brain.requests.clear()
     assert brain.voice_user_intent('включи лампу') is True
     assert ('run', 'noop-one') in brain.requests, brain.requests
     assert brain.last_intent == 'lamp'
+
+    brain.requests.clear()
+    assert brain.voice_user_intent('ответь новостями') is True
+    assert ('run_capture', 'noop-answer', 'answer', 'Ответ: {stdout}') in brain.requests
+    assert brain.user_intent_answer('свежие заголовки', 'answer', 'Ответ: {stdout}') is True
+    assert brain.bubble['text'] == 'Ответ: свежие заголовки', brain.bubble
 
     # 2. edit the file by hand: Brain must notice the new mtime without a restart
     raw = json.loads(intents_path.read_text(encoding='utf-8'))

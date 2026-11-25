@@ -177,6 +177,28 @@ b.requests.clear()
 assert b.voice_user_intent('найди мотыльков') is True
 assert ('url', 'https://example.org/?q=%D0%BC%D0%BE%D1%82%D1%8B%D0%BB%D1%8C%D0%BA%D0%BE%D0%B2') in b.requests
 
+# a captured command answers in the bubble and through her normal voice path
+CAPTURE = dict(RULE, id='news', name='Новости', phrases=['новости'], keywords=[],
+               action={'type': 'command', 'value': 'news'},
+               speak='Новости: {stdout}', capture=True, requires_confirmation=False)
+b = intents_brain([CAPTURE])
+b.requests.clear()
+assert b.voice_user_intent('новости') is True
+assert ('run_capture', 'news', 'news', 'Новости: {stdout}') in b.requests, b.requests
+assert not any(r[0] in ('run', 'voice') for r in b.requests), 'no early bubble or command'
+assert b.user_intent_answer('Мир: новость', 'news', 'Новости: {stdout}') is True
+assert b.bubble['text'] == 'Новости: Мир: новость', b.bubble
+assert any(r[0] == 'voice' and r[5] == 'Новости: Мир: новость' for r in b.requests)
+
+# the same captured answer still waits for «да» when confirmation is on
+b = intents_brain([dict(CAPTURE, requires_confirmation=True)])
+b.requests.clear()
+assert b.voice_user_intent('новости') is True
+assert not any(r[0] == 'run_capture' for r in b.requests)
+b.heard_text('да')
+assert ('run_capture', 'news', 'news', 'Новости: {stdout}') in b.requests, b.requests
+assert b.user_intent_answer('Мир: новость', 'news', 'Новости: {stdout}', failed=True) is True
+
 # the setting turns the whole layer off
 b = intents_brain([dict(RULE, requires_confirmation=False)], user_intents=False)
 b.requests.clear()

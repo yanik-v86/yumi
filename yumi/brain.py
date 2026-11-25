@@ -41,6 +41,7 @@ MAX_CARDS = 6
 ROW_H = 13                  # menu row, interface pixels
 SIT_SEAT = 120              # row of the sit sprite that rests on the box top
 BOX_TOP = 4                 # first row of the box sprite's lid
+MAX_CAPTURED_ANSWER = 4000  # a captured intent answer cannot fill the bubble forever
 
 
 class Spring:
@@ -1858,7 +1859,7 @@ class Brain(Extras):
         speak = str(action.get('speak') or '')
         url = str(action.get('url') or '')
         for key, value in slots.items():
-            if not isinstance(value, (str, int, float)):
+            if not isinstance(value, (str, int, float)) or str(key) == 'stdout':
                 continue
             marker = '{' + str(key) + '}'
             speak = speak.replace(marker, str(value))
@@ -1869,12 +1870,41 @@ class Brain(Extras):
             if speak:
                 self.say_text(speak)
             return
+        capture = bool(action.get('capture')) and bool(action.get('command'))
         if url:
             self.requests.append(('url', url))
+        elif capture:
+            # the answer is not known yet: wait for the GTK side to run the
+            # command off-thread, then user_intent_answer() shows and voices it
+            self.requests.append(('run_capture', action['command'],
+                                  str(action.get('id') or ''), speak))
         else:
             self.requests.append(('run', action['command']))
-        if speak:
+        if speak and not capture:
             self.say_text(speak)
+
+    def user_intent_answer(self, output, intent_id='', speak='', failed=False):
+        """a captured user-intent command answered: the same bubble and voice
+        as any other line of hers.  ``{stdout}`` takes the command's answer; a
+        reply without that marker is prefixed to it."""
+        self.thinking = False
+        text = ' '.join(str(output or '').split())
+        if len(text) > MAX_CAPTURED_ANSWER:
+            text = text[:MAX_CAPTURED_ANSWER].rsplit(' ', 1)[0] + '…'
+        template = ' '.join(str(speak or '').split())
+        if not text:
+            if failed:
+                _mind_log(f'user intent answer {intent_id}: no output')
+                return self.say_text(tr(self.settings, 'intent_no_answer'))
+            return self.say_text(template) if template and '{stdout}' not in template else False
+        if '{stdout}' in template:
+            answer = template.replace('{stdout}', text)
+        elif template:
+            answer = f'{template} {text}'
+        else:
+            answer = text
+        _mind_log(f'user intent answer {intent_id}')
+        return self.say_text(answer)
 
     # ---- permissions: ALLOW once / ALWAYS (click only) / DENY ----------------
     @property
@@ -2001,7 +2031,8 @@ class Brain(Extras):
         """your own rules from user_intents.json, after the built-in skills and
         the buttons from actions.json.  A whole phrase (1.00), a keyword (0.80)
         or an ears' slip (0.60) fires; a command may ask first, a url opens and
-        a "say" rule only speaks.  No restart and no ONNX training needed."""
+        a "say" rule only speaks.  A command with ``capture`` answers with its
+        stdout in the bubble and out loud.  No restart and no ONNX training needed."""
         if not self.settings.get('user_intents', True):
             return False
         data = self.user_intents_check()
@@ -2032,7 +2063,8 @@ class Brain(Extras):
         slots = self._voice_slots(hit)
         run = {'id': hit.intent, 'speak': speak,
                'command': value if kind == 'command' else '',
-               'url': value if kind == 'url' else ''}
+               'url': value if kind == 'url' else '',
+               'capture': kind == 'command' and bool(item.get('capture'))}
         if kind == 'say':
             run['_user_intent_say'] = True
         if item.get('requires_confirmation') and not self.pending_permission:

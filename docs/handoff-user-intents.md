@@ -109,6 +109,7 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
       "keywords": ["свет", "лампа"],
       "action": {"type": "command", "value": "python3 /home/user/scripts/lights.py on"},
       "speak": "Включаю свет",
+      "capture": false,
       "priority": 10,
       "requires_confirmation": true,
       "created_at": "2026-11-25T12:00:00Z",
@@ -123,6 +124,8 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
 - `action.type`: `command`, `url`, `say`. `skill` — только в T-09 и только по белому списку.
 - `requires_confirmation` по умолчанию `true` для `command`, `false` для `url`/`say`.
 - Для `say` говорится `speak`; `action.value` используется только если `speak` пуст.
+- `capture: true` разрешён только для `command`: её stdout подставляется в `{stdout}` внутри
+  `speak` (или приписывается к реплике без маркера) и уходит в обычный `say_text()`.
 - `url` — только `http(s)://`. Ограничения: ≤50 фраз/keywords, строка ≤200, `command` ≤1000,
   `id` — `[a-zA-Z0-9_-]{1,64}`.
 
@@ -136,8 +139,8 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
 - `load/save` с атомарной записью `tmp` + `replace` (без мнимой блокировки);
 - `validate(payload)` — схема, уникальность id, длины, safety-проверки;
 - `to_nlu_entries(intents)` — плоские записи для `nlu.recognize()`: `phrases`, `keywords`,
-  `priority`, `speak`, `id`; `command`/`url` — для одноимённых типов; маркер `user_intent` —
-  для `say`, чтобы в shell не ушла фиктивная команда;
+  `priority`, `speak`, `id`, `capture`; `command`/`url` — для одноимённых типов; маркер
+  `user_intent` — для `say`, чтобы в shell не ушла фиктивная команда;
 - `match(text, intents)` и `test_phrase(text)` (без выполнения);
 - `from_actions(actions)` — конвертация кнопок;
 - `import_json(text)` / `export_json(data)` — fail-fast импорт, стабильный экспорт.
@@ -162,7 +165,8 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
   Если фраза совпала и с кнопкой, и с пользовательским интентом, побеждает кнопка.
 - `requires_confirmation` — через существующий `pending_permission`/`permissions`
   (`brain.py:1883-1908`); target для `say` — текст реплики.
-- `command` → `('run', ...)`, `url` → `('url', ...)`, `say` → `say_text()`; новых путей не изобретаем.
+- `command` → `('run', ...)`, `url` → `('url', ...)`, `say` → `say_text()`.
+- `capture` → `('run_capture', command, intent_id, speak)`: GTK-поток запускает команду в daemon-потоке (`App.run_capture`), ждёт stdout и через `GLib.idle_add` вызывает `Brain.user_intent_answer()`, который показывает и озвучивает ответ через `say_text()`. `\n` в выводе схлопываются в пробелы, ответ обрезается до `MAX_CAPTURED_ANSWER`.
 - Флаг `user_intents = false` выключает слой полностью.
 - Фразы пользовательских интентов добавить в `addressing.hints_from()` вместе с `self.custom`.
 
@@ -185,8 +189,9 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
 
 Новая страница `user-intents` (`catalog.PAGES`, lazy import в `app.js`, `render(view, ctx)`):
 список карточек, форма, textarea фраз, select `action.type`, кнопки «Проверить» / «Импорт» /
-«Экспорт», тумблер `enabled`, скрытое поле `revision`. UX и DOM-безопасность — по образцу
-`buttons.js`: только `createElement`/`textContent`.
+«Экспорт», тумблеры `enabled`, `requires_confirmation` и `capture` (только для `command`),
+скрытое поле `revision`. Подсказка у `speak` объясняет `{stdout}`. UX и DOM-безопасность —
+по образцу `buttons.js`: только `createElement`/`textContent`.
 
 `api.js`: `userIntentsGet/Put/Import/Export/Test`.
 
@@ -206,6 +211,9 @@ CSRF/origin проверяются общим кодом сервера (`server
 - Команды остаются действиями самого пользователя, но значения `command` не пишутся в аудит
   и не показываются как обычный текст без явного намерения.
 - Импорт не выполняет команды; подтверждение по умолчанию для `command` снижает риск.
+- Captured-команда выполняется тем же пользовательским кодом, что и обычная; её stdout
+  становится репликой Юми, но stderr и сам текст команды в логи/аудит не идут. Лимит ответа —
+  `MAX_CAPTURED_ANSWER`, таймаут потока — 30 с.
 - `url` — только `http(s)://`, `file://` не разрешаем.
 - Ограничения длин — см. §3.1.
 - Аудит импорта/экспорта/изменений — без содержимого команд.
@@ -232,7 +240,8 @@ GTK-этапа нет.
   `revision`, scoring `1.0/0.8/0.6`, `enabled`, `priority` как тай-брейк, горячая перезагрузка.
 - `tests/test_webpanel.py`: новые роуты, CSRF, схема, `revision`→409, invalid import→400,
   заголовки export, `/test`; обновить stub `Bridge` и ожидание 16 страниц.
-- `tests/test_voice_intent.py` / `tests/test_nlu.py`: базовые кнопки и ONNX не сломаны.
+- `tests/test_voice_intent.py` / `tests/test_nlu.py`: базовые кнопки и ONNX не сломаны; отдельно
+  проверяется `run_capture` → `user_intent_answer()` (бабла + `voice`-запрос) и подтверждение.
 - `tests/smoke_user_intents.sh` (новый): API → ручная правка JSON → `Brain` видит →
   test phrase → export → import → delete. Без GTK.
 
@@ -260,6 +269,7 @@ GTK-этапа нет.
 - [x] GTK-редактор не добавлен; исполнение фраз в GTK работает как раньше + новый слой.
 - [x] Есть импорт/экспорт JSON через панель с валидацией и защитой от конфликта правок.
 - [x] Тест фразы показывает совпадение без выполнения действия.
+- [x] Ответ `capture`-интента появляется в бабле и озвучивается обычным путём `say_text()`.
 - [x] Кастомные интенты работают без перезапуска и без переобучения ONNX.
 - [x] Базовые навыки, кнопки и ONNX не сломаны; порядок зафиксирован тестами.
 - [x] Новые настройки и страница отражены в `catalog.py`, `api.js` и счётчике страниц теста.

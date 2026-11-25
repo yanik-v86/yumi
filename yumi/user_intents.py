@@ -8,10 +8,12 @@ pure functions, and Brain decides what to do with a hit.
       {"id": "lights_on", "name": "Свет", "enabled": true,
        "phrases": ["включи свет"], "keywords": ["свет"],
        "action": {"type": "command", "value": "lights on"},
-       "speak": "Включаю свет", "priority": 10,
+       "speak": "Включаю свет", "capture": false, "priority": 10,
        "requires_confirmation": true}]}
 
 ``version`` is the format, ``revision`` is the optimistic lock for the panel.
+A command with ``capture: true`` sends its stdout to ``{stdout}`` in ``speak``:
+Yumi then shows and voices the answer instead of just running the command.
 These rules are ordinary nlu entries, not ONNX training data: no restart and
 no classifier retraining is needed for a new phrase.
 """
@@ -150,6 +152,10 @@ def _one(raw, used):
         if not speak:
             raise ValueError(f'{ident}: a "say" intent needs a line to speak')
 
+    capture = _bool(raw.get('capture'))
+    if capture and kind != 'command':
+        raise ValueError(f'{ident}: capture needs a command action')
+
     if 'requires_confirmation' in raw:
         confirm = _bool(raw['requires_confirmation'])
     else:
@@ -159,7 +165,7 @@ def _one(raw, used):
     return {
         'id': ident, 'name': name, 'enabled': _bool(raw.get('enabled'), True),
         'phrases': phrases, 'keywords': keywords,
-        'action': {'type': kind, 'value': value}, 'speak': speak,
+        'action': {'type': kind, 'value': value}, 'speak': speak, 'capture': capture,
         'priority': _int(raw.get('priority')), 'requires_confirmation': confirm,
         'created_at': created, 'updated_at': updated,
     }
@@ -257,6 +263,7 @@ def to_nlu_entries(intents):
             'keywords': list(item.get('keywords') or []),
             'priority': _int(item.get('priority')),
             'speak': str(item.get('speak') or ''),
+            'capture': kind == 'command' and _bool(item.get('capture')),
         }
         if kind == 'say':
             entry['user_intent'] = True   # never be mistaken for a shell command
@@ -287,6 +294,8 @@ def public(intent):
         'name': str(intent.get('name') or ''),
         'enabled': bool(intent.get('enabled', True)),
         'action_type': str(action.get('type') or ''),
+        'capture': str(action.get('type') or '').strip().lower() == 'command'
+                   and _bool(intent.get('capture')),
         'phrases': list(intent.get('phrases') or []),
         'keywords': list(intent.get('keywords') or []),
         'priority': _int(intent.get('priority')),

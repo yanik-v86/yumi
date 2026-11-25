@@ -33,6 +33,10 @@ SAY = {
     'phrases': ['привет'], 'keywords': [],
     'action': {'type': 'say', 'value': ''}, 'speak': 'Привет-привет',
 }
+CAPTURE = dict(COMMAND, id='news', name='Новости', phrases=['новости'],
+               keywords=[], action={'type': 'command', 'value': 'news'},
+               speak='Новости: {stdout}', capture=True,
+               requires_confirmation=False)
 
 
 def payload(*items, revision=0):
@@ -60,6 +64,9 @@ try:
     }))['intents'][0]
     assert one['id'] == 'teminal' and one['enabled'] is True
     assert one['requires_confirmation'] is True
+    assert one['capture'] is False
+    captured = user_intents.validate(payload(CAPTURE))['intents'][0]
+    assert captured['capture'] is True and captured['speak'] == 'Новости: {stdout}'
     url = user_intents.validate(payload({
         'phrases': ['найди'], 'action': {'type': 'url', 'value': 'https://example.org/'},
     }))['intents'][0]
@@ -82,6 +89,8 @@ try:
                                                          'value': 'javascript:alert(1)'}}),
         payload({'id': 'x', 'phrases': ['ф'], 'action': {'type': 'shell',
                                                          'value': 'x'}}),
+        payload({'id': 'x', 'phrases': ['ф'], 'action': {'type': 'say', 'value': 'x'},
+                 'capture': True}),
         payload({'id': 'x', 'phrases': ['ф' * 201], 'action': {'type': 'command', 'value': 'x'}}),
         payload({'id': 'x', 'phrases': ['ф'], 'action': {'type': 'command', 'value': ''}}),
         payload({'id': 'x', 'phrases': ['ф'], 'action': {'type': 'command',
@@ -125,10 +134,11 @@ try:
             dict(COMMAND, id='keyword', phrases=[], keywords=['свет'], priority=100)]
     assert user_intents.match('включи свет', loud).intent == 'phrase'
 
-    entries = user_intents.to_nlu_entries([SAY, URL, COMMAND])
+    entries = user_intents.to_nlu_entries([SAY, URL, COMMAND, CAPTURE])
     assert entries[0]['user_intent'] is True and not entries[0].get('command')
     assert entries[1]['url'] == URL['action']['value']
-    assert entries[2]['command'] == 'lights on'
+    assert entries[2]['command'] == 'lights on' and entries[2]['capture'] is False
+    assert entries[3]['command'] == 'news' and entries[3]['capture'] is True
     assert nlu.recognize('привет', user_intents.to_nlu_entries([SAY]),
                          use_intents=False).intent == 'hello_back'
 

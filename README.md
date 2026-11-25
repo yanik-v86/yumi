@@ -328,6 +328,7 @@ edited by hand:
       "keywords": ["свет", "лампа"],
       "action": {"type": "command", "value": "python3 /home/user/scripts/lights.py on"},
       "speak": "Включаю свет",
+      "capture": false,
       "priority": 10,
       "requires_confirmation": true
     }
@@ -337,7 +338,10 @@ edited by hand:
 
 `action.type` is `command`, `url` (only `http://` or `https://`) or `say` (only `speak` is said;
 `action.value` is used when `speak` is empty). `requires_confirmation` defaults to `true` for
-commands and `false` for urls and sayings; `revision` protects edits made in the panel from
+commands and `false` for urls and sayings. A command with `"capture": true` runs off-thread and
+answers with its stdout: `{stdout}` in `speak` is replaced by that output, and the result appears
+in Yumi's bubble and in her normal voice (no output — she says there is no answer). The panel
+offers this as **Answer in bubble and voice**. `revision` protects edits made in the panel from
 being overwritten by an open editor or a hand edit. Rules are ordinary `nlu` sayings — no ONNX
 retraining and no restart are needed for a new phrase. They are matched **after** the built-in
 skills and the buttons from `actions.json`, so a button wins a contested phrase. There is no

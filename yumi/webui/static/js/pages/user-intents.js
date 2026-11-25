@@ -116,6 +116,7 @@ export function render(view, ctx) {
         el('div', { class: 'row between' },
           el('div', { class: 'row' },
             el('b', { text: intent.name || intent.id }),
+            intent.capture ? badge(L('ответ', 'answer'), 'good') : null,
             intent.enabled ? null : badge(L('выкл', 'off'), 'red')),
           el('span', { class: 'card-hint', text: actionType })),
         el('div', { class: 'card-hint', text: `id: ${intent.id}` }),
@@ -146,7 +147,7 @@ export function render(view, ctx) {
     const original = index == null ? null : data.intents[index];
     const draft = original ? JSON.parse(JSON.stringify(original)) : {
       id: '', name: '', enabled: true, phrases: [], keywords: [],
-      action: { type: 'say', value: '' }, speak: '', priority: 0,
+      action: { type: 'say', value: '' }, speak: '', capture: false, priority: 0,
       requires_confirmation: false,
     };
     const id = el('input', {
@@ -177,6 +178,18 @@ export function render(view, ctx) {
     const confirmFirst = el('input', {
       type: 'checkbox', checked: Boolean(draft.requires_confirmation),
     });
+    const capture = el('input', {
+      type: 'checkbox', checked: Boolean(draft.capture),
+    });
+    const captureRow = el('div', { class: 'full' }, el('div', { class: 'row' },
+      el('label', { class: 'row' }, capture,
+        el('span', { text: L('Ответ команды в бабле и голосом', 'Answer in bubble and voice') }))));
+    const syncKind = () => {
+      captureRow.style.display = kind.value === 'command' ? '' : 'none';
+      if (kind.value !== 'command') capture.checked = false;
+    };
+    kind.addEventListener('change', syncKind);
+    syncKind();
     const revision = el('input', { type: 'hidden', value: String(data.revision || 0) });
 
     const body = el('div', { class: 'stack' },
@@ -194,7 +207,10 @@ export function render(view, ctx) {
         el('div', { class: 'full' }, field(L('Значение', 'Value'), value,
           L('Команда, адрес http(s) или реплика для «просто сказать».',
             'A command, an http(s) address, or the line for “just say it”.'))),
-        el('div', { class: 'full' }, field(L('Реплика после действия', 'Line to say'), speak)),
+        captureRow,
+        el('div', { class: 'full' }, field(L('Реплика после действия', 'Line to say'), speak,
+          L('В ответе команды {stdout} заменяется её выводом.',
+            'In a captured answer, {stdout} becomes the command output.'))),
         el('div', { class: 'full' }, el('div', { class: 'row' },
           el('label', { class: 'row' }, enabled,
             el('span', { text: L('Включено', 'Enabled') })),
@@ -222,6 +238,7 @@ export function render(view, ctx) {
               keywords: lines(keywords.value),
               action: { type, value: value.value.trim() },
               speak: speak.value.trim(),
+              capture: type === 'command' && capture.checked,
               priority: Number.parseInt(priority.value, 10) || 0,
               requires_confirmation: confirmFirst.checked,
             };

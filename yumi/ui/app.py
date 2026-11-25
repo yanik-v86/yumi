@@ -430,6 +430,9 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                     Gdk.Display.get_default().get_clipboard().set(r[1])
             elif kind == 'run':
                 system.spawn('sh', '-c', r[1])
+            elif kind == 'run_capture':
+                self.run_capture(r[1], r[2] if len(r) > 2 else '',
+                                 r[3] if len(r) > 3 else '')
             elif kind == 'url':
                 system.open_url(r[1])
             elif kind == 'monitor_next':
@@ -551,6 +554,34 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                 self.state.save()
                 self.close()
                 self.restart()
+
+    def run_capture(self, command, intent_id, speak):
+        """run an answer-producing user command off the GTK thread and give its
+        stdout back to Brain, which shows it in the bubble and voices it.  The
+        command itself is never logged; only a generic failure is reported."""
+        def finish(output, failed):
+            self.ev(lambda b: b.user_intent_answer(output, intent_id, speak, failed))
+            return False
+
+        def work():
+            output, failed = '', False
+            try:
+                proc = subprocess.run(('sh', '-c', command), capture_output=True,
+                                      text=True, timeout=30, env=system.ENV)
+                if proc.returncode:
+                    failed = True
+                else:
+                    output = proc.stdout
+            except subprocess.TimeoutExpired as exc:
+                failed = True
+                output = exc.stdout if isinstance(exc.stdout, str) else ''
+            except OSError:
+                failed = True
+            if failed:
+                print('yumi: a captured user-intent command failed', file=sys.stderr)
+            GLib.idle_add(finish, output.strip(), failed)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def speaker_rename_dialog(self, pid):
         """ask for a new label in a small GTK window, then use the same bridge call as the panel"""
