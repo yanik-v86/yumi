@@ -433,7 +433,8 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
             elif kind == 'run_capture':
                 self.run_capture(r[1], r[2] if len(r) > 2 else '',
                                  r[3] if len(r) > 3 else '',
-                                 r[4] if len(r) > 4 else None)
+                                 r[4] if len(r) > 4 else None,
+                                 r[5] if len(r) > 5 else None)
             elif kind == 'url':
                 system.open_url(r[1])
             elif kind == 'monitor_next':
@@ -556,10 +557,12 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                 self.close()
                 self.restart()
 
-    def run_capture(self, command, intent_id, speak, options=None):
+    def run_capture(self, command, intent_id, speak, options=None, extra_env=None):
         """run an answer-producing user command off the GTK thread and give its
         stdout back to Brain, which voices and shows it as the intent asks.  The
-        command itself is never logged; only a generic failure is reported."""
+        command itself is never logged; only a generic failure is reported.
+        ``extra_env`` is a small, explicit payload (the heard phrase) for rules
+        that need the words behind the match."""
         def finish(output, failed):
             self.ev(lambda b: b.user_intent_answer(output, intent_id, speak, failed,
                                                    options))
@@ -567,9 +570,13 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
 
         def work():
             output, failed = '', False
+            env = dict(system.ENV)
+            if isinstance(extra_env, dict):
+                env.update({str(k): str(v) for k, v in extra_env.items()
+                            if v is not None})
             try:
                 proc = subprocess.run(('sh', '-c', command), capture_output=True,
-                                      text=True, timeout=30, env=system.ENV)
+                                      text=True, timeout=30, env=env)
                 if proc.returncode:
                     failed = True
                 else:

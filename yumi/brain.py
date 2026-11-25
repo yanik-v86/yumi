@@ -1880,6 +1880,13 @@ class Brain(Extras):
                 self.say_text(speak)
             return
         capture = bool(action.get('capture')) and bool(action.get('command'))
+        extra_env = None
+        heard = str(action.get('_heard_text') or '').strip()
+        if heard:
+            # Only an explicitly captured command gets the heard phrase: shell
+            # commands are static, and this is the one narrow channel for rules
+            # like «напомни завтра в 10 позвонить».
+            extra_env = {'YUMI_INTENT_TEXT': heard}
         if url:
             self.requests.append(('url', url))
         elif capture:
@@ -1899,7 +1906,8 @@ class Brain(Extras):
                 'bubble_text': str(action.get('bubble_text') or ''),
             }
             self.requests.append(('run_capture', action['command'],
-                                  str(action.get('id') or ''), speak, options))
+                                  str(action.get('id') or ''), speak, options,
+                                  extra_env))
         else:
             self.requests.append(('run', action['command']))
         if speak and not capture:
@@ -2135,7 +2143,8 @@ class Brain(Extras):
                'bubble_answer': item.get('bubble_answer', True),
                'bubble_limit': item.get('bubble_limit'),
                'voice_text': item.get('voice_text', ''),
-               'bubble_text': item.get('bubble_text', '')}
+               'bubble_text': item.get('bubble_text', ''),
+               '_heard_text': text}
         if kind == 'say':
             run['_user_intent_say'] = True
         if item.get('requires_confirmation') and not self.pending_permission:
