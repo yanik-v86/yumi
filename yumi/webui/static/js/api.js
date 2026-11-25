@@ -95,6 +95,12 @@ export const api = {
 
   nluConfirm: (ok) => api.post('/api/nlu/confirm', { ok: Boolean(ok) }),
 
+  userIntentsGet: () => api.get('/api/user-intents'),
+  userIntentsPut: (payload) => api.put('/api/user-intents', payload),
+  userIntentsImport: (text) => api.post('/api/user-intents/import', { text: String(text || '') }),
+  userIntentsExport: () => api.get('/api/user-intents/export'),
+  userIntentsTest: (text) => api.post('/api/user-intents/test', { text: String(text || '') }),
+
   chatHistory: () => api.get('/api/chat/history'),
   chatOps: (since = 0) => api.get(`/api/chat/ops?since=${Number(since) || 0}`),
   chatClear: () => api.del('/api/chat/history'),

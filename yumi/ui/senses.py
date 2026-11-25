@@ -414,10 +414,14 @@ class SensesMixin:
         threading.Thread(target=ears.mute, args=(secs,), daemon=True).start()
 
     def wake_hints(self, b):
-        """the user's own phrases and keywords from actions.json: the ears run in
-        another process, so a custom button's wish is passed into the wake router
-        (yumi/addressing.py) or the fallback would not know it"""
-        return addressing.hints_from(getattr(b, 'custom', None))
+        """phrases from actions.json and from the enabled custom intents: the
+        ears run in another process, so both wishes are passed into the wake
+        router (yumi/addressing.py) or the fallback would not know them"""
+        if hasattr(b, 'user_intents_check'):
+            b.user_intents_check()
+        return addressing.hints_from(getattr(b, 'custom', None),
+                                     b.user_intents_phrases()
+                                     if hasattr(b, 'user_intents_phrases') else None)
 
     def _vs(self, method, *args):
         """publish a voice-state transition on the GTK thread (safe from any worker)"""

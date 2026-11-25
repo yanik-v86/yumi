@@ -116,4 +116,96 @@ b.voice_intent('удали всё')
 b.stop_all()
 assert b.intent_confirm is None
 
+# ---- your own intents: the new layer after buttons, with hot reload
+import os  # noqa: E402
+from yumi import user_intents  # noqa: E402
+
+_intent_seq = 0
+
+
+def intents_brain(items, **settings):
+    """a Brain whose custom layer lives in a temporary user_intents.json"""
+    global _intent_seq
+    _intent_seq += 1
+    b = brain([], **settings)
+    b.user_intents_path = (Path(tempfile.gettempdir())
+                           / f'yumi-user-intents-{os.getpid()}-{_intent_seq}.json')
+    if b.user_intents_path.exists():
+        b.user_intents_path.unlink()
+    b.user_intents_data = user_intents.save(
+        {'version': 1, 'revision': 0, 'intents': items}, b.user_intents_path)
+    b.user_intents_mtime = b.user_intents_path.stat().st_mtime
+    return b
+
+
+RULE = {'id': 'lamp', 'name': 'Лампа', 'enabled': True,
+        'phrases': ['включи лампу'], 'keywords': ['лампа'],
+        'action': {'type': 'command', 'value': 'lamp on'}, 'speak': 'Включаю лампу'}
+b = intents_brain([RULE])
+b.requests.clear()
+assert b.voice_user_intent('включи лампу') is True
+assert b.intent_confirm and b.last_intent == 'lamp', 'a command asks first by default'
+assert ('run', 'lamp on') not in b.requests
+b.heard_text('да')
+assert ('run', 'lamp on') in b.requests and b.bubble['text'] == 'Включаю лампу'
+
+# the same phrase through heard_text() reaches the new layer (after the music guess)
+QUIET = dict(RULE, phrases=['сделай свет'], keywords=[], requires_confirmation=False)
+b = intents_brain([QUIET])
+b.requests.clear()
+assert b.heard_text('сделай свет') is None
+assert ('run', 'lamp on') in b.requests and b.last_intent == 'lamp'
+
+# a keyword and the ears' slip work too, with the same confidence line
+b = intents_brain([dict(RULE, requires_confirmation=False)], nlu_confidence=1.0)
+b.requests.clear()
+assert b.voice_user_intent('лампа') is False       # 0.80 is under the line
+assert b.voice_user_intent('включи лампу') is True
+
+# "say" speaks a line; a url opens; nothing goes to a shell
+b = intents_brain([{'id': 'wave', 'name': ' Wave ', 'enabled': True,
+                    'phrases': ['помочи'], 'keywords': [],
+                    'action': {'type': 'say', 'value': ''}, 'speak': 'Привет'}])
+b.requests.clear()
+assert b.voice_user_intent('помочи') is True
+assert b.bubble['text'] == 'Привет' and not any(r[0] in ('run', 'url') for r in b.requests), b.requests
+b = intents_brain([{'id': 'find', 'name': 'Поиск', 'enabled': True,
+                    'phrases': [], 'keywords': ['найди'],
+                    'action': {'type': 'url', 'value': 'https://example.org/?q={query}'},
+                    'speak': ''}])
+b.requests.clear()
+assert b.voice_user_intent('найди мотыльков') is True
+assert ('url', 'https://example.org/?q=%D0%BC%D0%BE%D1%82%D1%8B%D0%BB%D1%8C%D0%BA%D0%BE%D0%B2') in b.requests
+
+# the setting turns the whole layer off
+b = intents_brain([dict(RULE, requires_confirmation=False)], user_intents=False)
+b.requests.clear()
+assert b.voice_user_intent('включи лампу') is False and not b.requests
+
+# an edit of the JSON by hand is picked up on the next phrase, no restart
+b = intents_brain([dict(RULE, requires_confirmation=False)])
+b.requests.clear()
+fresh = {'id': 'fan', 'name': 'Вентилятор', 'enabled': True,
+         'phrases': ['включи вентилятор'], 'keywords': [],
+         'action': {'type': 'command', 'value': 'fan on'}, 'requires_confirmation': False}
+stored = user_intents.save({'version': 1, 'revision': b.user_intents_data['revision'],
+                            'intents': [fresh]}, b.user_intents_path)
+os.utime(b.user_intents_path, (b.user_intents_mtime + 2, b.user_intents_mtime + 2))
+assert b.voice_user_intent('включи вентилятор') is True
+assert ('run', 'fan on') in b.requests and b.user_intents_data['revision'] == stored['revision']
+
+# a button from actions.json wins a phrase claimed by both layers
+b = brain([action(command='button', phrases=['включи лампу'])], user_intents=True)
+b.user_intents_path = (Path(tempfile.gettempdir())
+                       / f'yumi-user-intents-both-{os.getpid()}.json')
+if b.user_intents_path.exists():
+    b.user_intents_path.unlink()
+b.user_intents_data = user_intents.save(
+    {'version': 1, 'revision': 0, 'intents': [dict(RULE, requires_confirmation=False)]},
+    b.user_intents_path)
+b.user_intents_mtime = b.user_intents_path.stat().st_mtime
+b.requests.clear()
+assert b.voice_intent('включи лампу') is True and ('run', 'button') in b.requests
+assert b.last_intent != 'lamp'
+
 print('tests/test_voice_intent.py: ok')

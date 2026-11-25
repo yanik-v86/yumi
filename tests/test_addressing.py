@@ -53,6 +53,10 @@ assert addressing.hints_from([
     {'phrases': ['терминал', ' '], 'keywords': ['консоль']},
     'junk',
 ]) == ['терминал', 'консоль']
+# the enabled user intents arrive as plain phrases in the second argument
+assert addressing.hints_from([{'phrases': ['терминал']}],
+                             ['включи лампу', ' ', 'лампа']) == [
+    'терминал', 'включи лампу', 'лампа']
 
 # the ears use the same answer: notes still pass even without a router word
 from yumi import stt_daemon as stt  # noqa: E402

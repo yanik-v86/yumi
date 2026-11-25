@@ -36,6 +36,22 @@ class WebBridge:
     def actions_save(self, actions):
         return self._on(lambda: self.app._web_config_save('actions', actions), 60)
 
+    # ---- your own intents (the panel is the editor, the JSON file is the source)
+    def user_intents_get(self):
+        return self._on(self.app._web_user_intents_get)
+
+    def user_intents_put(self, payload):
+        return self._on(lambda: self.app._web_user_intents_put(payload), 60)
+
+    def user_intents_import(self, text):
+        return self._on(lambda: self.app._web_user_intents_import(text), 60)
+
+    def user_intents_export(self):
+        return self._on(self.app._web_user_intents_export)
+
+    def user_intents_test(self, text):
+        return self._on(lambda: self.app._web_user_intents_test(text))
+
     def action_run(self, index):
         b = self.app.brain
         self._on(lambda: b.extras_do('custom', int(index)))

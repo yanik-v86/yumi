@@ -8,7 +8,9 @@ actions 'custom', 'tour_next', 'tour_skip', 'tour_again' through extras_do.
 """
 import math
 import random
+from pathlib import Path
 
+from . import user_intents
 from .config import RING_SLOTS, ACTIONS_FILE, _as_bool, _as_int, load_actions, tr
 from .pixui import ICONS
 
@@ -64,6 +66,13 @@ class Extras:
             self.actions_mtime = self.actions_path.stat().st_mtime
         except OSError:
             self.actions_mtime = 0.0
+        # your own intents: a separate, validated file, hot-reloaded like actions
+        self.user_intents_path = user_intents.INTENTS_FILE
+        self.user_intents_data = user_intents.load(self.user_intents_path)
+        try:
+            self.user_intents_mtime = self.user_intents_path.stat().st_mtime
+        except OSError:
+            self.user_intents_mtime = 0.0
         self.ring_edit = False           # the button editor is open on the ring
         self.ring_drag = None            # id of the button pressed there...
         self.ring_moved = False          # ...and whether it has been pulled away yet
@@ -329,6 +338,23 @@ class Extras:
         if m != self.actions_mtime:
             self.actions_mtime = m
             self.custom = load_actions(self.actions_path)
+
+    def user_intents_check(self):
+        """user_intents.json, edited in the panel or by hand, needs no restart.
+
+        Tests build partial Brains with ``__new__``; a missing path or cache means
+        the file simply has to be read once, not that the phrase layer crashes.
+        """
+        path = getattr(self, 'user_intents_path', None) or user_intents.INTENTS_FILE
+        try:
+            m = Path(path).stat().st_mtime
+        except (OSError, TypeError, ValueError):
+            m = 0.0
+        if m != getattr(self, 'user_intents_mtime', None) or \
+                getattr(self, 'user_intents_data', None) is None:
+            self.user_intents_mtime = m
+            self.user_intents_data = user_intents.load(path)
+        return self.user_intents_data
 
     def extras_do(self, action, arg):
         """True when the action was one of ours"""

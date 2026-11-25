@@ -41,6 +41,10 @@ PAGES = [
               'ru': 'Проверка ушек, голоса и моделей'}},
     {'id': 'buttons', 'icon': 'grid', 'title': {'en': 'Buttons', 'ru': 'Кнопки'},
      'hint': {'en': 'Her ring and your own commands', 'ru': 'Кольцо и свои команды'}},
+    {'id': 'user-intents', 'icon': 'terminal',
+     'title': {'en': 'My phrases', 'ru': 'Мои фразы'},
+     'hint': {'en': 'Your own intents: edit, import, export and test',
+              'ru': 'Свои интенты: правка, импорт, экспорт и проверка'}},
     {'id': 'appearance', 'icon': 'palette', 'title': {'en': 'Look', 'ru': 'Внешний вид'},
      'hint': {'en': 'Colors, outfit, scale and screens', 'ru': 'Цвета, наряд, масштаб и экраны'}},
     {'id': 'settings', 'icon': 'gear', 'title': {'en': 'Settings', 'ru': 'Настройки'},
@@ -123,7 +127,7 @@ KEY_SECTION = {
     'conversation_gap_reset_min': 'dialogue', 'conversation_history_n': 'dialogue',
     'notes_voice': 'mind',
     'embed_model': 'mind', 'nlu': 'mind', 'nlu_confidence': 'mind',
-    'intents': 'mind', 'ollama_url': 'mind',
+    'user_intents': 'mind', 'intents': 'mind', 'ollama_url': 'mind',
     'polza_url': 'mind', 'polza_api_key': 'mind',
     'wake_ears': 'ears', 'wake_word': 'ears', 'wake_sensitivity': 'ears',
     'wake_confirm': 'ears', 'wake_model_size': 'ears', 'wake_ear': 'ears',
@@ -316,6 +320,7 @@ TITLES = {
     'nlu': {'en': 'Voice commands', 'ru': 'Голосовые команды'},
     'nlu_confidence': {'en': 'Command confidence line',
                        'ru': 'Порог уверенности команды'},
+    'user_intents': {'en': 'My own intents', 'ru': 'Мои интенты'},
     'intents': {'en': 'Intents mind', 'ru': 'Распознавание фраз'},
     'ollama_url': {'en': 'Ollama address', 'ru': 'Адрес Ollama'},
     'polza_url': {'en': 'Polza.ai address', 'ru': 'Адрес Polza.ai'},
@@ -492,6 +497,8 @@ HINTS = {
                        'ru': '127.0.0.1 оставляет панель на этом компьютере. 0.0.0.0 открывает её в локальную сеть — только с надёжным токеном и файрволом.'},
     'web_panel_session_hours': {'en': 'How long the browser stays signed in before the token is asked again.',
                                 'ru': 'Сколько браузер остаётся в системе, прежде чем снова спросить токен.'},
+    'user_intents': {'en': 'Your own rules from user_intents.json. They are matched after the built-in skills and buttons, need no ONNX retraining and work without a restart. Edit them on the “My phrases” page or in the JSON file.',
+                     'ru': 'Свои правила из user_intents.json. Они проверяются после встроенных навыков и кнопок, не требуют дообучения ONNX и перезапуска. Прави их на странице «Мои фразы» или прямо в JSON.'},
 }
 
 CONFIG_FILES = {

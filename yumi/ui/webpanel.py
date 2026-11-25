@@ -11,7 +11,7 @@ from gi.repository import Gdk, GLib
 
 from yumi import (chat, config, doctor, ears, engines, facts, memory, models, music,
                   notes, permission, pixui, speaker, speaker_sherpa, system,
-                  tts, webpanel)
+                  tts, user_intents, webpanel)
 from yumi.sprites import ui_colors
 from yumi.webpanel import catalog as webcatalog
 
@@ -407,6 +407,14 @@ class PanelMixin:
                         'confirm': bool(getattr(b, 'intent_confirm', None)),
                         'pending_permission': (b.permission_snapshot()
                                                if hasattr(b, 'permission_snapshot') else None)},
+                'user_intents': {
+                    'enabled': bool(s.get('user_intents', True)),
+                    'revision': int((b.user_intents_check() if hasattr(b, 'user_intents_check')
+                                     else user_intents.load()).get('revision', 0)),
+                    'count': len((b.user_intents_data if hasattr(b, 'user_intents_data')
+                                  else {}).get('intents') or []),
+                    'path': str(user_intents.INTENTS_FILE),
+                },
                 'wake_on': bool(self.wake_on),
                 'facts': {**facts.get_book(s).info(),
                           'mode': str(s.get('chatter_facts') or 'off'),
@@ -717,6 +725,64 @@ class PanelMixin:
                 'ring_off': list(b.settings.get('ring_off') or []),
                 'icons': sorted(pixui.ICONS),
                 'icon_patterns': dict(pixui.ICONS)}
+
+    # ---- your own intents: the panel edits the same JSON you can write by hand
+    def _intents_path(self):
+        return getattr(self.brain, 'user_intents_path', None) or user_intents.INTENTS_FILE
+
+    def _intents_refresh(self, data):
+        """a browser write must be visible to the very next phrase, no restart"""
+        b = self.brain
+        b.user_intents_data = data
+        try:
+            b.user_intents_mtime = Path(self._intents_path()).stat().st_mtime
+        except OSError:
+            b.user_intents_mtime = 0.0
+
+    def _web_user_intents_get(self):
+        return user_intents.info(self._intents_path())
+
+    def _web_user_intents_put(self, payload):
+        if not isinstance(payload, dict) or 'revision' not in payload:
+            raise ValueError('revision is required')
+        try:
+            revision = int(payload['revision'])
+        except (TypeError, ValueError):
+            raise ValueError('revision must be a number') from None
+        path = self._intents_path()
+        current = user_intents.load(path)
+        if revision != current['revision']:
+            raise user_intents.RevisionConflict(
+                f'the file is at revision {current["revision"]}; reload before saving')
+        saved = user_intents.save(payload, path)
+        self._intents_refresh(saved)
+        try:
+            mtime = Path(path).stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        return {'version': saved['version'], 'revision': saved['revision'],
+                'mtime': mtime, 'intents': saved['intents']}
+
+    def _web_user_intents_import(self, text):
+        data = user_intents.import_json(text)
+        path = self._intents_path()
+        data['revision'] = user_intents.load(path)['revision']
+        saved = user_intents.save(data, path)
+        self._intents_refresh(saved)
+        return {'version': saved['version'], 'revision': saved['revision'],
+                'intents': saved['intents']}
+
+    def _web_user_intents_export(self):
+        data = user_intents.load(self._intents_path())
+        return {'text': user_intents.export_json(data), 'revision': data['revision']}
+
+    def _web_user_intents_test(self, text):
+        data = user_intents.load(self._intents_path())
+        try:
+            line = max(0.0, min(1.0, float(self.brain.settings.get('nlu_confidence', 0.6))))
+        except (TypeError, ValueError):
+            line = 0.6
+        return user_intents.test_phrase(text, data, min_confidence=line)
 
     def _web_logs(self, name, lines):
         paths = {

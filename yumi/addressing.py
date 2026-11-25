@@ -102,16 +102,20 @@ def words(text):
     return out
 
 
-def hints_from(actions):
-    """the user's own phrases and keywords from actions.json: the ears daemon
-    runs in another process and the mind has the actions anyway — one shape for
-    both sides of the fallback (see SensesMixin.wake_hints)"""
+def hints_from(actions, extra=None):
+    """phrases and keywords from actions.json, plus the enabled custom intents:
+    the ears daemon runs in another process and the mind has both lists anyway —
+    one shape for both sides of the fallback (see SensesMixin.wake_hints)"""
     out = []
-    for action in actions or ():
+    for action in list(actions or ()):
         if not isinstance(action, dict):
             continue
         for key in ('phrases', 'keywords'):
             out.extend(str(x) for x in (action.get(key) or ()) if str(x).strip())
+    for phrase in list(extra or ()):
+        text = str(phrase).strip()
+        if text:
+            out.append(text)
     return out[:64]
 
 

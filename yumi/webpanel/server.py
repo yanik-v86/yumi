@@ -22,7 +22,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from .. import config
+from .. import config, user_intents
 from . import catalog
 from .auth import AUTH_COOKIE, CSRF_COOKIE, Auth
 
@@ -377,6 +377,11 @@ def _make_handler(panel):
                 ('GET', '/api/configs'): self._configs,
                 ('GET', '/api/actions'): self._actions_get,
                 ('PUT', '/api/actions'): self._actions_put,
+                ('GET', '/api/user-intents'): self._user_intents_get,
+                ('PUT', '/api/user-intents'): self._user_intents_put,
+                ('POST', '/api/user-intents/import'): self._user_intents_import,
+                ('GET', '/api/user-intents/export'): self._user_intents_export,
+                ('POST', '/api/user-intents/test'): self._user_intents_test,
                 ('POST', '/api/nlu/confirm'): self._nlu_confirm,
                 ('POST', '/api/doctor'): self._doctor,
                 ('GET', '/api/models'): self._models_get,
@@ -448,6 +453,8 @@ def _make_handler(panel):
                     return fn(query)
                 except ValueError as exc:
                     return self._err(400, exc)
+                except user_intents.RevisionConflict as exc:
+                    return self._err(409, exc)
                 except TimeoutError:
                     return self._err(504, 'Yumi did not answer in time')
                 except Exception as exc:  # noqa: BLE001 - the bridge is a wide surface
@@ -597,6 +604,73 @@ def _make_handler(panel):
             result = panel.bridge.action_run(index)
             panel.audit(self._ip(), 'action-run', str(index))
             panel.publish('actions', {'ran': index})
+            return self._json(200, {'ok': True, **result})
+
+        # ---------------------------------------------------------------- your own intents
+        def _user_intents_get(self, _q):
+            return self._json(200, {'ok': True, **panel.bridge.user_intents_get()})
+
+        def _user_intents_put(self, _q):
+            body = self._body()
+            payload = body.get('data') if isinstance(body.get('data'), dict) else body
+            result = panel.bridge.user_intents_put(payload)
+            count = len(result.get('intents') or [])
+            panel.audit(self._ip(), 'user-intents-save', f'{count} intents')
+            panel.publish('actions', {'user_intents': result.get('revision')})
+            return self._json(200, {'ok': True, **result})
+
+        def _multipart_file(self, limit=2 * 1024 * 1024):
+            """the one uploaded JSON file, never saved to CACHE_DIR/uploads"""
+            ctype = self.headers.get('Content-Type') or ''
+            m = re.search(r'boundary=(?:"([^"]+)"|([^;]+))', ctype)
+            if not m:
+                raise ValueError('multipart boundary is missing')
+            boundary = ('--' + (m.group(1) or m.group(2) or '').strip()).encode()
+            try:
+                length = int(self.headers.get('Content-Length') or 0)
+            except ValueError:
+                raise ValueError('bad Content-Length') from None
+            if length > limit:
+                raise ValueError('file is too large')
+            raw = self.rfile.read(length)
+            for part in raw.split(boundary)[1:]:
+                head, sep, content = part.strip(b'\r\n').partition(b'\r\n\r\n')
+                if not sep or b'filename=' not in head.lower():
+                    continue
+                name = re.search(rb'filename="([^"]*)"', head)
+                return (name.group(1).decode('utf-8', 'replace') if name else 'intents.json',
+                        content.rstrip(b'\r\n'))
+            raise ValueError('a JSON file is needed for the import')
+
+        def _user_intents_import(self, _q):
+            if 'multipart/form-data' in (self.headers.get('Content-Type') or '').lower():
+                name, raw = self._multipart_file()
+                text = raw.decode('utf-8', 'replace')
+            else:
+                body = self._body()
+                name = str(body.get('name') or 'intents.json')[:160]
+                if isinstance(body.get('text'), str):
+                    text = body['text']
+                elif isinstance(body.get('data'), (dict, list)):
+                    text = json.dumps(body['data'], ensure_ascii=False)
+                else:
+                    raise ValueError('send a JSON file or {"text": "..."}')
+            result = panel.bridge.user_intents_import(text)  # validated before any write
+            panel.audit(self._ip(), 'user-intents-import', Path(name).name[:120])
+            panel.publish('actions', {'user_intents': result.get('revision')})
+            return self._json(200, {'ok': True, **result})
+
+        def _user_intents_export(self, _q):
+            result = panel.bridge.user_intents_export()
+            panel.audit(self._ip(), 'user-intents-export', '')
+            return self._send(200, result['text'], 'application/json; charset=utf-8',
+                              {'Content-Disposition': 'attachment; filename="user_intents.json"'})
+
+        def _user_intents_test(self, _q):
+            body = self._body()
+            result = panel.bridge.user_intents_test(str(body.get('text') or ''))
+            panel.audit(self._ip(), 'user-intents-test',
+                        'matched' if result.get('matched') else 'no match')
             return self._json(200, {'ok': True, **result})
 
         def _nlu_confirm(self, _q):

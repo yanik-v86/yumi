@@ -14,6 +14,7 @@ _state = Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local' / 'stat
 _cache = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache')
 CONFIG_DIR = _cfg / 'yumi'
 ACTIONS_FILE = CONFIG_DIR / 'actions.json'
+INTENTS_FILE = CONFIG_DIR / 'user_intents.json'
 STATE_DIR = _state / 'yumi'
 CACHE_DIR = _cache / 'yumi'
 
@@ -132,6 +133,8 @@ DEFAULT_SETTINGS = {
     'music_skill': True,      # music control via voice commands
     'nlu': True,              # her own voice commands: the phrases in actions.json
     'nlu_confidence': 0.6,    # a match under this line is left to the chat (0..1)
+    'user_intents': True,     # your own rules from user_intents.json, edited in
+                              # the browser panel or by hand (no GTK editor, no ONNX)
     'intents': True,          # the tiny trained mind (yumi/intents.py) hears the
                               # phrases the sayings miss; tools/intents_setup.sh
     'wake_word': 'юми',       # the wake word itself (say it, then the question);

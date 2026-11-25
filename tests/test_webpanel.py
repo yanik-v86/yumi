@@ -15,7 +15,7 @@ from contextlib import redirect_stderr
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from yumi import config  # noqa: E402
+from yumi import config, user_intents  # noqa: E402
 from yumi.ui.webpanel import PanelMixin  # noqa: E402
 from yumi.webpanel import auth, catalog, server  # noqa: E402
 
@@ -117,6 +117,34 @@ class Bridge:
     def actions_save(self, actions):
         self.actions = actions
         return {'saved': len(actions), 'backup': ''}
+
+    # the same validating module the real PanelMixin calls, without GTK
+    def user_intents_get(self):
+        return user_intents.info()
+
+    def user_intents_put(self, payload):
+        if not isinstance(payload, dict) or 'revision' not in payload:
+            raise ValueError('revision is required')
+        current = user_intents.load()
+        if int(payload['revision']) != current['revision']:
+            raise user_intents.RevisionConflict('the file changed, reload first')
+        saved = user_intents.save(payload)
+        return {'version': saved['version'], 'revision': saved['revision'],
+                'mtime': user_intents.info()['mtime'], 'intents': saved['intents']}
+
+    def user_intents_import(self, text):
+        data = user_intents.import_json(text)
+        data['revision'] = user_intents.load()['revision']
+        saved = user_intents.save(data)
+        return {'version': saved['version'], 'revision': saved['revision'],
+                'intents': saved['intents']}
+
+    def user_intents_export(self):
+        data = user_intents.load()
+        return {'text': user_intents.export_json(data), 'revision': data['revision']}
+
+    def user_intents_test(self, text):
+        return user_intents.test_phrase(text)
 
     def notes_list(self, limit=50):
         return list(reversed(self.note_items))[:limit]
@@ -321,7 +349,9 @@ class Bridge:
 
 tmp = Path(tempfile.mkdtemp(prefix='yumi-webpanel-'))
 orig_state = config.STATE_DIR
+orig_intents = user_intents.INTENTS_FILE
 config.STATE_DIR = tmp
+user_intents.INTENTS_FILE = tmp / 'user_intents.json'
 settings = dict(config.DEFAULT_SETTINGS)
 settings['web_panel'] = True
 settings['web_panel_host'] = '127.0.0.1'
@@ -364,14 +394,17 @@ try:
     assert set(config.DEFAULT_SETTINGS) <= keys, set(config.DEFAULT_SETTINGS) - keys
     assert {'web_panel', 'web_panel_host', 'web_panel_port', 'web_panel_open',
             'web_panel_session_hours'} <= keys
-    assert len(schema['pages']) == 15
+    assert len(schema['pages']) == 16
     assert {page['id'] for page in schema['pages']} == {
         'dashboard', 'chat', 'notes', 'facts', 'files', 'music', 'voice', 'doctor', 'buttons',
-        'appearance', 'settings', 'memory', 'configs', 'security', 'logs'}
+        'user-intents', 'appearance', 'settings', 'memory', 'configs', 'security', 'logs'}
     entries = {entry['key']: entry for entry in schema['settings']}
     assert entries['chatter_facts']['type'] == 'select'
     assert entries['chatter_facts']['choices'] == ['off', 'mixed', 'only']
     assert entries['chatter_facts_file']['section'] == 'behavior'
+    assert entries['user_intents']['section'] == 'mind'
+    assert entries['user_intents']['title']['ru'] and entries['user_intents']['title']['en']
+    assert entries['user_intents']['hint']['ru'] and entries['user_intents']['hint']['en']
     assert catalog.validate_settings_patch({'chatter_facts': 'ONLY'}) == {'chatter_facts': 'only'}
     try:
         catalog.validate_settings_patch({'chatter_facts': 'sometimes'})
@@ -487,6 +520,51 @@ try:
     assert code == 200 and data['version'] and data['pages']
     code, data, _ = call('GET', '/api/actions')
     assert code == 200 and data['icon_patterns']['folder']
+
+    # your own intents: CRUD, revision conflicts, a safe import and a dry-run test
+    code, data, _ = call('GET', '/api/user-intents')
+    assert code == 200 and data['version'] == 1 and data['revision'] == 0
+    assert data['intents'] == []
+    intent = {'id': 'lamp', 'name': 'Лампа', 'enabled': True,
+              'phrases': ['сделай свет'], 'keywords': [],
+              'action': {'type': 'say', 'value': 'Я бы включила, но лампы нет'},
+              'speak': 'Я бы включила, но лампы нет', 'priority': 0,
+              'requires_confirmation': False}
+    code, data, _ = call('PUT', '/api/user-intents',
+                         {'version': 1, 'revision': 0, 'intents': [intent]})
+    assert code == 403, 'user intents without CSRF must fail'
+    code, data, _ = call('PUT', '/api/user-intents',
+                         {'version': 1, 'revision': 0, 'intents': [intent]}, csrf=csrf)
+    assert code == 200 and data['revision'] == 1 and data['intents'][0]['id'] == 'lamp'
+    code, data, _ = call('POST', '/api/user-intents/test', {'text': 'сделай свет'}, csrf=csrf)
+    assert code == 200 and data['matched'] and data['intent']['id'] == 'lamp'
+    assert data['score'] == 1.0 and data['source'] == 'user-intents'
+    code, data, _ = call('POST', '/api/user-intents/test', {'text': 'совсем другое'}, csrf=csrf)
+    assert code == 200 and data['matched'] is False
+    code, data, _ = call('PUT', '/api/user-intents',
+                         {'version': 1, 'revision': 0, 'intents': []}, csrf=csrf)
+    assert code == 409, (code, data)
+
+    # export and import round-trip through the real HTTP face
+    code, body, headers = call('GET', '/api/user-intents/export', raw=True)
+    assert code == 200 and b'attachment' in headers.get('Content-Disposition', '').encode()
+    exported = body.decode('utf-8')
+    assert '"lamp"' in exported
+    # a bad import is rejected before the file is touched
+    before = json.loads(user_intents.INTENTS_FILE.read_text(encoding='utf-8'))
+    code, data, _ = call('POST', '/api/user-intents/import', {'text': '{broken'}, csrf=csrf)
+    assert code == 400 and json.loads(user_intents.INTENTS_FILE.read_text(encoding='utf-8')) == before
+    # a good import through multipart, as the browser's file picker sends it
+    boundary = '----yumi-test-boundary'
+    payload = (f'--{boundary}\r\n'
+               f'Content-Disposition: form-data; name="file"; filename="user.json"\r\n'
+               f'Content-Type: application/json\r\n\r\n{exported}\r\n--{boundary}--\r\n').encode()
+    req = urllib.request.Request(base + '/api/user-intents/import', data=payload, method='POST',
+                                 headers={'X-Yumi-CSRF': csrf,
+                                          'Content-Type': f'multipart/form-data; boundary={boundary}'})
+    with opener.open(req, timeout=10) as res:
+        data = json.loads(res.read())
+    assert data['ok'] and data['revision'] == 2 and data['intents'][0]['id'] == 'lamp'
 
     # the fact book: no model, explicit sources, CSRF on every mutation
     code, data, _ = call('GET', '/api/facts?lang=ru')
@@ -749,4 +827,5 @@ try:
 finally:
     panel.stop()
     config.STATE_DIR = orig_state
+    user_intents.INTENTS_FILE = orig_intents
     shutil.rmtree(tmp, ignore_errors=True)

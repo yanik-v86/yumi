@@ -119,6 +119,15 @@ assert nlu.recognize('не открывай терминал', ACTIONS, min_conf
 assert nlu.recognize('открой терминал', [{'command': 'x', 'phrases': ['открой терминал'],
                                           'priority': 'many'}]).intent == 'custom:x'
 
+# a user "say" rule carries a marker instead of a shell command: it is scored
+# by the very same rules and never sent to the classifier or a shell
+SAY = {'id': 'wave', 'user_intent': True, 'speak': 'Привет!', 'phrases': ['привет']}
+hit = nlu.recognize('привет', [SAY], use_intents=False)
+assert hit and hit.action is SAY and hit.intent == 'wave' and hit.confidence == 1.0
+assert nlu._intent_name({'user_intent': True, 'speak': 'Привет!'}).startswith('user_intent:')
+assert nlu.match('привет', [SAY], use_intents=False)[0] is SAY
+assert nlu.match('совсем другое', [SAY], use_intents=False) is None
+
 # ---- the search: a url entry with {query}, the words said beside the trigger
 SEARCH = {'command': 'xdg-open https://yandex.ru', 'url': 'https://yandex.ru/search/?text={query}',
           'phrases': ['найди в интернете', 'поищи в интернете', 'search the web'],

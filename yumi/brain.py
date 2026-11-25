@@ -21,6 +21,7 @@ from . import conversation as dialogue
 from . import entities
 from . import nlu
 from . import notes
+from . import user_intents
 from . import permission as permissions
 from .config import RING_SLOTS, UI, tr
 from .extras import Extras
@@ -1457,7 +1458,9 @@ class Brain(Extras):
         «Борис, где ключи?» is an address to a person, not a question for her.
         """
         conv = self.conversation
-        hints = addressing.hints_from(getattr(self, 'custom', None))
+        self.user_intents_check()
+        hints = addressing.hints_from(getattr(self, 'custom', None),
+                                      self.user_intents_phrases())
         route = addressing.route(text, hints)
         labels = [self._voice_label(pid) for pid in conv.participants]
         spoken = strip_wake_raw(raw, self.settings.get('wake_word') or 'юми')
@@ -1745,12 +1748,17 @@ class Brain(Extras):
                 else:
                     self.say_text("We haven't met yet. Say “Yumi, let's get acquainted” and I'll remember your name.", voice=True)
             return
+        # your own rules come last among the commands: they never steal a
+        # built-in skill, a ring button or the ONNX fallback above
+        if self.voice_user_intent(text, alt):
+            return
         if fallback:
             # the name came from the small ear: a command above already ran, and a
             # phrase that is not addressed to her must not wake the mind for nothing
-            kind = addressing.route(text, addressing.hints_from(self.custom))
+            hints = addressing.hints_from(self.custom, self.user_intents_phrases())
+            kind = addressing.route(text, hints)
             if kind == 'ignore' and alt and alt != text:
-                kind = addressing.route(alt, addressing.hints_from(self.custom))
+                kind = addressing.route(alt, hints)
             if kind == 'ignore':
                 _mind_log('fallback: not addressed, silent')
                 return
@@ -1856,6 +1864,11 @@ class Brain(Extras):
             speak = speak.replace(marker, str(value))
             if marker in url:
                 url = url.replace(marker, urllib.parse.quote(str(value), safe=''))
+        if action.get('_user_intent_say'):
+            # a "say" rule has no shell command: its only effect is the line
+            if speak:
+                self.say_text(speak)
+            return
         if url:
             self.requests.append(('url', url))
         else:
@@ -1972,6 +1985,67 @@ class Brain(Extras):
             self.requests.append(('listen', 15))
             return True
         self._voice_run(action, slots)
+        return True
+
+    def user_intents_phrases(self):
+        """the enabled custom sayings, for the ears' fallback router too"""
+        out = []
+        for item in (getattr(self, 'user_intents_data', None) or {}).get('intents') or []:
+            if not isinstance(item, dict) or not item.get('enabled', True):
+                continue
+            for key in ('phrases', 'keywords'):
+                out.extend(str(x) for x in (item.get(key) or ()) if str(x).strip())
+        return out[:64]
+
+    def voice_user_intent(self, text, alt=''):
+        """your own rules from user_intents.json, after the built-in skills and
+        the buttons from actions.json.  A whole phrase (1.00), a keyword (0.80)
+        or an ears' slip (0.60) fires; a command may ask first, a url opens and
+        a "say" rule only speaks.  No restart and no ONNX training needed."""
+        if not self.settings.get('user_intents', True):
+            return False
+        data = self.user_intents_check()
+        intents = data.get('intents') or []
+        if not intents:
+            return False
+        try:
+            line = max(0.0, min(1.0, float(self.settings.get('nlu_confidence', 0.6))))
+        except (TypeError, ValueError):
+            line = 0.6
+        hit = user_intents.match(text, intents, min_confidence=line)
+        if not hit and alt and alt != text:
+            hit = user_intents.match(alt, intents, min_confidence=line)
+        if not hit:
+            return False
+        item = next((i for i in intents if str(i.get('id') or '') == hit.intent), None)
+        if not item:                    # the file changed between match and lookup
+            return False
+        action = item.get('action') or {}
+        kind = str(action.get('type') or '')
+        value = str(action.get('value') or '')
+        speak = str(item.get('speak') or '')
+        if kind == 'say' and not speak:
+            speak = value
+        self.last_intent, self.last_confidence = hit.intent, hit.confidence
+        _mind_log(f'user intent {hit.intent} (score {hit.confidence:.2f})')
+        self.set_face('happy', 1.5)
+        slots = self._voice_slots(hit)
+        run = {'id': hit.intent, 'speak': speak,
+               'command': value if kind == 'command' else '',
+               'url': value if kind == 'url' else ''}
+        if kind == 'say':
+            run['_user_intent_say'] = True
+        if item.get('requires_confirmation') and not self.pending_permission:
+            target = speak if kind == 'say' else value
+            if permissions.allowed(target):
+                self._voice_run(run, slots)
+                return True
+            self.permission_ask(run, slots, text)
+            self.say_text(tr(self.settings, 'confirm_ask'))
+            self.listening = True
+            self.requests.append(('listen', 15))
+            return True
+        self._voice_run(run, slots)
         return True
 
     def said_now_playing(self, playing):

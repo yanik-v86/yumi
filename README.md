@@ -308,6 +308,42 @@ Intents mind**.
 ]
 ```
 
+### Your own intents
+
+The **My phrases** page (`#/user-intents`) creates, edits, deletes, imports and exports your own
+rules, and the **Test phrase** button shows a match without running the action. The toggle is
+**Settings → Her mind → My own intents**. The same `~/.config/yumi/user_intents.json` can be
+edited by hand:
+
+```json
+{
+  "version": 1,
+  "revision": 7,
+  "intents": [
+    {
+      "id": "lights_on",
+      "name": "Lights on",
+      "enabled": true,
+      "phrases": ["включи свет", "lights on"],
+      "keywords": ["свет", "лампа"],
+      "action": {"type": "command", "value": "python3 /home/user/scripts/lights.py on"},
+      "speak": "Включаю свет",
+      "priority": 10,
+      "requires_confirmation": true
+    }
+  ]
+}
+```
+
+`action.type` is `command`, `url` (only `http://` or `https://`) or `say` (only `speak` is said;
+`action.value` is used when `speak` is empty). `requires_confirmation` defaults to `true` for
+commands and `false` for urls and sayings; `revision` protects edits made in the panel from
+being overwritten by an open editor or a hand edit. Rules are ordinary `nlu` sayings — no ONNX
+retraining and no restart are needed for a new phrase. They are matched **after** the built-in
+skills and the buttons from `actions.json`, so a button wins a contested phrase. There is no
+GTK editor: Yumi only runs the rules; the panel and the JSON file are the two places to edit
+them.
+
 ### Structured commands
 
 A button can describe itself a little more precisely. All of these fields are optional, so an
@@ -705,6 +741,7 @@ met” about her own wake word. If you edit `speakers.json` by hand, run
 | --- | --- |
 | `~/.config/yumi/settings.json` | settings (a broken one is kept as `settings.json.bad`) |
 | `~/.config/yumi/actions.json` | your round buttons |
+| `~/.config/yumi/user_intents.json` | your own voice rules (panel or hand-edited) |
 | `~/.config/yumi/palette.json` | optional colors from your theming script |
 | `~/.config/yumi/permissions.json` | saved ALLOW/DENY rules for buttons that ask first |
 | `~/.config/yumi/model_hashes.json` | recorded model fingerprints for the integrity check |
