@@ -538,6 +538,8 @@ try:
                 'phrases': ['новости'], 'keywords': [],
                 'action': {'type': 'command', 'value': 'news'},
                 'speak': 'Новости: {stdout}', 'capture': True, 'priority': 0,
+                'voice_answer': False, 'bubble_answer': True, 'bubble_limit': 150,
+                'voice_text': 'Голос: {stdout}', 'bubble_text': 'Бабла: {stdout}',
                 'requires_confirmation': False}
     code, data, _ = call('PUT', '/api/user-intents',
                          {'version': 1, 'revision': 0, 'intents': [intent, captured]})
@@ -548,6 +550,12 @@ try:
     assert code == 200 and data['revision'] == 1 and data['intents'][0]['id'] == 'lamp'
     assert data['intents'][1]['id'] == 'news' and data['intents'][1]['capture'] is True
     assert data['intents'][0]['capture'] is False
+    assert data['intents'][0]['bubble_limit'] == 1000
+    news = data['intents'][1]
+    assert news['voice_answer'] is False and news['bubble_answer'] is True
+    assert news['bubble_limit'] == 150
+    assert news['voice_text'] == 'Голос: {stdout}'
+    assert news['bubble_text'] == 'Бабла: {stdout}'
     code, data, _ = call('POST', '/api/user-intents/test', {'text': 'сделай свет'}, csrf=csrf)
     assert code == 200 and data['matched'] and data['intent']['id'] == 'lamp'
     assert data['score'] == 1.0 and data['source'] == 'user-intents'

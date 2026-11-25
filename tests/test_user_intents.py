@@ -67,6 +67,19 @@ try:
     assert one['capture'] is False
     captured = user_intents.validate(payload(CAPTURE))['intents'][0]
     assert captured['capture'] is True and captured['speak'] == 'Новости: {stdout}'
+    assert captured['voice_answer'] is True and captured['bubble_answer'] is True
+    assert captured['bubble_limit'] == 1000 == user_intents.DEFAULT_BUBBLE_LIMIT
+    assert captured['voice_text'] == '' and captured['bubble_text'] == ''
+    tuned = user_intents.validate(payload(dict(
+        CAPTURE, bubble_limit=50, voice_text='Голос: {stdout}',
+        bubble_text='Бабла: {stdout}')))['intents'][0]
+    assert tuned['bubble_limit'] == 100          # clamped to the allowed range
+    assert tuned['voice_text'] == 'Голос: {stdout}'
+    assert tuned['bubble_text'] == 'Бабла: {stdout}'
+    assert user_intents.validate(payload(dict(
+        CAPTURE, bubble_limit=9999)))['intents'][0]['bubble_limit'] == 4000
+    assert user_intents.validate(payload(dict(
+        CAPTURE, bubble_limit='nope')))['intents'][0]['bubble_limit'] == 1000
     url = user_intents.validate(payload({
         'phrases': ['найди'], 'action': {'type': 'url', 'value': 'https://example.org/'},
     }))['intents'][0]
@@ -91,6 +104,8 @@ try:
                                                          'value': 'x'}}),
         payload({'id': 'x', 'phrases': ['ф'], 'action': {'type': 'say', 'value': 'x'},
                  'capture': True}),
+        payload(dict(COMMAND, voice_text='Голос: {stdout}')),
+        payload(dict(COMMAND, bubble_text='Бабла: {stdout}')),
         payload({'id': 'x', 'phrases': ['ф' * 201], 'action': {'type': 'command', 'value': 'x'}}),
         payload({'id': 'x', 'phrases': ['ф'], 'action': {'type': 'command', 'value': ''}}),
         payload({'id': 'x', 'phrases': ['ф'], 'action': {'type': 'command',
@@ -139,6 +154,9 @@ try:
     assert entries[1]['url'] == URL['action']['value']
     assert entries[2]['command'] == 'lights on' and entries[2]['capture'] is False
     assert entries[3]['command'] == 'news' and entries[3]['capture'] is True
+    assert entries[3]['voice_answer'] is True and entries[3]['bubble_answer'] is True
+    assert entries[3]['bubble_limit'] == 1000
+    assert entries[3]['voice_text'] == '' and entries[3]['bubble_text'] == ''
     assert nlu.recognize('привет', user_intents.to_nlu_entries([SAY]),
                          use_intents=False).intent == 'hello_back'
 
@@ -146,6 +164,8 @@ try:
     result = user_intents.test_phrase('включи свет', payload(COMMAND))
     assert result == {'matched': True, 'intent': user_intents.public(COMMAND),
                       'score': 1.0, 'source': 'user-intents'}
+    assert result['intent']['bubble_limit'] == 1000
+    assert user_intents.public(captured)['voice_answer'] is True
     assert user_intents.test_phrase('совсем другое', payload(COMMAND))['matched'] is False
     assert user_intents.test_phrase('включи свет', payload(COMMAND),
                                     min_confidence=0.9)['matched'] is True

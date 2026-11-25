@@ -414,24 +414,30 @@ class Brain(Extras):
             return False
         return self.say_text(line[0], face=line[1])
 
-    def say_text(self, text, face=None, voice=True, spoken=None, appear=True, reveal=False):
+    def say_text(self, text, face=None, voice=True, spoken=None, appear=True, reveal=False,
+                 bubble=True):
         """her own words (a chat reply too) in the usual bubble, typed out and voiced;
         `spoken` is what the real voice says when the written words are too compact
         (the weather signs, «+5°C», that a voice reads poorly).  `appear=False` keeps
         her hidden until the sound is ready; `reveal=True` makes that first sound the
-        moment she comes out and starts moving her mouth."""
+        moment she comes out and starts moving her mouth.  `bubble=False` voices a
+        line without showing it: a hidden bubble keeps the sound path in sync."""
         text = ' '.join(str(text).split())
         if not text:
             return False
         times, typed = reveal_times(text)
         dur = typed + 2.2 + 0.04 * len(text)
-        self.bubble_n += 1
-        self.bubble = {'text': text, 'until': self.now + dur, 'start': self.now, 'times': times,
-                       'id': self.bubble_n}
         # No mouth movement here: talk_until is set when the WAV actually starts
         # playing (see SensesMixin._voice_started), so she never talks to silence.
         vol = self.settings.get('voice_vol', 50)
         sounding = bool(voice and vol and not self.sleeping)
+        self.bubble_n += 1
+        if bubble:
+            self.bubble = {'text': text, 'until': self.now + dur, 'start': self.now,
+                           'times': times, 'id': self.bubble_n}
+        elif sounding:
+            self.bubble = {'text': '', 'until': self.now + dur + 30, 'start': self.now,
+                           'times': [], 'id': self.bubble_n, 'hidden': True}
         if sounding:
             blips = [t for t, ch in zip(times, text) if ch.isalnum()]
             self.requests.append(('voice', blips, self.bubble_n,
@@ -455,9 +461,12 @@ class Brain(Extras):
             return False
         self._reveal_bid = None
         if self.bubble and self.bubble.get('id') == bid:
-            # the text types out together with the voice, not seconds before it
-            self.bubble['start'] = self.now
-            self.bubble['until'] = max(self.bubble['until'], self.now + secs + 2.0)
+            if self.bubble.get('hidden') and secs <= 0:
+                self.bubble = None      # voice failed: leave no invisible bubble behind
+            else:
+                # the text types out together with the voice, not seconds before it
+                self.bubble['start'] = self.now
+                self.bubble['until'] = max(self.bubble['until'], self.now + secs + 2.0)
         self.talk_until = self.now + secs
         self.thinking = False           # the answer is out: the ears may listen again
         if self.mode == 'docked' and not self.out and not self.sleeping:
@@ -1876,35 +1885,91 @@ class Brain(Extras):
         elif capture:
             # the answer is not known yet: wait for the GTK side to run the
             # command off-thread, then user_intent_answer() shows and voices it
+            try:
+                limit = int(action.get('bubble_limit')
+                            or user_intents.DEFAULT_BUBBLE_LIMIT)
+            except (TypeError, ValueError):
+                limit = user_intents.DEFAULT_BUBBLE_LIMIT
+            options = {
+                'voice': bool(action.get('voice_answer', True)),
+                'bubble': bool(action.get('bubble_answer', True)),
+                'bubble_limit': max(user_intents.MIN_BUBBLE_LIMIT,
+                                    min(user_intents.MAX_BUBBLE_LIMIT, limit)),
+                'voice_text': str(action.get('voice_text') or ''),
+                'bubble_text': str(action.get('bubble_text') or ''),
+            }
             self.requests.append(('run_capture', action['command'],
-                                  str(action.get('id') or ''), speak))
+                                  str(action.get('id') or ''), speak, options))
         else:
             self.requests.append(('run', action['command']))
         if speak and not capture:
             self.say_text(speak)
 
-    def user_intent_answer(self, output, intent_id='', speak='', failed=False):
-        """a captured user-intent command answered: the same bubble and voice
-        as any other line of hers.  ``{stdout}`` takes the command's answer; a
-        reply without that marker is prefixed to it."""
-        self.thinking = False
-        text = ' '.join(str(output or '').split())
-        if len(text) > MAX_CAPTURED_ANSWER:
-            text = text[:MAX_CAPTURED_ANSWER].rsplit(' ', 1)[0] + '…'
-        template = ' '.join(str(speak or '').split())
-        if not text:
+    @staticmethod
+    def _clip_captured(text, cap):
+        """cut a long command answer on a word boundary, never in the middle"""
+        if len(text) <= cap:
+            return text
+        head = text[:cap].rstrip()
+        words = head.rsplit(' ', 1)[0] if ' ' in head else ''
+        return (words or head) + '…'
+
+    def _captured_line(self, template, answer, failed, literal=False):
+        """one channel of a captured answer: ``{stdout}`` is its command output.
+        The shared ``speak`` prefixes an answer that has no marker (the old
+        behaviour); a separate voice/bubble template is used literally, so a
+        short announcement can hide a long output from that channel."""
+        template = ' '.join(str(template or '').split())
+        if not answer:
             if failed:
-                _mind_log(f'user intent answer {intent_id}: no output')
-                return self.say_text(tr(self.settings, 'intent_no_answer'))
-            return self.say_text(template) if template and '{stdout}' not in template else False
+                return tr(self.settings, 'intent_no_answer')
+            # no output at all: a plain line still makes sense, a {stdout} one does not
+            return template if template and (literal or '{stdout}' not in template) else ''
         if '{stdout}' in template:
-            answer = template.replace('{stdout}', text)
-        elif template:
-            answer = f'{template} {text}'
+            return template.replace('{stdout}', answer)
+        if literal:
+            return template
+        return f'{template} {answer}'.strip() if template else answer
+
+    def user_intent_answer(self, output, intent_id='', speak='', failed=False, options=None):
+        """a captured user-intent command answered.  Voice and bubble have
+        independent switches and may use different templates; the bubble is
+        clipped to its own limit while the voice keeps the whole answer."""
+        self.thinking = False
+        opts = options if isinstance(options, dict) else {}
+        voice_on = bool(opts.get('voice', True))
+        bubble_on = bool(opts.get('bubble', True))
+        try:
+            limit = int(opts.get('bubble_limit') or user_intents.DEFAULT_BUBBLE_LIMIT)
+        except (TypeError, ValueError):
+            limit = user_intents.DEFAULT_BUBBLE_LIMIT
+        limit = max(user_intents.MIN_BUBBLE_LIMIT,
+                    min(user_intents.MAX_BUBBLE_LIMIT, limit))
+
+        text = '' if failed else self._clip_captured(
+            ' '.join(str(output or '').split()), MAX_CAPTURED_ANSWER)
+        voice_text = ' '.join(str(opts.get('voice_text') or '').split())
+        bubble_text = ' '.join(str(opts.get('bubble_text') or '').split())
+        shared = ' '.join(str(speak or '').split())
+        voice_line = self._captured_line(voice_text or shared, text, failed,
+                                         literal=bool(voice_text))
+        # cap the whole bubble line, not just its {stdout} part: a long template
+        # must not silently push the visible answer past the intent's limit
+        bubble_line = self._clip_captured(
+            self._captured_line(bubble_text or shared, text, failed,
+                                literal=bool(bubble_text)), limit)
+        if failed:
+            _mind_log(f'user intent answer {intent_id}: no output')
         else:
-            answer = text
-        _mind_log(f'user intent answer {intent_id}')
-        return self.say_text(answer)
+            _mind_log(f'user intent answer {intent_id}')
+        if not voice_on and not bubble_on:
+            return False
+        if not bubble_line or not bubble_on:
+            # no visible words: a hidden bubble still owns the sound until it starts
+            return self.say_text(voice_line, bubble=False) if voice_on else False
+        speak_it = voice_on and bool(voice_line)
+        spoken = voice_line if speak_it and voice_line != bubble_line else None
+        return self.say_text(bubble_line, voice=speak_it, spoken=spoken)
 
     # ---- permissions: ALLOW once / ALWAYS (click only) / DENY ----------------
     @property
@@ -2061,10 +2126,16 @@ class Brain(Extras):
         _mind_log(f'user intent {hit.intent} (score {hit.confidence:.2f})')
         self.set_face('happy', 1.5)
         slots = self._voice_slots(hit)
+        capture = kind == 'command' and bool(item.get('capture'))
         run = {'id': hit.intent, 'speak': speak,
                'command': value if kind == 'command' else '',
                'url': value if kind == 'url' else '',
-               'capture': kind == 'command' and bool(item.get('capture'))}
+               'capture': capture,
+               'voice_answer': item.get('voice_answer', True),
+               'bubble_answer': item.get('bubble_answer', True),
+               'bubble_limit': item.get('bubble_limit'),
+               'voice_text': item.get('voice_text', ''),
+               'bubble_text': item.get('bubble_text', '')}
         if kind == 'say':
             run['_user_intent_say'] = True
         if item.get('requires_confirmation') and not self.pending_permission:
@@ -2716,7 +2787,8 @@ class Brain(Extras):
             ops += self.menu_ops()
         if self.tour and shown:
             ops += self.tour_ops()
-        bops = self.bubble_ops() if self.bubble and shown else []
+        bops = (self.bubble_ops()
+                if self.bubble and not self.bubble.get('hidden') and shown else [])
         # a line never covers the ring: it moved above it in bubble_ops; if there was no room
         # up there, the ring is drawn on top of the bubble instead
         ops += bops + rops if self.bubble_under else rops + bops

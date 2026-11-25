@@ -432,7 +432,8 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                 system.spawn('sh', '-c', r[1])
             elif kind == 'run_capture':
                 self.run_capture(r[1], r[2] if len(r) > 2 else '',
-                                 r[3] if len(r) > 3 else '')
+                                 r[3] if len(r) > 3 else '',
+                                 r[4] if len(r) > 4 else None)
             elif kind == 'url':
                 system.open_url(r[1])
             elif kind == 'monitor_next':
@@ -555,12 +556,13 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                 self.close()
                 self.restart()
 
-    def run_capture(self, command, intent_id, speak):
+    def run_capture(self, command, intent_id, speak, options=None):
         """run an answer-producing user command off the GTK thread and give its
-        stdout back to Brain, which shows it in the bubble and voices it.  The
+        stdout back to Brain, which voices and shows it as the intent asks.  The
         command itself is never logged; only a generic failure is reported."""
         def finish(output, failed):
-            self.ev(lambda b: b.user_intent_answer(output, intent_id, speak, failed))
+            self.ev(lambda b: b.user_intent_answer(output, intent_id, speak, failed,
+                                                   options))
             return False
 
         def work():

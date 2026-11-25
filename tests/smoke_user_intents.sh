@@ -150,8 +150,11 @@ try:
 
     brain.requests.clear()
     assert brain.voice_user_intent('ответь новостями') is True
-    assert ('run_capture', 'noop-answer', 'answer', 'Ответ: {stdout}') in brain.requests
-    assert brain.user_intent_answer('свежие заголовки', 'answer', 'Ответ: {stdout}') is True
+    req = next(r for r in brain.requests if r[0] == 'run_capture')
+    assert req[:4] == ('run_capture', 'noop-answer', 'answer', 'Ответ: {stdout}')
+    assert req[4]['bubble_limit'] == 1000
+    assert brain.user_intent_answer('свежие заголовки', 'answer', 'Ответ: {stdout}',
+                                    options=req[4]) is True
     assert brain.bubble['text'] == 'Ответ: свежие заголовки', brain.bubble
 
     # the very same launch is available to the browser's card button
@@ -159,7 +162,7 @@ try:
                          {'text': 'ответь новостями'}, csrf=csrf)
     assert code == 200 and data['matched'] and data['ran'] is True, (code, data)
     assert data['intent']['id'] == 'answer'
-    assert ('run_capture', 'noop-answer', 'answer', 'Ответ: {stdout}') in brain.requests
+    assert any(r[0] == 'run_capture' and r[1] == 'noop-answer' for r in brain.requests)
 
     # 2. edit the file by hand: Brain must notice the new mtime without a restart
     raw = json.loads(intents_path.read_text(encoding='utf-8'))

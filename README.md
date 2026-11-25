@@ -330,6 +330,9 @@ same `~/.config/yumi/user_intents.json` can be edited by hand:
       "action": {"type": "command", "value": "python3 /home/user/scripts/lights.py on"},
       "speak": "Включаю свет",
       "capture": false,
+      "voice_answer": true,
+      "bubble_answer": true,
+      "bubble_limit": 1000,
       "priority": 10,
       "requires_confirmation": true
     }
@@ -342,9 +345,16 @@ same `~/.config/yumi/user_intents.json` can be edited by hand:
 commands and `false` for urls and sayings. A command with `"capture": true` runs off-thread and
 answers with its stdout: `{stdout}` in `speak` is replaced by that output, and the result appears
 in Yumi's bubble and in her normal voice (no output — she says there is no answer). The panel
-offers this as **Answer in bubble and voice**. `revision` protects edits made in the panel from
-being overwritten by an open editor or a hand edit. Rules are ordinary `nlu` sayings — no ONNX
-retraining and no restart are needed for a new phrase. They are matched **after** the built-in
+offers this as **Use the command output** with independent **Voice separately** and **Bubble
+separately** switches (`voice_answer` / `bubble_answer`, both `true` by default). `voice_text`
+and `bubble_text` give each channel its own template instead of the shared `speak`: a separate
+template uses `{stdout}` when it wants the output, and without the marker it is spoken literally
+(e.g. a short announcement while the full news stays in the bubble). `bubble_limit` clips the
+bubble to `1000` characters by default (`100..4000`); a `{stdout}` voice line gets the whole
+answer up to `4000` unless a separate literal line replaces it.
+With both switches off the command just runs silently. `revision` protects edits made in the
+panel from being overwritten by an open editor or a hand edit. Rules are ordinary `nlu` sayings —
+no ONNX retraining and no restart are needed for a new phrase. They are matched **after** the built-in
 skills and the buttons from `actions.json`, so a button wins a contested phrase. There is no
 GTK editor: Yumi only runs the rules; the panel and the JSON file are the two places to edit
 them.

@@ -9,11 +9,15 @@ pure functions, and Brain decides what to do with a hit.
        "phrases": ["включи свет"], "keywords": ["свет"],
        "action": {"type": "command", "value": "lights on"},
        "speak": "Включаю свет", "capture": false, "priority": 10,
+       "voice_answer": true, "bubble_answer": true, "bubble_limit": 1000,
        "requires_confirmation": true}]}
 
 ``version`` is the format, ``revision`` is the optimistic lock for the panel.
 A command with ``capture: true`` sends its stdout to ``{stdout}`` in ``speak``:
 Yumi then shows and voices the answer instead of just running the command.
+``voice_answer``/``bubble_answer`` turn those two outputs on independently;
+``voice_text``/``bubble_text`` replace the shared ``speak`` template and stay literal
+without ``{stdout}`` (a short announcement), while ``bubble_limit`` caps the bubble.
 These rules are ordinary nlu entries, not ONNX training data: no restart and
 no classifier retraining is needed for a new phrase.
 """
@@ -35,6 +39,10 @@ MAX_ITEMS = 50
 MAX_TEXT = 200
 MAX_VALUE = 1000
 MAX_PRIORITY = 100
+MAX_ANSWER_TEMPLATE = 1000
+DEFAULT_BUBBLE_LIMIT = 1000
+MIN_BUBBLE_LIMIT = 100
+MAX_BUBBLE_LIMIT = 4000
 
 
 class RevisionConflict(Exception):
@@ -73,6 +81,16 @@ def _int(value, default=0):
     except (TypeError, ValueError):
         number = 0
     return max(-MAX_PRIORITY, min(MAX_PRIORITY, number))
+
+
+def _limit(value, default=DEFAULT_BUBBLE_LIMIT):
+    if value in (None, ''):
+        return default
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(MIN_BUBBLE_LIMIT, min(MAX_BUBBLE_LIMIT, number))
 
 
 def _list(value, field):
@@ -155,6 +173,10 @@ def _one(raw, used):
     capture = _bool(raw.get('capture'))
     if capture and kind != 'command':
         raise ValueError(f'{ident}: capture needs a command action')
+    voice_text = _text(raw.get('voice_text'), 'voice_text', MAX_ANSWER_TEMPLATE)
+    bubble_text = _text(raw.get('bubble_text'), 'bubble_text', MAX_ANSWER_TEMPLATE)
+    if not capture and (voice_text or bubble_text):
+        raise ValueError(f'{ident}: separate answer lines need capture')
 
     if 'requires_confirmation' in raw:
         confirm = _bool(raw['requires_confirmation'])
@@ -166,6 +188,10 @@ def _one(raw, used):
         'id': ident, 'name': name, 'enabled': _bool(raw.get('enabled'), True),
         'phrases': phrases, 'keywords': keywords,
         'action': {'type': kind, 'value': value}, 'speak': speak, 'capture': capture,
+        'voice_text': voice_text, 'bubble_text': bubble_text,
+        'voice_answer': _bool(raw.get('voice_answer'), True),
+        'bubble_answer': _bool(raw.get('bubble_answer'), True),
+        'bubble_limit': _limit(raw.get('bubble_limit')),
         'priority': _int(raw.get('priority')), 'requires_confirmation': confirm,
         'created_at': created, 'updated_at': updated,
     }
@@ -264,6 +290,11 @@ def to_nlu_entries(intents):
             'priority': _int(item.get('priority')),
             'speak': str(item.get('speak') or ''),
             'capture': kind == 'command' and _bool(item.get('capture')),
+            'voice_answer': _bool(item.get('voice_answer'), True),
+            'bubble_answer': _bool(item.get('bubble_answer'), True),
+            'bubble_limit': _limit(item.get('bubble_limit')),
+            'voice_text': str(item.get('voice_text') or '')[:MAX_ANSWER_TEMPLATE],
+            'bubble_text': str(item.get('bubble_text') or '')[:MAX_ANSWER_TEMPLATE],
         }
         if kind == 'say':
             entry['user_intent'] = True   # never be mistaken for a shell command
@@ -296,6 +327,11 @@ def public(intent):
         'action_type': str(action.get('type') or ''),
         'capture': str(action.get('type') or '').strip().lower() == 'command'
                    and _bool(intent.get('capture')),
+        'voice_answer': _bool(intent.get('voice_answer'), True),
+        'bubble_answer': _bool(intent.get('bubble_answer'), True),
+        'bubble_limit': _limit(intent.get('bubble_limit')),
+        'voice_text': str(intent.get('voice_text') or '')[:MAX_ANSWER_TEMPLATE],
+        'bubble_text': str(intent.get('bubble_text') or '')[:MAX_ANSWER_TEMPLATE],
         'phrases': list(intent.get('phrases') or []),
         'keywords': list(intent.get('keywords') or []),
         'priority': _int(intent.get('priority')),

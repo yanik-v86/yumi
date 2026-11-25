@@ -110,6 +110,9 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
       "action": {"type": "command", "value": "python3 /home/user/scripts/lights.py on"},
       "speak": "Включаю свет",
       "capture": false,
+      "voice_answer": true,
+      "bubble_answer": true,
+      "bubble_limit": 1000,
       "priority": 10,
       "requires_confirmation": true,
       "created_at": "2026-11-25T12:00:00Z",
@@ -126,6 +129,12 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
 - Для `say` говорится `speak`; `action.value` используется только если `speak` пуст.
 - `capture: true` разрешён только для `command`: её stdout подставляется в `{stdout}` внутри
   `speak` (или приписывается к реплике без маркера) и уходит в обычный `say_text()`.
+- `voice_answer` / `bubble_answer` — независимые переключатели ответа (по умолчанию оба `true`).
+  `voice_text` / `bubble_text` задают свои шаблоны вместо общего `speak` (пусто — взять общий):
+  `{stdout}` подставляет вывод, а без маркера отдельный шаблон используется дословно.
+  `bubble_limit` — длина текста в бабле: по умолчанию `1000`, допустимо `100..4000`;
+  голос получает полный ответ до `MAX_CAPTURED_ANSWER = 4000`. Отдельные шаблоны имеют смысл
+  только при `capture: true`.
 - `url` — только `http(s)://`. Ограничения: ≤50 фраз/keywords, строка ≤200, `command` ≤1000,
   `id` — `[a-zA-Z0-9_-]{1,64}`.
 
@@ -137,9 +146,11 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
 Без GTK и без сетевых вызовов. Ответственности:
 
 - `load/save` с атомарной записью `tmp` + `replace` (без мнимой блокировки);
-- `validate(payload)` — схема, уникальность id, длины, safety-проверки;
+- `validate(payload)` — схема, уникальность id, длины, safety-проверки, нормализация полей
+  ответа (`_limit()` клампит `bubble_limit`, отдельные шаблоны требуют `capture`);
 - `to_nlu_entries(intents)` — плоские записи для `nlu.recognize()`: `phrases`, `keywords`,
-  `priority`, `speak`, `id`, `capture`; `command`/`url` — для одноимённых типов; маркер
+  `priority`, `speak`, `id`, `capture`, `voice_answer`, `bubble_answer`, `bubble_limit`,
+  `voice_text`, `bubble_text`; `command`/`url` — для одноимённых типов; маркер
   `user_intent` — для `say`, чтобы в shell не ушла фиктивная команда;
 - `match(text, intents)` и `test_phrase(text)` (без выполнения);
 - `from_actions(actions)` — конвертация кнопок;
@@ -166,7 +177,14 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
 - `requires_confirmation` — через существующий `pending_permission`/`permissions`
   (`brain.py:1883-1908`); target для `say` — текст реплики.
 - `command` → `('run', ...)`, `url` → `('url', ...)`, `say` → `say_text()`.
-- `capture` → `('run_capture', command, intent_id, speak)`: GTK-поток запускает команду в daemon-потоке (`App.run_capture`), ждёт stdout и через `GLib.idle_add` вызывает `Brain.user_intent_answer()`, который показывает и озвучивает ответ через `say_text()`. `\n` в выводе схлопываются в пробелы, ответ обрезается до `MAX_CAPTURED_ANSWER`.
+- `capture` → `('run_capture', command, intent_id, speak, options)`: пятый элемент несёт
+  `voice`, `bubble`, `bubble_limit`, `voice_text`, `bubble_text` из записи. GTK-поток
+  запускает команду в daemon-потоке (`App.run_capture`), ждёт stdout и через `GLib.idle_add`
+  вызывает `Brain.user_intent_answer(output, intent_id, speak, failed, options)`. Она рендерит
+  голос и баблу раздельно: `voice_text`/`bubble_text` заменяют общий `speak`, бабла обрезается
+  по `bubble_limit`, голос — по `MAX_CAPTURED_ANSWER`. `\n` в выводе схлопываются в пробелы.
+  При `bubble=False` скрытый бабл с пустым текстом держит id звука, пока TTS не зазвучит;
+  `bubble_ops()` его не рисует, и панель не видит текст.
 - Флаг `user_intents = false` выключает слой полностью.
 - Фразы пользовательских интентов добавить в `addressing.hints_from()` вместе с `self.custom`.
 
@@ -190,12 +208,14 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
 Новая страница `user-intents` (`catalog.PAGES`, lazy import в `app.js`, `render(view, ctx)`):
 список карточек, форма, textarea фраз, select `action.type`, кнопки «Проверить» / «Импорт» /
 «Экспорт», тумблеры `enabled`, `requires_confirmation` и `capture` (только для `command`),
-скрытое поле `revision`. Подсказка у `speak` объясняет `{stdout}`. Кнопка карточки «Проверить»
+поля ответа «Озвучивать отдельно» / «Пузыть отдельно», «Голосовая реплика» / «Реплика в бабле»
+и «Лимит бабла» (показываются только при `capture`), скрытое поле `revision`.
+Подсказка у `speak` объясняет `{stdout}`. Карточка показывает статус ответа и лимит. Кнопка «Проверить»
 вызывает `/run` (нашла фразу — запустила с репликой/голосом/командой); блок «Совпадение?»
 вызывает `/test` и ничего не исполняет. UX и DOM-безопасность — по образцу `buttons.js`: только
 `createElement`/`textContent`.
 
-`api.js`: `userIntentsGet/Put/Import/Export/Test`.
+`api.js`: `userIntentsGet/Put/Import/Export/Test/Run`.
 
 `bridge.py` + `webpanel.py` + `server.py`:
 
@@ -242,11 +262,14 @@ GTK-этапа нет.
 ## 5. Тесты (обязательный минимум)
 
 - `tests/test_user_intents.py` (новый): load/save/validate, полный цикл import/export,
-  `revision`, scoring `1.0/0.8/0.6`, `enabled`, `priority` как тай-брейк, горячая перезагрузка.
+  `revision`, scoring `1.0/0.8/0.6`, `enabled`, `priority` как тай-брейк, горячая перезагрузка;
+  дефолты и клампинг `bubble_limit`, отказ отдельных шаблонов без `capture`.
 - `tests/test_webpanel.py`: новые роуты, CSRF, схема, `revision`→409, invalid import→400,
-  заголовки export, `/test` и `/run`; обновить stub `Bridge` и ожидание 16 страниц.
+  заголовки export, `/test` и `/run`, roundtrip новых полей ответа; обновить stub `Bridge`
+  и ожидание 16 страниц.
 - `tests/test_voice_intent.py` / `tests/test_nlu.py`: базовые кнопки и ONNX не сломаны; отдельно
-  проверяется `run_capture` → `user_intent_answer()` (бабла + `voice`-запрос) и подтверждение.
+  проверяется `run_capture` → `user_intent_answer()` с пятым `options`: бабла + `voice`-запрос,
+  подтверждение, голос без баблы (скрытый бабл), бабла без голоса, отдельные шаблоны и лимит.
 - `tests/smoke_user_intents.sh` (новый): API → ручная правка JSON → `Brain` видит →
   test phrase → `/run` через HTTP → export → import → delete. Без GTK.
 
@@ -276,6 +299,7 @@ GTK-этапа нет.
 - [x] Тест фразы показывает совпадение без выполнения действия.
 - [x] Кнопка «Проверить» в панели запускает найденный интент со всеми обычными эффектами.
 - [x] Ответ `capture`-интента появляется в бабле и озвучивается обычным путём `say_text()`.
+- [x] Голос и бабла переключаются независимо, имеют свои шаблоны и лимит баблы по умолчанию.
 - [x] Кастомные интенты работают без перезапуска и без переобучения ONNX.
 - [x] Базовые навыки, кнопки и ONNX не сломаны; порядок зафиксирован тестами.
 - [x] Новые настройки и страница отражены в `catalog.py`, `api.js` и счётчике страниц теста.

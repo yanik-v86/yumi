@@ -117,11 +117,18 @@ export function render(view, ctx) {
           el('div', { class: 'row' },
             el('b', { text: intent.name || intent.id }),
             intent.capture ? badge(L('ответ', 'answer'), 'good') : null,
+            intent.capture && intent.voice_answer === false
+              ? badge(L('без голоса', 'no voice'), 'red') : null,
+            intent.capture && intent.bubble_answer === false
+              ? badge(L('без бабла', 'no bubble'), 'red') : null,
             intent.enabled ? null : badge(L('выкл', 'off'), 'red')),
           el('span', { class: 'card-hint', text: actionType })),
         el('div', { class: 'card-hint', text: `id: ${intent.id}` }),
         el('div', { class: 'card-hint', text:
           (intent.phrases || []).concat(intent.keywords || []).join(' · ') }),
+        intent.capture ? el('div', { class: 'card-hint', text: L(
+          `Пузырь до ${intent.bubble_limit || 1000} символов`,
+          `Bubble up to ${intent.bubble_limit || 1000} characters`) }) : null,
         el('div', { class: 'row', style: { marginTop: 'auto', paddingTop: '8px' } },
           button(L('Править', 'Edit'), { small: true, onClick: () => edit(index) }),
           button(L('Проверить', 'Test'), {
@@ -157,7 +164,8 @@ export function render(view, ctx) {
     const draft = original ? JSON.parse(JSON.stringify(original)) : {
       id: '', name: '', enabled: true, phrases: [], keywords: [],
       action: { type: 'say', value: '' }, speak: '', capture: false, priority: 0,
-      requires_confirmation: false,
+      requires_confirmation: false, voice_answer: true, bubble_answer: true,
+      bubble_limit: 1000, voice_text: '', bubble_text: '',
     };
     const id = el('input', {
       type: 'text', value: draft.id || '', maxlength: 64, spellcheck: 'false',
@@ -190,14 +198,53 @@ export function render(view, ctx) {
     const capture = el('input', {
       type: 'checkbox', checked: Boolean(draft.capture),
     });
-    const captureRow = el('div', { class: 'full' }, el('div', { class: 'row' },
+    const voiceAnswer = el('input', {
+      type: 'checkbox', checked: draft.voice_answer !== false,
+    });
+    const bubbleAnswer = el('input', {
+      type: 'checkbox', checked: draft.bubble_answer !== false,
+    });
+    const bubbleLimit = el('input', {
+      type: 'number', value: String(draft.bubble_limit ?? 1000),
+      min: '100', max: '4000', step: '100',
+    });
+    const voiceLine = el('input', {
+      type: 'text', value: draft.voice_text || '', maxlength: 1000,
+      placeholder: L('Голос: {stdout}', 'Voice: {stdout}'),
+    });
+    const bubbleLine = el('input', {
+      type: 'text', value: draft.bubble_text || '', maxlength: 1000,
+      placeholder: L('Бабла: {stdout}', 'Bubble: {stdout}'),
+    });
+    const captureRow = el('div', { class: 'row' },
       el('label', { class: 'row' }, capture,
-        el('span', { text: L('Ответ команды в бабле и голосом', 'Answer in bubble and voice') }))));
+        el('span', { text: L('Использовать вывод команды', 'Use the command output') })));
+    const answerRows = el('div', { class: 'stack' },
+      el('div', { class: 'row' },
+        el('label', { class: 'row' }, voiceAnswer,
+          el('span', { text: L('Озвучивать отдельно', 'Voice separately') })),
+        el('label', { class: 'row' }, bubbleAnswer,
+          el('span', { text: L('Пузыть отдельно', 'Bubble separately') }))),
+      field(L('Голосовая реплика', 'Voice line'), voiceLine,
+        L('Пусто — общая реплика ниже. {stdout} заменяется выводом; без маркера строка дословно.',
+          'Empty uses the shared line. {stdout} inserts the output; without it, the line is literal.')),
+      field(L('Реплика в бабле', 'Bubble line'), bubbleLine,
+        L('Пусто — общая реплика ниже. {stdout} заменяется выводом, лимит обрезает текст.',
+          'Empty uses the shared line. {stdout} inserts the output; the limit clips the text.')),
+      field(L('Лимит бабла', 'Bubble limit'), bubbleLimit,
+        L('От 100 до 4000 символов, по умолчанию 1000.',
+          '100 to 4000 characters, 1000 by default.')));
+    const captureBlock = el('div', { class: 'full' }, captureRow, answerRows);
+    const syncCapture = () => {
+      answerRows.style.display = capture.checked ? '' : 'none';
+    };
     const syncKind = () => {
-      captureRow.style.display = kind.value === 'command' ? '' : 'none';
+      captureBlock.style.display = kind.value === 'command' ? '' : 'none';
       if (kind.value !== 'command') capture.checked = false;
+      syncCapture();
     };
     kind.addEventListener('change', syncKind);
+    capture.addEventListener('change', syncCapture);
     syncKind();
     const revision = el('input', { type: 'hidden', value: String(data.revision || 0) });
 
@@ -216,7 +263,7 @@ export function render(view, ctx) {
         el('div', { class: 'full' }, field(L('Значение', 'Value'), value,
           L('Команда, адрес http(s) или реплика для «просто сказать».',
             'A command, an http(s) address, or the line for “just say it”.'))),
-        captureRow,
+        captureBlock,
         el('div', { class: 'full' }, field(L('Реплика после действия', 'Line to say'), speak,
           L('В ответе команды {stdout} заменяется её выводом.',
             'In a captured answer, {stdout} becomes the command output.'))),
@@ -248,6 +295,11 @@ export function render(view, ctx) {
               action: { type, value: value.value.trim() },
               speak: speak.value.trim(),
               capture: type === 'command' && capture.checked,
+              voice_answer: voiceAnswer.checked,
+              bubble_answer: bubbleAnswer.checked,
+              bubble_limit: Number.parseInt(bubbleLimit.value, 10) || 1000,
+              voice_text: type === 'command' && capture.checked ? voiceLine.value.trim() : '',
+              bubble_text: type === 'command' && capture.checked ? bubbleLine.value.trim() : '',
               priority: Number.parseInt(priority.value, 10) || 0,
               requires_confirmation: confirmFirst.checked,
             };

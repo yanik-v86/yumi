@@ -184,9 +184,13 @@ CAPTURE = dict(RULE, id='news', name='Новости', phrases=['новости'
 b = intents_brain([CAPTURE])
 b.requests.clear()
 assert b.voice_user_intent('новости') is True
-assert ('run_capture', 'news', 'news', 'Новости: {stdout}') in b.requests, b.requests
+req = next(r for r in b.requests if r[0] == 'run_capture')
+assert req[:4] == ('run_capture', 'news', 'news', 'Новости: {stdout}'), b.requests
+assert req[4] == {'voice': True, 'bubble': True, 'bubble_limit': 1000,
+                  'voice_text': '', 'bubble_text': ''}
 assert not any(r[0] in ('run', 'voice') for r in b.requests), 'no early bubble or command'
-assert b.user_intent_answer('Мир: новость', 'news', 'Новости: {stdout}') is True
+assert b.user_intent_answer('Мир: новость', 'news', 'Новости: {stdout}',
+                            options=req[4]) is True
 assert b.bubble['text'] == 'Новости: Мир: новость', b.bubble
 assert any(r[0] == 'voice' and r[5] == 'Новости: Мир: новость' for r in b.requests)
 
@@ -196,8 +200,68 @@ b.requests.clear()
 assert b.voice_user_intent('новости') is True
 assert not any(r[0] == 'run_capture' for r in b.requests)
 b.heard_text('да')
-assert ('run_capture', 'news', 'news', 'Новости: {stdout}') in b.requests, b.requests
-assert b.user_intent_answer('Мир: новость', 'news', 'Новости: {stdout}', failed=True) is True
+req = next(r for r in b.requests if r[0] == 'run_capture')
+assert req[:4] == ('run_capture', 'news', 'news', 'Новости: {stdout}'), b.requests
+assert b.user_intent_answer('Мир: новость', 'news', 'Новости: {stdout}',
+                            failed=True, options=req[4]) is True
+
+# voice and bubble are independent: a long answer can be voiced without a bubble
+b = intents_brain([dict(CAPTURE, voice_answer=False, bubble_answer=True, speak='{stdout}')])
+b.requests.clear()
+assert b.voice_user_intent('новости') is True
+req = next(r for r in b.requests if r[0] == 'run_capture')
+assert req[4]['voice'] is False and req[4]['bubble'] is True
+assert b.user_intent_answer('Только текст', 'news', '{stdout}', options=req[4]) is True
+assert b.bubble['text'] == 'Только текст' and not b.bubble.get('hidden'), b.bubble
+assert not any(r[0] == 'voice' for r in b.requests), b.requests
+
+b = intents_brain([dict(CAPTURE, voice_answer=True, bubble_answer=False)])
+b.requests.clear()
+assert b.voice_user_intent('новости') is True
+req = next(r for r in b.requests if r[0] == 'run_capture')
+assert req[4]['voice'] is True and req[4]['bubble'] is False
+assert b.user_intent_answer('Только голос', 'news', 'Новости: {stdout}',
+                            options=req[4]) is True
+assert b.bubble.get('hidden') is True and b.bubble['text'] == '', b.bubble
+assert any(r[0] == 'voice' and r[5] == 'Новости: Только голос' for r in b.requests)
+
+# separate lines and a short bubble limit: the voice still gets the whole answer
+LONG = 'СЛОВО ' * 40
+b = intents_brain([dict(CAPTURE, speak='Новости: {stdout}',
+                        voice_text='Коротко: {stdout}', bubble_text='Подробно: {stdout}',
+                        bubble_limit=120)])
+b.requests.clear()
+assert b.voice_user_intent('новости') is True
+req = next(r for r in b.requests if r[0] == 'run_capture')
+assert req[4]['bubble_limit'] == 120
+assert req[4]['voice_text'] == 'Коротко: {stdout}'
+assert req[4]['bubble_text'] == 'Подробно: {stdout}'
+assert b.user_intent_answer(LONG, 'news', 'Новости: {stdout}', options=req[4]) is True
+assert b.bubble['text'].startswith('Подробно: '), b.bubble
+assert len(b.bubble['text']) <= 120, len(b.bubble['text'])
+voice = next(r for r in b.requests if r[0] == 'voice')
+assert voice[5].startswith('Коротко: '), voice
+assert len(voice[5]) > len(b.bubble['text']) + 40, (voice[5], b.bubble['text'])
+
+# a separate line without {stdout} is literal: short voice, full bubble
+b = intents_brain([dict(CAPTURE, voice_text='Свежие новости в бабле')])
+b.requests.clear()
+assert b.voice_user_intent('новости') is True
+req = next(r for r in b.requests if r[0] == 'run_capture')
+assert b.user_intent_answer(LONG, 'news', 'Новости: {stdout}', options=req[4]) is True
+voice = next(r for r in b.requests if r[0] == 'voice')
+assert voice[5] == 'Свежие новости в бабле', voice
+assert 'СЛОВО' in b.bubble['text'], b.bubble
+
+# the default limit also clips answers that use one shared line
+b = intents_brain([CAPTURE])
+b.requests.clear()
+assert b.voice_user_intent('новости') is True
+req = next(r for r in b.requests if r[0] == 'run_capture')
+huge = 'слово ' * 900
+assert b.user_intent_answer(huge, 'news', 'Новости: {stdout}', options=req[4]) is True
+assert len(b.bubble['text']) <= 1000, len(b.bubble['text'])
+assert len(next(r for r in b.requests if r[0] == 'voice')[5]) < 4100
 
 # the setting turns the whole layer off
 b = intents_brain([dict(RULE, requires_confirmation=False)], user_intents=False)
