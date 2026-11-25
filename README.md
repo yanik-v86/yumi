@@ -600,8 +600,9 @@ name, while a quiet one (0.5–0.8) is checked against the tape the phrase ear r
 Nemotron (or whisper) must hear the name itself or a clear command. If it does not, a name
 half-heard in a video's stream stays a dream and she keeps waiting.
 If the trained ear missed the name but vosk heard both the name and a tail, the tail is routed
-again: a command («play music», your own button, a note) runs, a question or a phrase addressed
-to her goes to her mind, and background talk stays unanswered — she simply keeps quiet.
+again: a command («play music», «next», «previous», your own button, a note) runs, a question or
+a phrase addressed to her goes to her mind, and background talk stays unanswered — she simply
+keeps quiet. «Yumi, next» and «Yumi, back» skip tracks even when the trained ear misses the name.
 The waiting hears nothing else: everything is computed on the spot, offline.
 
 ### Hands-free conversation

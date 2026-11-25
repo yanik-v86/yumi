@@ -68,6 +68,15 @@ assert m('дальш') == 'next'                       # a letter the music ate
 assert m('перемотай дальше') == 'next'
 assert m('продолжай дальше') == 'resume'          # a resume, not a skip
 
+# the ears' diary, 12:50: the trained ear heard only 0.13 of the name, vosk heard
+# «юми дальше» — the tail must be routed and must become the next track
+from yumi import stt_daemon as stt, addressing  # noqa: E402
+_tail, _said = stt.wake_at('юми дальше', stt.variants('юми'), 1)
+assert (_tail, _said) == ('дальше', 'юми')
+assert stt.fallback_route(_tail) == 'command'
+assert addressing.route(_tail) == 'command'
+assert m(brain.drop_name('юми дальше')) == 'next'
+
 # «юми, продолжи»: the track «стоп» cut off comes back, not a fresh random hand
 assert m('продолжи') == 'resume'
 assert m('юми продолжи') == 'resume'

@@ -31,6 +31,12 @@ for said in ('просто болтовня ни о чем', 'сегодня х�
              'он сказал что придет позже', 'the meeting starts at nine'):
     assert addressing.route(said) == 'ignore', said
 
+# «дальше» is her word for the next track (brain.music_control_text): when the
+# trained ear misses the name, vosk's «юми дальше» must not be dropped as
+# background talk — it is the whole command and the wake's fallback needs it
+for said in ('дальше', 'далше', 'дальше трек', 'следующий', 'назад'):
+    assert addressing.route(said) == 'command', said
+
 # a question mark alone is enough (whisper sometimes keeps it)
 assert addressing.route('кофе?') == 'chat'
 
@@ -52,6 +58,8 @@ assert addressing.hints_from([
 from yumi import stt_daemon as stt  # noqa: E402
 assert stt.fallback_route('последняя заметка') == 'command'
 assert stt.fallback_route('включи музыку') == 'command'
+assert stt.fallback_route('дальше') == 'command'
+assert stt.fallback_route('далше') == 'command'
 assert stt.fallback_route('как дела') == 'chat'
 assert stt.fallback_route('просто болтовня ни о чем') == 'ignore'
 assert stt.fallback_route('терминал', hints=['терминал']) == 'command'
