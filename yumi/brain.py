@@ -12,6 +12,7 @@ import math
 import random
 import time
 import urllib.parse
+import uuid
 from pathlib import Path
 
 from . import jobs as J
@@ -21,6 +22,7 @@ from . import conversation as dialogue
 from . import entities
 from . import nlu
 from . import notes
+from . import intent_log
 from . import user_intents
 from . import permission as permissions
 from .config import RING_SLOTS, UI, tr
@@ -292,6 +294,7 @@ class Brain(Extras):
         self._permission_id = 0
         self.last_intent = ''           # the last voice command's id, for the browser panel
         self.last_confidence = 0.0      # and how sure the match was
+        self.last_user_intent_run_id = ''  # the last own-intent run, for the panel journal
         self.chat_models = []           # installed Ollama models, for the settings row
         self.mics = []                  # microphones her ears can hear, for the settings row
         self.radial = False             # the ring of round buttons around her
@@ -581,7 +584,8 @@ class Brain(Extras):
                 'speaker_threshold': [0.5, 0.65, 0.8, 0.9],
                 'speaker_min_ms': [800, 1200, 2000, 3000],
                 'speaker_join_policy': ['addressed', 'strict', 'off'],
-                'music_source': ['auto', 'jellyfin', 'local']}
+                'music_source': ['auto', 'jellyfin', 'local'],
+                'intents_log_level': list(intent_log.LEVELS)}
 
     outfit_names = []                 # outfit folders found in sprites/outfits (set by the app)
 
@@ -625,6 +629,8 @@ class Brain(Extras):
             return t('sp_' + str(val)) if f'sp_{val}' in UI['en'] else str(val)
         if arg == 'music_source':
             return t('m_' + str(val)) if f'm_{val}' in UI['en'] else str(val)
+        if arg == 'intents_log_level':
+            return t('il_' + str(val)) if f'il_{val}' in UI['en'] else str(val)
         if arg == 'stt_mic':
             if not val:
                 return t('mic_auto')
@@ -1065,7 +1071,8 @@ class Brain(Extras):
                     ('set', 'conversation_gap_reset_min', t('conversation_gap_reset_min')),
                     ('set', 'conversation_history_n', t('conversation_history_n')),
                     ('set', 'nlu', t('nlu')),
-                    ('set', 'intents', t('intents'))]
+                    ('set', 'intents', t('intents')),
+                    ('set', 'intents_log_level', t('intents_log_level'))]
             if self.chat_models:        # the list may have grown stale: a way to look again
                 rows.append(('chat_refresh', None, t('chat_refresh')))
             rows.append(('menu', 'settings', t('back')))
@@ -1875,12 +1882,29 @@ class Brain(Extras):
             speak = speak.replace(marker, str(value))
             if marker in url:
                 url = url.replace(marker, urllib.parse.quote(str(value), safe=''))
+        capture = bool(action.get('capture')) and bool(action.get('command'))
+        run_id = str(action.get('_run_id') or '')
+        source = str(action.get('_source') or 'voice')
+        intent_id = str(action.get('id') or '')
+        cwd = str(action.get('_cwd') or '')   # a custom rule's own folder
+        if run_id:
+            intent_log.emit(
+                self.settings, 'start', run_id=run_id, source=source,
+                intent_id=intent_id, heard_text=action.get('_heard_text') or '',
+                action_type=('url' if url else
+                             ('say' if action.get('_user_intent_say') else 'command')),
+                action_value=url or str(action.get('command') or ''),
+                details={'voice': bool(action.get('voice_answer', True)),
+                         'bubble': bool(action.get('bubble_answer', True)),
+                         'capture': capture})
         if action.get('_user_intent_say'):
             # a "say" rule has no shell command: its only effect is the line
             if speak:
                 self.say_text(speak)
+            if run_id:
+                intent_log.emit(self.settings, 'result', run_id=run_id,
+                                source=source, intent_id=intent_id, status='ok')
             return
-        capture = bool(action.get('capture')) and bool(action.get('command'))
         extra_env = None
         heard = str(action.get('_heard_text') or '').strip()
         if heard:
@@ -1905,14 +1929,22 @@ class Brain(Extras):
                                     min(user_intents.MAX_BUBBLE_LIMIT, limit)),
                 'voice_text': str(action.get('voice_text') or ''),
                 'bubble_text': str(action.get('bubble_text') or ''),
+                'run_id': run_id, 'source': source, 'started_at': time.monotonic(),
             }
             self.requests.append(('run_capture', action['command'],
                                   str(action.get('id') or ''), speak, options,
-                                  extra_env))
+                                  extra_env, cwd))
+        elif cwd:
+            # a custom rule keeps its own files in that folder: run from there
+            self.requests.append(('run_in', action['command'], cwd))
         else:
             self.requests.append(('run', action['command']))
         if speak and not capture:
             self.say_text(speak)
+        if run_id and not capture:
+            # a url or a plain command is already over: no stdout is coming
+            intent_log.emit(self.settings, 'result', run_id=run_id, source=source,
+                            intent_id=intent_id, status='ok')
 
     @staticmethod
     def _clip_captured(text, cap):
@@ -1954,6 +1986,20 @@ class Brain(Extras):
             limit = user_intents.DEFAULT_BUBBLE_LIMIT
         limit = max(user_intents.MIN_BUBBLE_LIMIT,
                     min(user_intents.MAX_BUBBLE_LIMIT, limit))
+
+        run_id = str(opts.get('run_id') or '')
+        if run_id:
+            started = opts.get('started_at')
+            try:
+                duration = int(max(0.0, time.monotonic() - float(started)) * 1000)
+            except (TypeError, ValueError):
+                duration = 0
+            intent_log.emit(
+                self.settings, 'result', run_id=run_id,
+                source=str(opts.get('source') or 'voice'), intent_id=str(intent_id or ''),
+                status='fail' if failed else 'ok', duration_ms=duration,
+                stdout_preview=output, stdout_len=len(str(output or '')),
+                details={'voice': voice_on, 'bubble': bubble_on, 'limit': limit})
 
         text = '' if failed else self._clip_captured(
             ' '.join(str(output or '').split()), MAX_CAPTURED_ANSWER)
@@ -2002,6 +2048,8 @@ class Brain(Extras):
         target = str(action.get('url') or action.get('command') or text or '')[:300]
         kind = 'url' if action.get('url') else 'button'
         secret = permissions.is_secret(target)
+        run_id = str(action.get('_run_id') or '')
+        source = str(action.get('_source') or origin)
         self._permission_id += 1
         self.pending_permission = {
             'id': self._permission_id, 'kind': kind, 'target': target,
@@ -2009,7 +2057,14 @@ class Brain(Extras):
             'options': ['once', 'deny'] if secret else ['once', 'always', 'deny'],
             'created': time.time(), 'secret': secret,
             'action': action, 'slots': slots,
+            '_run_id': run_id, '_source': source,
         }
+        if run_id:
+            # The target is deliberately absent: it may be a command or a URL.
+            intent_log.emit(self.settings, 'decision', run_id=run_id, source=source,
+                            intent_id=str(action.get('id') or ''), status='pending',
+                            details={'decision': 'asked', 'origin': origin,
+                                     'secret': secret})
         return self.pending_permission
 
     def permission_snapshot(self):
@@ -2024,20 +2079,42 @@ class Brain(Extras):
         """decide the open question.  ALWAYS needs a deliberate click and a safe
         target; a spoken 'always' is never accepted.  True when something changed."""
         p = self.pending_permission
+        run_id = str(p.get('_run_id') or '') if p else ''
+        source = str(p.get('_source') or origin) if p else origin
+        intent_id = str((p.get('action') or {}).get('id') or '') if p else ''
+
+        def skip(reason):
+            if run_id:
+                intent_log.emit(self.settings, 'skip', run_id=run_id, source=source,
+                                intent_id=intent_id,
+                                details={'reason': reason, 'decision': decision})
+
+        def decided(choice, status, reason=''):
+            if run_id:
+                intent_log.emit(self.settings, 'decision', run_id=run_id, source=source,
+                                intent_id=intent_id, status=status,
+                                details={'decision': choice, 'origin': origin,
+                                         'reason': reason})
+
         if not p:
+            skip('nothing-pending')
             return {'decided': False, 'reason': 'nothing pending'}
         if decision not in ('once', 'always', 'deny'):
+            skip('unknown-decision')
             return {'decided': False, 'reason': 'unknown decision'}
         if decision == 'always' and (origin != 'panel'
                                      or 'always' not in (p.get('options') or [])
                                      or p.get('secret')):
+            skip('always-needs-click')
             return {'decided': False, 'reason': 'always needs a click and a safe target'}
         self.pending_permission = None
         if decision == 'always':
             permissions.remember(p['target'], 'allow')
         if decision == 'deny':
+            decided('deny', 'skipped')
             self.say_text(tr(self.settings, 'confirm_no'))
             return {'decided': True, 'decision': 'deny'}
+        decided(decision, 'ok')
         self._voice_run(p['action'], p['slots'])
         if decision == 'once' and origin == 'panel':
             # the spoken path keeps the action's own «speak» line as its bubble
@@ -2101,17 +2178,27 @@ class Brain(Extras):
                 out.extend(str(x) for x in (item.get(key) or ()) if str(x).strip())
         return out[:64]
 
-    def voice_user_intent(self, text, alt=''):
-        """your own rules from user_intents.json, after the built-in skills and
+    def voice_user_intent(self, text, alt='', source='voice', run_id=None):
+        """your own rules from user-intents/<id>/intent.json, after the built-in skills and
         the buttons from actions.json.  A whole phrase (1.00), a keyword (0.80)
         or an ears' slip (0.60) fires; a command may ask first, a url opens and
         a "say" rule only speaks.  A command with ``capture`` answers with its
-        stdout in the bubble and out loud.  No restart and no ONNX training needed."""
+        stdout in the bubble and out loud.  No restart and no ONNX training needed.
+        ``source`` and ``run_id`` let a panel check share one journal run."""
+        run_id = str(run_id or uuid.uuid4().hex[:8])
+        source = str(source or 'voice')[:32]
+        self.last_user_intent_run_id = run_id
+        intent_log.emit(self.settings, 'heard', run_id=run_id, source=source,
+                        heard_text=text)
         if not self.settings.get('user_intents', True):
+            intent_log.emit(self.settings, 'skip', run_id=run_id, source=source,
+                            details={'reason': 'disabled'})
             return False
         data = self.user_intents_check()
         intents = data.get('intents') or []
         if not intents:
+            intent_log.emit(self.settings, 'skip', run_id=run_id, source=source,
+                            details={'reason': 'no-intents'})
             return False
         try:
             line = max(0.0, min(1.0, float(self.settings.get('nlu_confidence', 0.6))))
@@ -2121,9 +2208,18 @@ class Brain(Extras):
         if not hit and alt and alt != text:
             hit = user_intents.match(alt, intents, min_confidence=line)
         if not hit:
+            intent_log.emit(self.settings, 'skip', run_id=run_id, source=source,
+                            details={'reason': 'no-match'})
             return False
+        intent_log.emit(self.settings, 'match', run_id=run_id, source=source,
+                        intent_id=str(hit.intent or ''),
+                        details={'score': round(float(hit.confidence), 3),
+                                 'winner': str(hit.intent or '')})
         item = next((i for i in intents if str(i.get('id') or '') == hit.intent), None)
         if not item:                    # the file changed between match and lookup
+            intent_log.emit(self.settings, 'skip', run_id=run_id, source=source,
+                            intent_id=str(hit.intent or ''),
+                            details={'reason': 'stale-item'})
             return False
         action = item.get('action') or {}
         kind = str(action.get('type') or '')
@@ -2136,6 +2232,11 @@ class Brain(Extras):
         self.set_face('happy', 1.5)
         slots = self._voice_slots(hit)
         capture = kind == 'command' and bool(item.get('capture'))
+        root = getattr(self, 'user_intents_path', None) or user_intents.INTENTS_DIR
+        try:
+            cwd = str(user_intents.intent_dir(str(item.get('id') or ''), root))
+        except ValueError:
+            cwd = ''
         run = {'id': hit.intent, 'speak': speak,
                'command': value if kind == 'command' else '',
                'url': value if kind == 'url' else '',
@@ -2145,15 +2246,24 @@ class Brain(Extras):
                'bubble_limit': item.get('bubble_limit'),
                'voice_text': item.get('voice_text', ''),
                'bubble_text': item.get('bubble_text', ''),
-               '_heard_text': text}
+               '_heard_text': text, '_run_id': run_id, '_source': source,
+                '_cwd': cwd}
         if kind == 'say':
             run['_user_intent_say'] = True
-        if item.get('requires_confirmation') and not self.pending_permission:
+        if item.get('requires_confirmation'):
+            if self.pending_permission:
+                intent_log.emit(self.settings, 'skip', run_id=run_id, source=source,
+                                intent_id=str(hit.intent or ''),
+                                details={'reason': 'permission-pending'})
+                return True
             target = speak if kind == 'say' else value
             if permissions.allowed(target):
+                intent_log.emit(self.settings, 'decision', run_id=run_id, source=source,
+                                intent_id=str(hit.intent or ''), status='ok',
+                                details={'decision': 'remembered', 'origin': source})
                 self._voice_run(run, slots)
                 return True
-            self.permission_ask(run, slots, text)
+            self.permission_ask(run, slots, text, origin=source)
             self.say_text(tr(self.settings, 'confirm_ask'))
             self.listening = True
             self.requests.append(('listen', 15))

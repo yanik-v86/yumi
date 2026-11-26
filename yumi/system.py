@@ -30,11 +30,12 @@ def run(*cmd, timeout=5):
         return ''
 
 
-def spawn(*cmd):
+def spawn(*cmd, cwd=None):
     """start a detached command; the Popen (truthy) or False"""
     try:
         return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                env=ENV, start_new_session=True)
+                                env=ENV, cwd=str(cwd) if cwd else None,
+                                start_new_session=True)
     except OSError:
         return False
 

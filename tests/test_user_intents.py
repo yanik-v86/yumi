@@ -9,11 +9,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from yumi import config, nlu, user_intents  # noqa: E402
 
-assert (config.CONFIG_DIR / 'user_intents.json').name == 'user_intents.json'
+assert config.INTENTS_DIR.name == 'user-intents'
+assert config.INTENTS_FILE.name == 'user_intents.json'   # the old document, migrated once
 assert user_intents.FORMAT_VERSION == 1
 
 _tmp = tempfile.TemporaryDirectory()
-_original = user_intents.INTENTS_FILE
+_original_dir = user_intents.INTENTS_DIR
+_original_file = user_intents.INTENTS_FILE
+user_intents.INTENTS_DIR = Path(_tmp.name) / 'user-intents'
 user_intents.INTENTS_FILE = Path(_tmp.name) / 'user_intents.json'
 
 COMMAND = {
@@ -48,7 +51,14 @@ try:
     assert user_intents.load() == user_intents.empty()   # a missing file is not an error
     stored = user_intents.save(payload(COMMAND, URL, SAY))
     assert stored['revision'] == 1
-    assert not user_intents.INTENTS_FILE.with_suffix('.tmp').exists()
+    root = user_intents.INTENTS_DIR
+    assert (root / 'lights_on' / 'intent.json').is_file()
+    assert (root / 'web_search' / 'intent.json').is_file()
+    index = json.loads((root / user_intents.INDEX_FILE).read_text(encoding='utf-8'))
+    assert index == {'version': 1, 'revision': 1,
+                     'order': ['lights_on', 'web_search', 'hello_back']}, index
+    assert not list(root.glob('*.tmp')) and not list(root.glob('*/*.tmp'))
+    assert not user_intents.INTENTS_FILE.exists()   # no more single document
     assert user_intents.load() == stored
     text = user_intents.export_json(stored)
     assert '\n  "intents": [' in text
@@ -129,6 +139,56 @@ try:
         raise AssertionError('broken JSON was accepted')
     assert user_intents.load() == again, 'a failed import must not touch the file'
 
+    # ---- one folder per rule: hand edits, extra files and orphan folders
+    folder = user_intents.intent_dir('lights_on')
+    raw = json.loads((folder / 'intent.json').read_text(encoding='utf-8'))
+    raw['phrases'] = ['включи лампочку']
+    (folder / 'intent.json').write_text(json.dumps(raw, ensure_ascii=False, indent=2),
+                                        encoding='utf-8')
+    (folder / 'lights.py').write_text('# my helper\n', encoding='utf-8')
+    assert user_intents.info()['mtime'] > 0
+    hand = user_intents.load()
+    assert hand['intents'][0]['phrases'] == ['включи лампочку'], hand
+    assert user_intents.intent_dir('lights_on', root) == folder
+    try:
+        user_intents.intent_dir('../escape')
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('a bad id escaped into a filesystem path')
+    manual = root / 'manual'
+    manual.mkdir()
+    (manual / 'intent.json').write_text(json.dumps({
+        'id': 'manual', 'phrases': ['ручное правило'],
+        'action': {'type': 'say', 'value': 'готово'},
+    }, ensure_ascii=False), encoding='utf-8')
+    assert [i['id'] for i in user_intents.load()['intents']][-1] == 'manual'
+    # deleting a rule removes intent.json but keeps the user's own files
+    kept = user_intents.save({'version': 1, 'revision': hand['revision'],
+                              'intents': [dict(COMMAND, id='manual',
+                                               phrases=['ручное правило'])]})
+    assert [i['id'] for i in kept['intents']] == ['manual']
+    assert (manual / 'intent.json').is_file() and (folder / 'lights.py').is_file()
+    assert not (folder / 'intent.json').exists(), 'a removed rule must lose its intent.json'
+
+    # ---- the old single document migrates once, with a backup
+    with tempfile.TemporaryDirectory() as mig:
+        mig = Path(mig)
+        legacy = mig / 'user_intents.json'
+        legacy.write_text(json.dumps(payload(COMMAND), ensure_ascii=False), encoding='utf-8')
+        old_dir, old_file = user_intents.INTENTS_DIR, user_intents.INTENTS_FILE
+        user_intents.INTENTS_DIR, user_intents.INTENTS_FILE = mig / 'user-intents', legacy
+        try:
+            # the live app passes the folder explicitly: migration still runs
+            data = user_intents.load(user_intents.INTENTS_DIR)
+            assert data['revision'] == 0 and [i['id'] for i in data['intents']] == ['lights_on']
+            assert (user_intents.INTENTS_DIR / 'lights_on' / 'intent.json').is_file()
+            assert legacy.with_name('user_intents.json.migrated').is_file()
+            assert not legacy.exists()
+            assert user_intents.load() == data, 'migration must run only once'
+        finally:
+            user_intents.INTENTS_DIR, user_intents.INTENTS_FILE = old_dir, old_file
+
     # ---- the nlu adapter: exact / keyword / fuzzy, enabled, priority as a tie-break
     ITEMS = [COMMAND]
     hit = user_intents.match('включи свет', ITEMS)
@@ -184,7 +244,8 @@ try:
     assert [i['id'] for i in imported_again] == [i['id'] for i in imported]
     assert user_intents.from_actions([{'command': 'x'}]) == []
 finally:
-    user_intents.INTENTS_FILE = _original
+    user_intents.INTENTS_DIR = _original_dir
+    user_intents.INTENTS_FILE = _original_file
     _tmp.cleanup()
 
 print('tests/test_user_intents.py: ok')

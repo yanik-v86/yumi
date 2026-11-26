@@ -10,7 +10,7 @@ from pathlib import Path
 from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk
 from gi.repository import Gtk4LayerShell as LayerShell
 
-from yumi import config, ears, files, jobs, memory, music, system, tts, voice_state
+from yumi import config, ears, files, intent_log, jobs, memory, music, system, tts, voice_state
 from yumi.brain import Brain
 from yumi.phrases import Speech
 from yumi.sprites import Meta, palette_delta, palette_from_hue
@@ -430,11 +430,15 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                     Gdk.Display.get_default().get_clipboard().set(r[1])
             elif kind == 'run':
                 system.spawn('sh', '-c', r[1])
+            elif kind == 'run_in':
+                # a custom rule runs in its own folder, next to its files
+                system.spawn('sh', '-c', r[1], cwd=r[2] if len(r) > 2 else None)
             elif kind == 'run_capture':
                 self.run_capture(r[1], r[2] if len(r) > 2 else '',
                                  r[3] if len(r) > 3 else '',
                                  r[4] if len(r) > 4 else None,
-                                 r[5] if len(r) > 5 else None)
+                                 r[5] if len(r) > 5 else None,
+                                 r[6] if len(r) > 6 else None)
             elif kind == 'url':
                 system.open_url(r[1])
             elif kind == 'monitor_next':
@@ -557,37 +561,58 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                 self.close()
                 self.restart()
 
-    def run_capture(self, command, intent_id, speak, options=None, extra_env=None):
+    def run_capture(self, command, intent_id, speak, options=None, extra_env=None,
+                    cwd=None):
         """run an answer-producing user command off the GTK thread and give its
         stdout back to Brain, which voices and shows it as the intent asks.  The
         command itself is never logged; only a generic failure is reported.
         ``extra_env`` is a small, explicit payload (the heard phrase) for rules
-        that need the words behind the match."""
+        that need the words behind the match; ``cwd`` is the rule's own folder."""
         def finish(output, failed):
             self.ev(lambda b: b.user_intent_answer(output, intent_id, speak, failed,
                                                    options))
             return False
 
+        settings = dict(self.settings)
+        opts = options if isinstance(options, dict) else {}
+        run_id = str(opts.get('run_id') or '')
+        source = str(opts.get('source') or 'voice')
+        started = opts.get('started_at')
+
         def work():
-            output, failed = '', False
+            output, failed, error, exit_code = '', False, '', None
             env = dict(system.ENV)
             if isinstance(extra_env, dict):
                 env.update({str(k): str(v) for k, v in extra_env.items()
                             if v is not None})
             try:
                 proc = subprocess.run(('sh', '-c', command), capture_output=True,
-                                      text=True, timeout=30, env=env)
+                                      text=True, timeout=30, env=env,
+                                      cwd=str(cwd) if cwd else None)
                 if proc.returncode:
                     failed = True
+                    error = 'exit_status'
+                    exit_code = proc.returncode
                 else:
                     output = proc.stdout
             except subprocess.TimeoutExpired as exc:
                 failed = True
+                error = 'timeout'
                 output = exc.stdout if isinstance(exc.stdout, str) else ''
             except OSError:
                 failed = True
+                error = 'spawn_failed'
             if failed:
                 print('yumi: a captured user-intent command failed', file=sys.stderr)
+                if run_id:
+                    try:
+                        duration = int(max(0.0, time.monotonic() - float(started)) * 1000)
+                    except (TypeError, ValueError):
+                        duration = 0
+                    intent_log.emit(settings, 'error', run_id=run_id, source=source,
+                                    intent_id=intent_id, status='fail', error=error,
+                                    duration_ms=duration, action_value=command,
+                                    details={'exit_code': exit_code})
             GLib.idle_add(finish, output.strip(), failed)
 
         threading.Thread(target=work, daemon=True).start()

@@ -5,13 +5,14 @@ import shutil
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from gi.repository import Gdk, GLib
 
-from yumi import (chat, config, doctor, ears, engines, facts, memory, models, music,
-                  notes, permission, pixui, speaker, speaker_sherpa, system,
-                  tts, user_intents, webpanel)
+from yumi import (chat, config, doctor, ears, engines, facts, intent_log, memory,
+                  models, music, notes, permission, pixui, speaker, speaker_sherpa,
+                  system, tts, user_intents, webpanel)
 from yumi.sprites import ui_colors
 from yumi.webpanel import catalog as webcatalog
 
@@ -272,6 +273,16 @@ class PanelMixin:
             web.publish('bubble', {'text': text,
                                    'kind': (b.bubble or {}).get('kind'),
                                    'until': (b.bubble or {}).get('until')})
+        try:
+            lines = intent_log.line_count()
+        except Exception:
+            lines = 0
+        if lines != getattr(self, '_web_intents_log_lines', 0):
+            self._web_intents_log_lines = lines
+            try:
+                web.publish('intents_log', intent_log.info(self.settings))
+            except Exception:
+                pass
         now = time.monotonic()
         if now - self._web_status_at > 2.0:
             self._web_status_at = now
@@ -427,7 +438,8 @@ class PanelMixin:
                                      else user_intents.load()).get('revision', 0)),
                     'count': len((b.user_intents_data if hasattr(b, 'user_intents_data')
                                   else {}).get('intents') or []),
-                    'path': str(user_intents.INTENTS_FILE),
+                    'path': str(user_intents.INTENTS_DIR),
+                    'log': intent_log.info(s),
                 },
                 'wake_on': bool(self.wake_on),
                 'facts': {**facts.get_book(s).info(),
@@ -740,17 +752,17 @@ class PanelMixin:
                 'icons': sorted(pixui.ICONS),
                 'icon_patterns': dict(pixui.ICONS)}
 
-    # ---- your own intents: the panel edits the same JSON you can write by hand
+    # ---- your own intents: the panel edits the same files you can write by hand
     def _intents_path(self):
-        return getattr(self.brain, 'user_intents_path', None) or user_intents.INTENTS_FILE
+        return getattr(self.brain, 'user_intents_path', None) or user_intents.INTENTS_DIR
 
     def _intents_refresh(self, data):
         """a browser write must be visible to the very next phrase, no restart"""
         b = self.brain
         b.user_intents_data = data
         try:
-            b.user_intents_mtime = Path(self._intents_path()).stat().st_mtime
-        except OSError:
+            b.user_intents_mtime = user_intents.mtime(self._intents_path())
+        except (OSError, TypeError, ValueError):
             b.user_intents_mtime = 0.0
 
     def _web_user_intents_get(self):
@@ -771,8 +783,8 @@ class PanelMixin:
         saved = user_intents.save(payload, path)
         self._intents_refresh(saved)
         try:
-            mtime = Path(path).stat().st_mtime
-        except OSError:
+            mtime = user_intents.mtime(path)
+        except (OSError, TypeError, ValueError):
             mtime = 0.0
         return {'version': saved['version'], 'revision': saved['revision'],
                 'mtime': mtime, 'intents': saved['intents']}
@@ -807,17 +819,40 @@ class PanelMixin:
         text = str(text or '').strip()[:200]
         if not text:
             raise ValueError('text is required')
+        run_id = uuid.uuid4().hex[:8]
         if not self.brain.settings.get('user_intents', True):
+            intent_log.emit(self.brain.settings, 'panel', run_id=run_id, source='panel',
+                            status='skipped', details={'reason': 'disabled'})
             return {'matched': False, 'ran': False, 'intent': None, 'score': 0.0,
-                    'source': 'user-intents'}
+                    'source': 'user-intents', 'run_id': run_id}
         data = self.brain.user_intents_check()
         result = user_intents.test_phrase(text, data, min_confidence=self._web_intent_line())
+        intent_log.emit(self.brain.settings, 'panel', run_id=run_id, source='panel',
+                        intent_id=str((result.get('intent') or {}).get('id') or ''),
+                        status='ok' if result['matched'] else 'skipped',
+                        details={'matched': bool(result['matched']),
+                                 'score': float(result.get('score') or 0.0)})
         if not result['matched']:
-            return {**result, 'ran': False}
-        return {**result, 'ran': bool(self.brain.voice_user_intent(text))}
+            return {**result, 'ran': False, 'run_id': run_id}
+        ran = bool(self.brain.voice_user_intent(text, source='panel', run_id=run_id))
+        return {**result, 'ran': ran, 'run_id': run_id}
+
+    def _web_intents_log_get(self, limit=200, intent='', stage=''):
+        """fresh journal lines for the browser; text stays opt-in in intent_log"""
+        return {
+            'items': intent_log.read(limit=limit, intent=intent or None,
+                                     stage=stage or None),
+            'info': intent_log.info(self.settings),
+        }
+
+    def _web_intents_log_clear(self):
+        intent_log.clear()
+        self._web_intents_log_lines = 0
+        return {'cleared': True, 'info': intent_log.info(self.settings)}
 
     def _web_logs(self, name, lines):
         paths = {
+            'intents': intent_log.log_path(),
             'yumi': config.STATE_DIR / 'yumi.log',
             'mind': Path('/tmp/yumi/mind.log'),
             'judge': Path('/tmp/yumi/judge.log'),

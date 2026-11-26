@@ -16,12 +16,12 @@
 ## 0. Решение по GTK
 
 Управление пользовательскими интентами доступно **только в веб-панели и через ручное
-редактирование `user_intents.json`**. Отдельный GTK-редактор не делается — осознанное
-исключение из общего правила `AGENTS.md` по решению владельца.
+редактирование `user-intents/<id>/intent.json`**. Отдельный GTK-редактор не делается —
+осознанное исключение из общего правила `AGENTS.md` по решению владельца.
 
 - В GTK остаётся только **исполнение** фраз, распознанных как пользовательский интент.
-- Единый источник истины — JSON-файл; панель даёт полный CRUD с валидацией, файл даёт
-  офлайн-путь без запуска панели.
+- Единый источник истины — каталог с одним JSON-файлом на правило; панель даёт полный CRUD
+  с валидацией, файл даёт офлайн-путь без запуска панели.
 - Дублирования валидации в GTK не допускается: никаких скрытых форм и вторых правил записи.
 
 ## 1. Что нужно сделать
@@ -99,40 +99,48 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
 
 ### 3.1 Хранилище
 
-Новый файл: `CONFIG_DIR / "user_intents.json"` (константа `INTENTS_FILE` в `config.py`).
-Отдельный файл нужен, чтобы не смешивать правила с ONNX-настройками `intents`, не ломать
-`actions.json` и дать отдельный валидирующий API.
+Каталог `CONFIG_DIR / "user-intents"` (константа `INTENTS_DIR` в `config.py`). В нём
+`index.json` (`version`, `revision`, порядок правил) и по папке на интент:
+`user-intents/<id>/intent.json`. Папки развязывают правила и дают место для своих файлов:
+команда интента запускается в папке правила, поэтому `action.value` может быть относительным
+путем (`python3 lights.py on`). Старый `user_intents.json` (`INTENTS_FILE`) при первом чтении
+раскладывается по папкам с сохранением `revision`, а копия остаётся в
+`user_intents.json.migrated`.
 
-Формат:
+Формат `index.json`:
+
+```json
+{"version": 1, "revision": 7, "order": ["lights_on", "news_today"]}
+```
+
+Формат `user-intents/lights_on/intent.json` (имя папки = `id`; при расхождении имя папки
+побеждает, чтобы скопированный файл не занял чужой слот):
 
 ```json
 {
-  "version": 1,
-  "revision": 7,
-  "intents": [
-    {
-      "id": "lights_on",
-      "name": "Свет в комнате",
-      "enabled": true,
-      "phrases": ["включи свет", "свет включи"],
-      "keywords": ["свет", "лампа"],
-      "action": {"type": "command", "value": "python3 /home/user/scripts/lights.py on"},
-      "speak": "Включаю свет",
-      "capture": false,
-      "voice_answer": true,
-      "bubble_answer": true,
-      "bubble_limit": 1000,
-      "priority": 10,
-      "requires_confirmation": true,
-      "created_at": "2026-11-25T12:00:00Z",
-      "updated_at": "2026-11-25T12:00:00Z"
-    }
-  ]
+  "id": "lights_on",
+  "name": "Свет в комнате",
+  "enabled": true,
+  "phrases": ["включи свет", "свет включи"],
+  "keywords": ["свет", "лампа"],
+  "action": {"type": "command", "value": "python3 lights.py on"},
+  "speak": "Включаю свет",
+  "capture": false,
+  "voice_answer": true,
+  "bubble_answer": true,
+  "bubble_limit": 1000,
+  "priority": 10,
+  "requires_confirmation": true,
+  "created_at": "2026-11-25T12:00:00Z",
+  "updated_at": "2026-11-25T12:00:00Z"
 }
 ```
 
-- `version` — версия формата; `revision` — счётчик для оптимистичной проверки `PUT`
-  (при расхождении `409`). Это разные поля, не путать.
+Экспорт/импорт по-прежнему работают со всем документом
+`{"version": 1, "revision": N, "intents": [...]}` — это переносимый бэкап, а не файл в каталоге.
+
+- `version` — версия формата; `revision` — счётчик в `index.json` для оптимистичной проверки
+  `PUT` (при расхождении `409`). Это разные поля, не путать.
 - `action.type`: `command`, `url`, `say`. `skill` — только в T-09 и только по белому списку.
 - `requires_confirmation` по умолчанию `true` для `command`, `false` для `url`/`say`.
 - Для `say` говорится `speak`; `action.value` используется только если `speak` пуст.
@@ -154,7 +162,10 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
 
 Без GTK и без сетевых вызовов. Ответственности:
 
-- `load/save` с атомарной записью `tmp` + `replace` (без мнимой блокировки);
+- `load/save` с атомарной записью каждого `intent.json` и `index.json` (`tmp` + `replace`,
+  без мнимой блокировки); `load()` собирает документ из папок, подхватывает папки, добавленные
+  руками, и игнорирует битые файлы; `mtime()` берёт самый свежий файл каталога;
+  `root_dir()`/`intent_dir()` — единственные места, где id превращается в путь;
 - `validate(payload)` — схема, уникальность id, длины, safety-проверки, нормализация полей
   ответа (`_limit()` клампит `bubble_limit`, отдельные шаблоны требуют `capture`);
 - `to_nlu_entries(intents)` — плоские записи для `nlu.recognize()`: `phrases`, `keywords`,
@@ -170,7 +181,7 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
 
 ### 3.3 Подключение в `Brain`
 
-- Загрузить `user_intents.json`, кэш + `mtime`/`revision`, горячая перезагрузка как
+- Загрузить каталог `user-intents`, кэш + `mtime`/`revision`, горячая перезагрузка как
   `extras.actions_check()` (`extras.py:322-331`), без перезапуска.
 - Порядок в `heard_text()` — **не переставляем существующие блоки**:
 
@@ -209,8 +220,10 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
 ### 3.5 GTK-сторона
 
 **Отдельного GTK-редактора нет.** В `brain.py` не добавляется пункт меню «Свои интенты»;
-`extras.form_open()` остаётся редактором кнопок. Пользователь правит `user_intents.json`
+`extras.form_open()` остаётся редактором кнопок. Пользователь правит `intent.json`
 вручную или пользуется панелью; исполнение фраз работает одинаково в обоих случаях.
+Простые команды уходят в `('run_in', command, cwd)`, команды с `capture` несут `cwd`
+седьмым элементом `('run_capture', ...)`: оба запускаются в папке правила.
 
 ### 3.6 Веб-панель
 
@@ -240,7 +253,22 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
 CSRF/origin проверяются общим кодом сервера (`server.py:364-368`). `/api/upload` не использовать.
 В `tests/test_webpanel.py` обновить stub `Bridge` и жёсткое ожидание 16 страниц.
 
-### 3.7 Безопасность
+### 3.7 Журнал действий
+
+Отдельная задача описана в `docs/plan-intents-action-log.md` и
+`docs/handoff-intents-action-log.md`; модуль `yumi/intent_log.py` пишет приватный
+`STATE_DIR/user-intents.log` (JSONL, `0600`) и ничего не знает о GTK/HTTP. Уровни
+`off|error|result|action|match|trace` кумулятивные, по умолчанию `off`. `Brain` отдаёт
+однаковый `run_id` (`uuid4().hex[:8]`) в `heard` → `match` → `decision`/`skip` → `start`
+→ `result`, а `App.run_capture()` добавляет `error` при провале команды. Неизменённый канал
+`extra_env={'YUMI_INTENT_TEXT': heard}` и форма кортежа `('run_capture', …)` остались прежними:
+`run_id`, `source` и `started_at` живут внутри пятого элемента `options`. Панель получает
+`GET /api/user-intents/log` и `POST /api/user-intents/log/clear` (CSRF + аудит
+`intents-log-clear`), показывает блок на `#/user-intents` и вкладку `#/logs` с `name=intents`;
+новые строки приходят SSE-событием `intents_log`. Команда и URL заменяются `action_sha`/
+`action_len`, фраза и stdout — отдельные поля только при `intents_log_include_text`.
+
+### 3.8 Безопасность
 
 - Команды остаются действиями самого пользователя, но значения `command` не пишутся в аудит
   и не показываются как обычный текст без явного намерения.
@@ -284,10 +312,26 @@ GTK-этапа нет.
 
 Быстрая проверка из `AGENTS.md` дополнена `test_user_intents.py` и `py_compile user_intents.py`.
 
+### Тик напоминаний на внутренних часах
+
+Интент `reminders_tick` с командой `python3 reminders.py --tick` — не голосовая
+фраза, а задача внутренних часов: `Extras.extras_init()` регистрирует хендлер
+`reminders_tick` и планирует повтор раз в минуту (`in_s=60`, `every_s=60`,
+`persist=False`). Хендлер читает текущий список интентов через
+`user_intents_check()`, берёт команду из `action.value` и кладёт в очередь
+`('run_in', command, cwd)` — скрипт запускается в папке интента, где лежит его
+`reminders.py`, и сам озвучивает/показывает сработавшие напоминания. Скрипт не
+дублируется в ядре: состояние остаётся в `~/.local/state/yumi/reminders.json`,
+настройки — в `~/.config/yumi/reminders.json`. Systemd-юниты
+`yumi-reminders.service`/`.timer` удалены; если Юми не запущена, тика нет.
+Правка команды или `enabled` в панели (`#/user-intents`) применяется без рестарта;
+статус задачи виден в `runtime.clock` и в GTK-меню.
+
 ## 6. Риски и открытые вопросы
 
-1. **Путь хранилища.** Зафиксирован: `CONFIG_DIR / user_intents.json`, env `XDG_CONFIG_HOME`.
-   `YUMI_CONFIG_DIR` не добавляем без реальной потребности.
+1. **Путь хранилища.** Зафиксирован: `CONFIG_DIR / user-intents`, env `XDG_CONFIG_HOME`.
+   `YUMI_CONFIG_DIR` не добавляем без реальной потребности. Старый `user_intents.json`
+   мигрирует один раз, рядом с ним остаётся копия `.migrated`.
 2. **Порядок.** Зафиксирован в §3.3: не переставляем встроенные навыки, ONNX остаётся внутри
    `voice_intent()`. Пользовательские интенты идут после встроенных и после кнопок.
 3. **`nlu.recognize()` фильтр.** Расширяем только его и `_intent_name()`; `intents.py` не трогаем.
@@ -295,7 +339,7 @@ GTK-этапа нет.
 5. **`skill`.** Отложен до T-09; белый список методов `Brain`, никакого произвольного Python.
 6. **ONNX fallback.** Кастомные фразы работают через `nlu`, не через модель; прямо написать в UI/доке.
 7. **Конкурентность.** Решена через `revision` + `409` вместо обещаемой блокировки файла.
-8. **Конфиг-редактор.** `user_intents.json` **не** добавляется в `catalog.CONFIG_FILES`:
+8. **Конфиг-редактор.** `user-intents/*/intent.json` **не** добавляется в `catalog.CONFIG_FILES`:
    только валидирующий API и ручная правка с полной схемой.
 9. **Обучение.** `tools/intents_train.py` читает `--corpus` и `--actions`; для T-09 нужен
    адаптер `name` → `label`, иначе новые метки не появятся.

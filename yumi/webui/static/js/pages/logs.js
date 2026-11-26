@@ -4,6 +4,7 @@ import {
 } from '../ui.js';
 
 const LOGS = [
+  ['intents', 'Свои фразы', 'Intents'],
   ['yumi', 'Юми', 'Yumi'],
   ['mind', 'Мозг', 'Mind'],
   ['judge', 'Судья', 'Judge'],
@@ -25,8 +26,8 @@ export function render(view, ctx) {
   view.append(
     el('h2', { class: 'pagehead', text: lang() === 'ru' ? 'Журналы' : 'Logs' }),
     el('p', { class: 'pagelead', text: lang() === 'ru'
-      ? 'Логи Юми, мозга и запросов в модель, ушек, STT, судьи, приложения и журнал панели.'
-      : 'Yumi, mind and model-request logs, ears, STT, judge, app and panel audit.' }),
+      ? 'Журнал своих фраз, логи Юми, мозга и запросов в модель, ушек, STT, судьи, приложения и панели.'
+      : 'Your intents journal, Yumi, mind and model-request logs, ears, STT, judge, app and panel audit.' }),
   );
 
   const tabs = el('div', { class: 'log-tabs' });

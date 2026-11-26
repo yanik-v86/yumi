@@ -36,7 +36,7 @@ class WebBridge:
     def actions_save(self, actions):
         return self._on(lambda: self.app._web_config_save('actions', actions), 60)
 
-    # ---- your own intents (the panel is the editor, the JSON file is the source)
+    # ---- your own intents (the panel is the editor, the folders are the source)
     def user_intents_get(self):
         return self._on(self.app._web_user_intents_get)
 
@@ -55,6 +55,12 @@ class WebBridge:
     def user_intents_run(self, text):
         """match and execute a custom rule as if the phrase had been heard"""
         return self._on(lambda: self.app._web_user_intents_run(text))
+
+    def intents_log_get(self, limit=200, intent='', stage=''):
+        return self._on(lambda: self.app._web_intents_log_get(limit, intent, stage))
+
+    def intents_log_clear(self):
+        return self._on(self.app._web_intents_log_clear)
 
     def action_run(self, index):
         b = self.app.brain

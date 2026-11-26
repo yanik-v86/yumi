@@ -1,6 +1,6 @@
 # План: журнал действий пользовательских интентов
 
-Статус: **план согласован, этой работой код не менялся**.  
+Статус: **реализовано (L-01…L-06), ожидает ревью**.
 Дата: 2026-11-25.  
 Аудитория: агент, который будет реализовывать журнал, и ревьюер.
 
@@ -36,7 +36,7 @@
   `#/user-intents`. Счётчик страниц в `tests/test_webpanel.py` остаётся 16.
 - Не делать GTK-просмотрщик: в GTK остаются только переключатель уровня
   (меню) и исполнение, просмотр — в панели. Это то же исключение, что и для
-  `user_intents.json`.
+  `user-intents/<id>/intent.json`.
 
 ---
 
@@ -81,19 +81,19 @@ brain.py: voice_user_intent → _voice_run → user_intent_answer
 
 ## 3. Задачи
 
-Приоритеты: P0 — блокирующий, P1 — важный. Статус на момент создания: все `TODO`.
+Приоритеты: P0 — блокирующий, P1 — важный. Все задачи выполнены.
 ID задач использовать в коммитах: `feat(intents-log): L-01 ...`.
 
-| ID | Приоритет | Задача | Зависит от |
-|----|-----------|--------|------------|
-| L-01 | P0 | Настройки журнала в `DEFAULT_SETTINGS`, `catalog.py`, GTK-меню | — |
-| L-02 | P0 | `yumi/intent_log.py`: уровни, JSONL, redaction, ротация, чтение/очистка | L-01 |
-| L-03 | P0 | Инструментация `Brain`/`App`: `run_id` и события match/decision/start/result/error | L-02 |
-| L-04 | P0 | Панель: Bridge → роуты → `api.js` → блок на `#/user-intents`, SSE | L-03 |
-| L-05 | P0 | Тесты безопасности и smoke, проверка отсутствия утечек | L-04 |
-| L-06 | P1 | README (ru/en), handoff панели, финальная сверка | L-05 |
+| ID | Приоритет | Статус | Задача | Зависит от |
+|----|-----------|--------|--------|------------|
+| L-01 | P0 | готово | Настройки журнала в `DEFAULT_SETTINGS`, `catalog.py`, GTK-меню | — |
+| L-02 | P0 | готово | `yumi/intent_log.py`: уровни, JSONL, redaction, ротация, чтение/очистка | L-01 |
+| L-03 | P0 | готово | Инструментация `Brain`/`App`: `run_id` и события match/decision/start/result/error | L-02 |
+| L-04 | P0 | готово | Панель: Bridge → роуты → `api.js` → блок на `#/user-intents`, SSE | L-03 |
+| L-05 | P0 | готово | Тесты безопасности и smoke, проверка отсутствия утечек | L-04 |
+| L-06 | P1 | готово | README (ru/en), handoff панели, финальная сверка | L-05 |
 
-### L-01. Настройки и двуязычные строки (P0) — TODO
+### L-01. Настройки и двуязычные строки (P0) — готово
 
 **Файлы:** `yumi/config.py`, `yumi/webpanel/catalog.py`, `yumi/brain.py`
 (`cycles`, `open_menu`), `tests/test_webpanel.py`.
@@ -119,7 +119,7 @@ ID задач использовать в коммитах: `feat(intents-log): 
 
 ---
 
-### L-02. Модуль журнала (P0) — TODO
+### L-02. Модуль журнала (P0) — готово
 
 **Файлы:** `yumi/intent_log.py` (новый), `tests/test_intent_log.py` (новый).
 
@@ -142,7 +142,7 @@ ID задач использовать в коммитах: `feat(intents-log): 
 
 ---
 
-### L-03. Инструментация (P0) — TODO
+### L-03. Инструментация (P0) — готово
 
 **Файлы:** `yumi/brain.py`, `yumi/ui/app.py`, `tests/test_voice_intent.py`.
 
@@ -168,7 +168,7 @@ ID задач использовать в коммитах: `feat(intents-log): 
 
 ---
 
-### L-04. Журнал в панели (P0) — TODO
+### L-04. Журнал в панели (P0) — готово
 
 **Файлы:** `yumi/ui/bridge.py`, `yumi/ui/webpanel.py`,
 `yumi/webpanel/server.py`, `yumi/webui/static/js/api.js`,
@@ -194,7 +194,7 @@ ID задач использовать в коммитах: `feat(intents-log): 
 
 ---
 
-### L-05. Безопасность и smoke (P0) — TODO
+### L-05. Безопасность и smoke (P0) — готово
 
 **Файлы:** `tests/test_intent_log.py`, `tests/test_webpanel.py`,
 `tests/smoke_intents_log.sh` (новый).
@@ -212,7 +212,7 @@ ID задач использовать в коммитах: `feat(intents-log): 
 
 ---
 
-### L-06. Документация (P1) — TODO
+### L-06. Документация (P1) — готово
 
 **Файлы:** `README.ru.md`, `README.md`, `docs/handoff-web-panel.md`,
 `docs/handoff-user-intents.md`, `docs/tasks-user-intents.md`.

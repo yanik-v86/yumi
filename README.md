@@ -250,8 +250,11 @@ clock.register('my_task', handler)
 clock.schedule('my_task', in_s=120, owner='health', payload={'cup': 1}, persist=True)
 ```
 
-The clock knows nothing about phrases, reminders or the panel: what to say and
-do is the consumer handler's business. Its status is in `/api/status` →
+The clock knows nothing about phrases or the panel: what to say and do is the
+consumer handler's business. A `reminders_tick` job checks due reminders every
+minute by running the command of the user intent with the same id in its own
+folder (edit it on the «My phrases» page); no systemd timer is needed. Status
+is in `/api/status` →
 `runtime.clock` and on a read-only dashboard card; GTK shows the same as a line
 in the main menu. There is no job editor in either UI — it is an internal
 service. See [`docs/handoff-internal-clock.md`](docs/handoff-internal-clock.md).
@@ -338,29 +341,27 @@ The **My phrases** page (`#/user-intents`) creates, edits, deletes, imports and 
 rules. The card's **Test** button finds the phrase and **runs** the intent exactly as if it had
 been spoken — bubble, voice and command included. The separate **Match?** check only shows a
 match and never executes anything. The toggle is **Settings → Her mind → My own intents**. The
-same `~/.config/yumi/user_intents.json` can be edited by hand:
+rules live in `~/.config/yumi/user-intents/<id>/intent.json`, one file per rule; `index.json`
+keeps `version`, `revision` and the order. Each rule has its own folder: keep scripts beside
+`intent.json` — its command runs in that folder, so a relative path is enough. The old single
+`user_intents.json` is moved into folders on the first read, with a copy left as
+`user_intents.json.migrated`. One rule file can be edited by hand:
 
 ```json
 {
-  "version": 1,
-  "revision": 7,
-  "intents": [
-    {
-      "id": "lights_on",
-      "name": "Lights on",
-      "enabled": true,
-      "phrases": ["включи свет", "lights on"],
-      "keywords": ["свет", "лампа"],
-      "action": {"type": "command", "value": "python3 /home/user/scripts/lights.py on"},
-      "speak": "Включаю свет",
-      "capture": false,
-      "voice_answer": true,
-      "bubble_answer": true,
-      "bubble_limit": 1000,
-      "priority": 10,
-      "requires_confirmation": true
-    }
-  ]
+  "id": "lights_on",
+  "name": "Lights on",
+  "enabled": true,
+  "phrases": ["включи свет", "lights on"],
+  "keywords": ["свет", "лампа"],
+  "action": {"type": "command", "value": "python3 lights.py on"},
+  "speak": "Включаю свет",
+  "capture": false,
+  "voice_answer": true,
+  "bubble_answer": true,
+  "bubble_limit": 1000,
+  "priority": 10,
+  "requires_confirmation": true
 }
 ```
 
@@ -376,12 +377,25 @@ template uses `{stdout}` when it wants the output, and without the marker it is 
 (e.g. a short announcement while the full news stays in the bubble). `bubble_limit` clips the
 bubble to `1000` characters by default (`100..4000`); a `{stdout}` voice line gets the whole
 answer up to `4000` unless a separate literal line replaces it.
-With both switches off the command just runs silently. `revision` protects edits made in the
-panel from being overwritten by an open editor or a hand edit. Rules are ordinary `nlu` sayings —
-no ONNX retraining and no restart are needed for a new phrase. They are matched **after** the built-in
-skills and the buttons from `actions.json`, so a button wins a contested phrase. There is no
-GTK editor: Yumi only runs the rules; the panel and the JSON file are the two places to edit
-them.
+With both switches off the command just runs silently. `revision` in `index.json` protects edits
+made in the panel from being overwritten by an open editor or a hand edit. Rules are ordinary
+`nlu` sayings — no ONNX retraining and no restart are needed for a new phrase. They are matched
+**after** the built-in skills and the buttons from `actions.json`, so a button wins a contested
+phrase. There is no GTK editor: Yumi only runs the rules; the panel and `intent.json` are the two
+places to edit them.
+
+#### Action journal for your intents
+
+The block on **My phrases** writes events to a private
+`~/.local/state/yumi/user-intents.log` (JSONL, mode `0600`). Levels are cumulative:
+`off` (default), `error`, `result`, `action`, `match`, `trace`; the same `intents_log_level`
+setting lives in **Settings → Her mind** and cycles in Yumi's GTK menu (**Action log**).
+Records of one run share a `run_id`, while a command or URL is **never** stored — only its
+hash and length. The heard phrase and command output go to separate fields only with the
+explicit `intents_log_include_text` opt-in, and enabling it is noted in the panel audit.
+The panel filters lines by rule and stage, refreshes and clears the journal (clearing needs
+CSRF), and the **Intents** tab on the **Logs** page reads the same file. New lines arrive as
+the `intents_log` SSE event instead of polling.
 
 ### Structured commands
 
@@ -780,7 +794,8 @@ met” about her own wake word. If you edit `speakers.json` by hand, run
 | --- | --- |
 | `~/.config/yumi/settings.json` | settings (a broken one is kept as `settings.json.bad`) |
 | `~/.config/yumi/actions.json` | your round buttons |
-| `~/.config/yumi/user_intents.json` | your own voice rules (panel or hand-edited) |
+| `~/.config/yumi/user-intents/<id>/intent.json` | your own voice rules, one folder per rule (panel or hand-edited) |
+| `~/.config/yumi/user-intents/index.json` | revision and the order of your own rules |
 | `~/.config/yumi/palette.json` | optional colors from your theming script |
 | `~/.config/yumi/permissions.json` | saved ALLOW/DENY rules for buttons that ask first |
 | `~/.config/yumi/model_hashes.json` | recorded model fingerprints for the integrity check |
@@ -789,6 +804,7 @@ met” about her own wake word. If you edit `speakers.json` by hand, run
 | `~/.local/state/yumi/state.json` | where she sits, her shelf, picked colors |
 | `~/.local/state/yumi/speakers.json` | voice profiles (local only, not editable from the panel) |
 | `~/.local/state/yumi/web-chat.json` | browser chat history with a revision and an op journal |
+| `~/.local/state/yumi/user-intents.log` | private JSONL action journal of your own intents (`0600`) |
 | `~/.local/state/yumi/yumi.log` | what she printed (errors go here when she runs in the background) |
 
 `YUMI_SCALE=2 yumi` draws her twice as big (integer pixel scale).

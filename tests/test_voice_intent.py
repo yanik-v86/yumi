@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Her own voice commands end to end: entities, confidence, confirmation.
 Run: python3 tests/test_voice_intent.py"""
+import json
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -118,24 +120,29 @@ assert b.intent_confirm is None
 
 # ---- your own intents: the new layer after buttons, with hot reload
 import os  # noqa: E402
-from yumi import user_intents  # noqa: E402
+from yumi import intent_log, user_intents  # noqa: E402
 
 _intent_seq = 0
 
 
 def intents_brain(items, **settings):
-    """a Brain whose custom layer lives in a temporary user_intents.json"""
+    """a Brain whose custom layer lives in a temporary user-intents folder"""
     global _intent_seq
     _intent_seq += 1
     b = brain([], **settings)
     b.user_intents_path = (Path(tempfile.gettempdir())
-                           / f'yumi-user-intents-{os.getpid()}-{_intent_seq}.json')
-    if b.user_intents_path.exists():
-        b.user_intents_path.unlink()
+                           / f'yumi-user-intents-{os.getpid()}-{_intent_seq}')
+    shutil.rmtree(b.user_intents_path, ignore_errors=True)
     b.user_intents_data = user_intents.save(
         {'version': 1, 'revision': 0, 'intents': items}, b.user_intents_path)
-    b.user_intents_mtime = b.user_intents_path.stat().st_mtime
+    b.user_intents_mtime = user_intents.mtime(b.user_intents_path)
     return b
+
+
+def run_req(requests, command):
+    """the launch request, from a button ('run') or a custom rule ('run_in')"""
+    return next((r for r in requests if r[0] in ('run', 'run_in')
+                 and r[1] == command), None)
 
 
 RULE = {'id': 'lamp', 'name': 'Лампа', 'enabled': True,
@@ -145,16 +152,18 @@ b = intents_brain([RULE])
 b.requests.clear()
 assert b.voice_user_intent('включи лампу') is True
 assert b.intent_confirm and b.last_intent == 'lamp', 'a command asks first by default'
-assert ('run', 'lamp on') not in b.requests
+assert run_req(b.requests, 'lamp on') is None
 b.heard_text('да')
-assert ('run', 'lamp on') in b.requests and b.bubble['text'] == 'Включаю лампу'
+req = run_req(b.requests, 'lamp on')
+assert req and req[0] == 'run_in' and Path(req[2]).name == 'lamp'
+assert b.bubble['text'] == 'Включаю лампу'
 
 # the same phrase through heard_text() reaches the new layer (after the music guess)
 QUIET = dict(RULE, phrases=['сделай свет'], keywords=[], requires_confirmation=False)
 b = intents_brain([QUIET])
 b.requests.clear()
 assert b.heard_text('сделай свет') is None
-assert ('run', 'lamp on') in b.requests and b.last_intent == 'lamp'
+assert run_req(b.requests, 'lamp on') and b.last_intent == 'lamp'
 
 # a keyword and the ears' slip work too, with the same confidence line
 b = intents_brain([dict(RULE, requires_confirmation=False)], nlu_confidence=1.0)
@@ -168,7 +177,8 @@ b = intents_brain([{'id': 'wave', 'name': ' Wave ', 'enabled': True,
                     'action': {'type': 'say', 'value': ''}, 'speak': 'Привет'}])
 b.requests.clear()
 assert b.voice_user_intent('помочи') is True
-assert b.bubble['text'] == 'Привет' and not any(r[0] in ('run', 'url') for r in b.requests), b.requests
+assert b.bubble['text'] == 'Привет' and not any(r[0] in ('run', 'run_in', 'url')
+                                                 for r in b.requests), b.requests
 b = intents_brain([{'id': 'find', 'name': 'Поиск', 'enabled': True,
                     'phrases': [], 'keywords': ['найди'],
                     'action': {'type': 'url', 'value': 'https://example.org/?q={query}'},
@@ -186,9 +196,14 @@ b.requests.clear()
 assert b.voice_user_intent('новости') is True
 req = next(r for r in b.requests if r[0] == 'run_capture')
 assert req[:4] == ('run_capture', 'news', 'news', 'Новости: {stdout}'), b.requests
-assert req[4] == {'voice': True, 'bubble': True, 'bubble_limit': 1000,
-                  'voice_text': '', 'bubble_text': ''}
-assert not any(r[0] in ('run', 'voice') for r in b.requests), 'no early bubble or command'
+assert req[6] == str(user_intents.intent_dir('news', b.user_intents_path)), req
+assert req[4]['voice'] is True and req[4]['bubble'] is True
+assert req[4]['bubble_limit'] == 1000
+assert req[4]['voice_text'] == '' and req[4]['bubble_text'] == ''
+assert len(req[4]['run_id']) == 8 and req[4]['source'] == 'voice'
+assert 'started_at' in req[4]
+assert req[5] == {'YUMI_INTENT_TEXT': 'новости'}, 'the heard words still reach the command'
+assert not any(r[0] in ('run', 'run_in', 'voice') for r in b.requests), 'no early bubble or command'
 assert b.user_intent_answer('Мир: новость', 'news', 'Новости: {stdout}',
                             options=req[4]) is True
 assert b.bubble['text'] == 'Новости: Мир: новость', b.bubble
@@ -276,22 +291,56 @@ fresh = {'id': 'fan', 'name': 'Вентилятор', 'enabled': True,
          'action': {'type': 'command', 'value': 'fan on'}, 'requires_confirmation': False}
 stored = user_intents.save({'version': 1, 'revision': b.user_intents_data['revision'],
                             'intents': [fresh]}, b.user_intents_path)
-os.utime(b.user_intents_path, (b.user_intents_mtime + 2, b.user_intents_mtime + 2))
+item_file = user_intents.intent_dir('fan', b.user_intents_path) / user_intents.INTENT_FILE
+future = b.user_intents_mtime + 10
+os.utime(item_file, (future, future))
 assert b.voice_user_intent('включи вентилятор') is True
-assert ('run', 'fan on') in b.requests and b.user_intents_data['revision'] == stored['revision']
+req = run_req(b.requests, 'fan on')
+assert req and req[0] == 'run_in' and Path(req[2]).name == 'fan'
+assert b.user_intents_data['revision'] == stored['revision']
 
 # a button from actions.json wins a phrase claimed by both layers
 b = brain([action(command='button', phrases=['включи лампу'])], user_intents=True)
 b.user_intents_path = (Path(tempfile.gettempdir())
-                       / f'yumi-user-intents-both-{os.getpid()}.json')
-if b.user_intents_path.exists():
-    b.user_intents_path.unlink()
+                       / f'yumi-user-intents-both-{os.getpid()}')
+shutil.rmtree(b.user_intents_path, ignore_errors=True)
 b.user_intents_data = user_intents.save(
     {'version': 1, 'revision': 0, 'intents': [dict(RULE, requires_confirmation=False)]},
     b.user_intents_path)
-b.user_intents_mtime = b.user_intents_path.stat().st_mtime
+b.user_intents_mtime = user_intents.mtime(b.user_intents_path)
 b.requests.clear()
 assert b.voice_intent('включи лампу') is True and ('run', 'button') in b.requests
 assert b.last_intent != 'lamp'
+
+# ---- the action journal: one run_id ties the heard phrase to the decision,
+# the command start and its answer; the command itself is never serialized
+with tempfile.TemporaryDirectory() as tmp:
+    old_state = config.STATE_DIR
+    config.STATE_DIR = Path(tmp)
+    try:
+        journal_rule = dict(CAPTURE, id='journal', name='Журнал',
+                            phrases=['журнал проверки'], keywords=[],
+                            action={'type': 'command', 'value': 'super_secret_command'},
+                            requires_confirmation=True)
+        jb = intents_brain([journal_rule], intents_log_level='trace',
+                           intents_log_include_text=True)
+        jb.requests.clear()
+        assert jb.voice_user_intent('журнал проверки') is True
+        run = jb.last_user_intent_run_id
+        assert len(run) == 8
+        assert jb.answer_permission('once', 'panel')['decided'] is True
+        req = next(r for r in jb.requests if r[0] == 'run_capture')
+        assert req[4]['run_id'] == run and req[4]['source'] == 'voice'
+        assert jb.user_intent_answer('готово', 'journal', '', options=req[4]) is True
+        records = [r for r in intent_log.read() if r['run_id'] == run]
+        stages = {r['stage'] for r in records}
+        assert {'heard', 'match', 'decision', 'start', 'result'} <= stages, stages
+        assert any(r['heard_text'] == 'журнал проверки' for r in records)
+        dump = json.dumps(records, ensure_ascii=False)
+        assert 'super_secret_command' not in dump and 'run_capture' not in dump
+        assert all(r['action_sha'] is None or r['action_sha'].startswith('sha256:')
+                   for r in records)
+    finally:
+        config.STATE_DIR = old_state
 
 print('tests/test_voice_intent.py: ok')

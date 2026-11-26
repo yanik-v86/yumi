@@ -187,6 +187,43 @@ def test_brain_update_ticks_the_clock():
     assert b.bubble and b.bubble['text'].startswith('Clock:')
 
 
+def test_reminders_tick_runs_from_the_clock():
+    """The reminder check is a clock job; its command comes from a user intent."""
+    import gi                                      # noqa: F401
+    gi.require_version('GdkPixbuf', '2.0')
+    from yumi import config, extras, user_intents
+    from yumi.brain import Brain
+    from yumi.phrases import Speech
+    from yumi.sprites import Meta
+
+    s = dict(config.DEFAULT_SETTINGS)
+    b = Brain(Meta(config.SPRITES, None), s, {'intro_done': True}, Speech(s),
+              lambda *_a: (10, 10))
+    job = b.clock.jobs.get(extras.REMINDERS_TICK_ID)
+    assert job and job['every_s'] == extras.REMINDERS_TICK_PERIOD_S
+    assert not job['persist']                      # no stale systemd-like timer on disk
+    assert extras.REMINDERS_TICK_ID in b.clock.handlers
+
+    # a partial Brain: no GTK and no disk, the intent is the source of truth
+    fake = Brain.__new__(Brain)
+    fake.settings = dict(config.DEFAULT_SETTINGS)
+    fake.requests = []
+    fake.user_intents_path = '/tmp/yumi-intents-test'
+    fake.user_intents_mtime = 0.0
+    fake.user_intents_data = {'intents': [
+        {'id': extras.REMINDERS_TICK_ID, 'enabled': True,
+         'action': {'type': 'command', 'value': 'python3 reminders.py --tick'}},
+    ]}
+    cwd = str(user_intents.intent_dir(extras.REMINDERS_TICK_ID, fake.user_intents_path))
+    fake.reminders_tick()
+    assert fake.requests == [('run_in', 'python3 reminders.py --tick', cwd)]
+
+    fake.user_intents_data['intents'][0]['enabled'] = False
+    fake.requests.clear()
+    fake.reminders_tick()
+    assert fake.requests == []                     # disabling the intent stops the tick
+
+
 if __name__ == '__main__':
     for name, fn in sorted(globals().items()):
         if name.startswith('test_') and callable(fn):

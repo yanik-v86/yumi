@@ -14,7 +14,8 @@ _state = Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local' / 'stat
 _cache = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache')
 CONFIG_DIR = _cfg / 'yumi'
 ACTIONS_FILE = CONFIG_DIR / 'actions.json'
-INTENTS_FILE = CONFIG_DIR / 'user_intents.json'
+INTENTS_DIR = CONFIG_DIR / 'user-intents'   # one folder per rule: <id>/intent.json
+INTENTS_FILE = CONFIG_DIR / 'user_intents.json'   # the old document, migrated on first read
 STATE_DIR = _state / 'yumi'
 CACHE_DIR = _cache / 'yumi'
 
@@ -133,8 +134,13 @@ DEFAULT_SETTINGS = {
     'music_skill': True,      # music control via voice commands
     'nlu': True,              # her own voice commands: the phrases in actions.json
     'nlu_confidence': 0.6,    # a match under this line is left to the chat (0..1)
-    'user_intents': True,     # your own rules from user_intents.json, edited in
+    'user_intents': True,     # your own rules from user-intents/<id>/intent.json, edited in
                               # the browser panel or by hand (no GTK editor, no ONNX)
+    'intents_log_level': 'off',  # action journal: off/error/result/action/match/trace
+    'intents_log_include_text': False,  # opt-in previews of the heard phrase and stdout;
+                                       # commands and URLs are never written, at any level
+    'intents_log_max_chars': 200,  # one preview's length, 100..8000
+    'intents_log_max_lines': 2000,  # JSONL lines kept in STATE_DIR/user-intents.log
     'intents': True,          # the tiny trained mind (yumi/intents.py) hears the
                               # phrases the sayings miss; tools/intents_setup.sh
     'wake_word': 'юми',       # the wake word itself (say it, then the question);
@@ -463,6 +469,9 @@ UI = {
         'listen': 'Listen', 'cat_chat': 'Her mind', 'chat_model': 'Answer model',
         'nlu': 'Voice commands',
         'intents': 'Intents mind',
+        'intents_log_level': 'Action log',
+        'il_off': 'off', 'il_error': 'errors', 'il_result': 'results',
+        'il_action': 'actions', 'il_match': 'matches', 'il_trace': 'everything',
         'joke': 'Joke',
         'chat_refresh': 'Find the model',
         'chat_think': 'Let her think first',
@@ -570,6 +579,9 @@ UI = {
         'listen': 'Послушать', 'cat_chat': 'Её мозги', 'chat_model': 'Модель ответов',
         'nlu': 'Голосовые команды',
         'intents': 'Распознавание фраз',
+        'intents_log_level': 'Журнал действий',
+        'il_off': 'выкл', 'il_error': 'ошибки', 'il_result': 'результаты',
+        'il_action': 'действия', 'il_match': 'совпадения', 'il_trace': 'всё',
         'joke': 'Анекдот',
         'chat_refresh': 'Найти модель',
         'chat_think': 'Дать ей подумать',

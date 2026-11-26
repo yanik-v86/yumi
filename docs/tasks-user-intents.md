@@ -4,7 +4,7 @@
 Дата: 2026-11-25 (уточнено: без GTK-редактора; реализовано 2026-11-25).  
 Связанные документы: `docs/handoff-user-intents.md` (архитектура, контракты, риски),
 `docs/plan-intents-action-log.md` и `docs/handoff-intents-action-log.md`
-(отдельная задача: журнал действий интентов), а также
+(журнал действий интентов реализован отдельными задачами L-01..L-06: см. план), а также
 `docs/plan-internal-clock.md` / `docs/handoff-internal-clock.md`
 (отдельная задача: внутренние часы Юми).
 
@@ -13,11 +13,11 @@
 ## Решение по GTK (исключение из правила проекта)
 
 Управление пользовательскими интентами делается **только в веб-панели и через ручное
-редактирование `user_intents.json`**. Отдельный GTK-редактор не создаётся — это осознанное
+редактирование `user-intents/<id>/intent.json`**. Отдельный GTK-редактор не создаётся — это осознанное
 решение владельца, а не пропуск.
 
 - В GTK сохраняется только **исполнение** пользовательских интентов при распознавании фраз.
-- Источник истины — один и тот же JSON-файл; панель — полноценный CRUD с валидацией,
+- Источник истины — один и тот же каталог JSON-файлов; панель — полноценный CRUD с валидацией,
   файл — офлайн/аварийный путь без запуска панели.
 - Эквивалент в панели: список, создание, правка, удаление, импорт, экспорт и «Проверить фразу».
 - Никаких скрытых GTK-форм, дублирующих логику валидации, не добавляем.
@@ -36,13 +36,14 @@
 ### T-01. Хранилище и схема пользовательских интентов (P0) — DONE
 
 **Зависит от:** —  
-**Файлы:** `yumi/config.py` (только путь `INTENTS_FILE`), `yumi/user_intents.py` (новый), `tests/test_user_intents.py` (новый).
+**Файлы:** `yumi/config.py` (пути `INTENTS_DIR` / `INTENTS_FILE`), `yumi/user_intents.py` (новый), `tests/test_user_intents.py` (новый).
 
 **Что сделать:**
-- Добавить `INTENTS_FILE = CONFIG_DIR / "user_intents.json"` рядом с `ACTIONS_FILE`.
+- Добавить `INTENTS_DIR = CONFIG_DIR / "user-intents"` рядом с `ACTIONS_FILE`; `INTENTS_FILE`
+  оставить как путь старого документа, который мигрирует в каталог при первом чтении.
   Переменной `USER_CONFIG_DIR` / `YUMI_CONFIG_DIR` в коде нет: конфиг — это
   `CONFIG_DIR = XDG_CONFIG_HOME/yumi` (`yumi/config.py:12-16`). Тесты используют временный
-  `XDG_CONFIG_HOME` либо monkeypatch `config.CONFIG_DIR` и `user_intents.INTENTS_FILE`.
+  `XDG_CONFIG_HOME` либо monkeypatch `config.CONFIG_DIR` и `user_intents.INTENTS_DIR`.
 - Всю логику держать в `yumi/user_intents.py`: `load/save/validate/import_json/export_json`.
   `config.py` не может заниматься записью — только константой пути.
 - Запись атомарная через `tmp` + `replace`, как в `config.save_actions()`
@@ -139,7 +140,7 @@
 **Файлы:** `yumi/brain.py`, `yumi/user_intents.py`, `tests/test_voice_intent.py`, `tests/test_user_intents.py`.
 
 **Что сделать:**
-- Загружать `user_intents.json`, кэшировать и обновлять по `mtime`/`revision`
+- Загружать каталог `user-intents`, кэшировать и обновлять по `mtime`/`revision`
   (по образцу `extras.actions_check()`, `yumi/extras.py:322-331`), без перезапуска.
 - **Зафиксированный порядок в `heard_text()`** (по текущему коду,
   `yumi/brain.py:1659-1748`) — существующие блоки не переставляем:
@@ -241,7 +242,7 @@
 `README.ru.md`, `README.md`, `docs/handoff-web-panel.md`, `docs/handoff-user-intents.md`.
 
 **Что сделать:**
-- Smoke-сценарий без GTK: создать интент через API → поправить `user_intents.json` руками →
+- Smoke-сценарий без GTK: создать интент через API → поправить `intent.json` руками →
   убедиться, что `Brain` подхватил его по mtime → test phrase → export → import → delete.
 - Обновить README (ru/en): как создавать интенты в панели и вручную в файле, формат JSON,
   импорт/экспорт, что это правила `nlu`, а не дообучение ONNX, и что GTK-редактора нет.
@@ -333,7 +334,7 @@ pytest tests/ -q
 
 **Зависит от:** T-10, T-11  
 **Файлы:** `yumi/user_intents.py`, `yumi/brain.py`, `yumi/ui/app.py`,
-`yumi/webui/static/js/pages/user-intents.js`, тесты, доки, живой `user_intents.json`.
+`yumi/webui/static/js/pages/user-intents.js`, тесты, доки, живой каталог `user-intents`.
 
 **Что сделать:**
 - Новые поля интента: `voice_answer`, `bubble_answer` (по умолчанию `true`), `voice_text`,
@@ -363,7 +364,7 @@ pytest tests/ -q
 
 - [x] T-01 — T-08, T-10, T-11 и T-12 выполнены (T-09 — по решению владельца).
 - [x] Пользователь может создавать/редактировать/удалять/импортировать/экспортировать/
-      тестировать интенты **из веб-панели** и **вручную в `user_intents.json`**. GTK-редактора нет.
+      тестировать интенты **из веб-панели** и **вручную в `intent.json`**. GTK-редактора нет.
 - [x] Кастомные интенты не требуют переобучения ONNX и работают без перезапуска.
 - [x] Ответ captured-интента показывается в бабле и звучит как обычная реплика Юми.
 - [x] Кнопка «Проверить» запускает найденный интент через HTTP + Bridge + Brain.

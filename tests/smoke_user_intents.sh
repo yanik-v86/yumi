@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Your own intents end to end, without a GTK window or a running Yumi.
-# Creates a rule through the real HTTP panel, edits user_intents.json by hand,
+# Creates a rule through the real HTTP panel, edits intent.json by hand,
 # checks that Brain picks the edit up by mtime, then tests/exports/imports/deletes.
 set -euo pipefail
 
@@ -46,7 +46,7 @@ settings = dict(config.DEFAULT_SETTINGS)
 settings.update(ui_lang='ru', user_intents=True, nlu_confidence=0.6,
                 web_panel=True, web_panel_host='127.0.0.1',
                 web_panel_port=free_port())
-intents_path = config.CONFIG_DIR / 'user_intents.json'
+intents_dir = config.INTENTS_DIR
 
 # A real Brain state machine, but no GTK loop: requests are only collected.
 brain = Brain(Meta(config.SPRITES, None), settings, {'intro_done': True},
@@ -54,9 +54,9 @@ brain = Brain(Meta(config.SPRITES, None), settings, {'intro_done': True},
 brain.actions_path = tmp / 'actions.json'
 brain.actions_mtime = 0.0
 brain.custom = []
-brain.user_intents_path = intents_path
+brain.user_intents_path = intents_dir
 brain.user_intents_mtime = 0.0
-brain.user_intents_data = user_intents.load(intents_path)
+brain.user_intents_data = user_intents.load(intents_dir)
 
 
 class Bridge:
@@ -65,6 +65,7 @@ class Bridge:
     def __init__(self):
         self.settings = settings
         self.side = PanelMixin()
+        self.side.settings = settings
         self.side.brain = brain
 
     def user_intents_get(self):
@@ -84,6 +85,15 @@ class Bridge:
 
     def user_intents_run(self, text):
         return self.side._web_user_intents_run(text)
+
+    def intents_log_get(self, limit=200, intent='', stage=''):
+        return self.side._web_intents_log_get(limit, intent, stage)
+
+    def intents_log_clear(self):
+        return self.side._web_intents_log_clear()
+
+    def logs(self, name, lines):
+        return self.side._web_logs(name, lines)
 
     def snapshot(self):
         return {}
@@ -145,13 +155,15 @@ try:
 
     brain.requests.clear()
     assert brain.voice_user_intent('включи лампу') is True
-    assert ('run', 'noop-one') in brain.requests, brain.requests
+    req = next(r for r in brain.requests if r[0] == 'run_in')
+    assert req[1] == 'noop-one' and Path(req[2]).name == 'lamp', brain.requests
     assert brain.last_intent == 'lamp'
 
     brain.requests.clear()
     assert brain.voice_user_intent('ответь новостями') is True
     req = next(r for r in brain.requests if r[0] == 'run_capture')
     assert req[:4] == ('run_capture', 'noop-answer', 'answer', 'Ответ: {stdout}')
+    assert Path(req[6]).name == 'answer'
     assert req[4]['bubble_limit'] == 1000
     assert brain.user_intent_answer('свежие заголовки', 'answer', 'Ответ: {stdout}',
                                     options=req[4]) is True
@@ -164,20 +176,25 @@ try:
     assert data['intent']['id'] == 'answer'
     assert any(r[0] == 'run_capture' and r[1] == 'noop-answer' for r in brain.requests)
 
-    # 2. edit the file by hand: Brain must notice the new mtime without a restart
-    raw = json.loads(intents_path.read_text(encoding='utf-8'))
-    rule = raw['intents'][0]
-    rule['phrases'] = ['включи свет']
-    rule['action']['value'] = 'noop-two'
-    rule['updated_at'] = '2026-11-25T12:00:00Z'
-    raw['revision'] += 1
-    intents_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding='utf-8')
+    # 2. edit intent.json and index.json by hand: no restart, no other rule touched
+    rule_file = user_intents.intent_dir('lamp', intents_dir) / user_intents.INTENT_FILE
+    raw = json.loads(rule_file.read_text(encoding='utf-8'))
+    raw['phrases'] = ['включи свет']
+    raw['action']['value'] = 'noop-two'
+    raw['updated_at'] = '2026-11-25T12:00:00Z'
+    rule_file.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding='utf-8')
+    index_file = intents_dir / user_intents.INDEX_FILE
+    index = json.loads(index_file.read_text(encoding='utf-8'))
+    index['revision'] += 1
+    index_file.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding='utf-8')
 
     brain.requests.clear()
     assert brain.voice_user_intent('включи лампу') is False, 'the old phrase must be gone'
     assert brain.voice_user_intent('включи свет') is True, 'the new phrase must fire'
-    assert ('run', 'noop-two') in brain.requests, brain.requests
-    assert ('run', 'noop-one') not in brain.requests
+    req = next(r for r in brain.requests if r[0] == 'run_in')
+    assert req[1] == 'noop-two' and Path(req[2]).name == 'lamp', brain.requests
+    assert not any(r[0] in ('run', 'run_in') and r[1] == 'noop-one'
+                   for r in brain.requests)
 
     # 3. the panel tests the phrase without running anything
     code, data, _ = call('POST', '/api/user-intents/test', {'text': 'включи свет'}, csrf=csrf)

@@ -98,35 +98,34 @@ tests/               pytest и интеграционные тесты
 
 ## Пользовательские интенты (свои фразы)
 
-Источник истины — `~/.config/yumi/user_intents.json` (`config.INTENTS_FILE`). Агент должен
-создавать интенты через страницу панели `user-intents` (`#/user-intents`) или её API.
-Отдельного GTK-редактора **нет** — это явное исключение из главного правила: в GTK
-остаётся только исполнение фраз. Если панель недоступна, допустимо править JSON руками,
-но по той же схеме и с увеличенным `revision`.
+Источник истины — каталог `~/.config/yumi/user-intents/` (`config.INTENTS_DIR`): в нём
+`index.json` (version, revision, порядок правил) и по папке на интент —
+`user-intents/<id>/intent.json`. Рядом с `intent.json` можно держать свои файлы: команда
+интента запускается в этой папке, поэтому хватает относительного пути
+(`python3 lights.py on`). Агент должен создавать интенты через страницу панели
+`user-intents` (`#/user-intents`) или её API. Отдельного GTK-редактора **нет** — это явное
+исключение из главного правила: в GTK остаётся только исполнение фраз. Если панель
+недоступна, допустимо править `intent.json` руками, увеличив `revision` в `index.json`.
+Старый `user_intents.json` при первом чтении раскладывается по папкам, а его копия
+остаётся в `user_intents.json.migrated`.
 
-Минимальный документ:
+Минимальный файл `user-intents/lights_on/intent.json` (имя папки = `id`):
 
 ```json
 {
-  "version": 1,
-  "revision": 1,
-  "intents": [
-    {
-      "id": "lights_on",
-      "name": "Свет",
-      "enabled": true,
-      "phrases": ["включи свет", "lights on"],
-      "keywords": ["свет", "лампа"],
-      "action": {"type": "command", "value": "python3 /home/user/scripts/lights.py on"},
-      "speak": "Включаю свет",
-      "capture": false,
-      "voice_answer": true,
-      "bubble_answer": true,
-      "bubble_limit": 1000,
-      "priority": 0,
-      "requires_confirmation": true
-    }
-  ]
+  "id": "lights_on",
+  "name": "Свет",
+  "enabled": true,
+  "phrases": ["включи свет", "lights on"],
+  "keywords": ["свет", "лампа"],
+  "action": {"type": "command", "value": "python3 lights.py on"},
+  "speak": "Включаю свет",
+  "capture": false,
+  "voice_answer": true,
+  "bubble_answer": true,
+  "bubble_limit": 1000,
+  "priority": 0,
+  "requires_confirmation": true
 }
 ```
 
@@ -155,15 +154,20 @@ tests/               pytest и интеграционные тесты
 - Пользовательские интенты проверяются **после** встроенных навыков и кнопок
   `actions.json`, поэтому кнопка выигрывает спор за ту же фразу. Это обычные правила
   `nlu`, а не дообучение ONNX: новая фраза подхватывается по mtime без перезапуска.
-- Правка файла вручную увеличивает `revision`. Запись из панели (`PUT /api/user-intents`)
-  обязана прислать текущий `revision`; при расхождении сервер отдаёт `409`, а не
-  перезаписывает чужую правку.
+- Правка `intent.json` вручную увеличивает `revision` в `index.json`. Запись из панели
+  (`PUT /api/user-intents`) обязана прислать текущий `revision`; при расхождении сервер
+  отдаёт `409`, а не перезаписывает чужую правку.
 - Импорт — `POST /api/user-intents/import` (multipart-файл или `{"text": "..."}`), не
   `/api/upload`. `POST /api/user-intents/test` показывает совпадение и ничего не выполняет;
   `POST /api/user-intents/run` находит фразу и запускает интент через тот же `Brain`, что и
   услышанная речь (бабла, голос, команда). Кнопка «Проверить» на карточке страницы
   `user-intents` использует именно `run`; отдельная проверка совпадения остаётся без запуска.
   Аудит изменений не содержит текста команд.
+
+Интент `reminders_tick` (`python3 reminders.py --tick`) — тик напоминаний через
+внутренние часы Юми (`yumi/extras.py`, задача раз в минуту), systemd-таймер для
+этого не нужен. Команда и `enabled` правятся на странице `user-intents`, статус
+задачи виден в `runtime.clock` и в GTK-меню.
 
 Ключевые файлы: `yumi/user_intents.py`, `yumi/brain.py` (`voice_user_intent()`),
 `yumi/ui/webpanel.py` (`_web_user_intents_*`), `yumi/webpanel/server.py` (роуты),
@@ -182,7 +186,8 @@ pytest tests/ -q
 ## Чего не делать
 
 - Не добавлять функцию только в GTK или только в панель, если она должна быть в обоих.
-- Не создавать GTK-редактор `user_intents.json`: свои фразы правятся в панели или в файле.
+- Не создавать GTK-редактор `user-intents/<id>/intent.json`: свои фразы правятся в панели
+  или в файле.
 - Не импортировать GTK в `yumi/webpanel/` и не обращаться к виджетам из HTTP-потока.
 - Не отдавать секреты и токен панели в открытом виде.
 - Не ломать обратную совместимость `settings.json` без миграции/значения по умолчанию.

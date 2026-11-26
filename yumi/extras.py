@@ -24,6 +24,10 @@ PET_RUN = 8             # px a stroke must go one way before turning back counts
 SPARK_LIFE = 0.8
 BREAK_KINDS = ('water', 'eyes', 'stretch')
 TOUR_STEPS = 5
+# the reminders tick lives in a user intent, so its command and folder stay
+# editable in the panel; the internal clock only calls it once a minute
+REMINDERS_TICK_ID = 'reminders_tick'
+REMINDERS_TICK_PERIOD_S = 60
 # id: action, arg, icon, label; the settings button can move but not go: nothing else opens them
 RING_BUILTIN = {'recent': ('pile', 'recent', 'box', 'recent'), 'shelf': ('pile', 'shelf', 'shelf', 'shelf'),
                 'pipette': ('pipette', None, 'drop', 'pipette'), 'timer': ('timer', None, 'clock', 'timer'),
@@ -68,6 +72,14 @@ class Extras:
         self.clock.register('timer', lambda job: self.timer_update(self.now))
         self.clock.register('breaks', lambda job: self.breaks_tick(0.0, self.now))
         self.clock.register('hourly_chimes', lambda job: self.hourly())
+        self.clock.register(REMINDERS_TICK_ID, lambda job: self.reminders_tick())
+        if REMINDERS_TICK_ID not in self.clock.jobs:
+            # not persisted: a new launch starts a fresh minute, no stale timer
+            # and no second systemd unit to keep in sync
+            self.clock.schedule(REMINDERS_TICK_ID,
+                                in_s=REMINDERS_TICK_PERIOD_S,
+                                every_s=REMINDERS_TICK_PERIOD_S,
+                                owner='reminders', id=REMINDERS_TICK_ID)
         self.tour = None
         self.custom = load_actions(ACTIONS_FILE)
         self.actions_path = ACTIONS_FILE
@@ -75,13 +87,10 @@ class Extras:
             self.actions_mtime = self.actions_path.stat().st_mtime
         except OSError:
             self.actions_mtime = 0.0
-        # your own intents: a separate, validated file, hot-reloaded like actions
-        self.user_intents_path = user_intents.INTENTS_FILE
+        # your own intents: one folder per rule, hot-reloaded like actions
+        self.user_intents_path = user_intents.INTENTS_DIR
         self.user_intents_data = user_intents.load(self.user_intents_path)
-        try:
-            self.user_intents_mtime = self.user_intents_path.stat().st_mtime
-        except OSError:
-            self.user_intents_mtime = 0.0
+        self.user_intents_mtime = user_intents.mtime(self.user_intents_path)
         self.ring_edit = False           # the button editor is open on the ring
         self.ring_drag = None            # id of the button pressed there...
         self.ring_moved = False          # ...and whether it has been pulled away yet
@@ -197,6 +206,32 @@ class Extras:
                 self.break_i += 1
                 if self.mode == 'docked' and not self.out:
                     self.pop(True, temporary=True)
+
+    def reminders_tick(self):
+        """Internal clock: check due reminders once a minute, no systemd timer.
+
+        The user intent is the source of truth: its command runs in its own
+        folder, the panel can edit or disable it, and no reminder logic is
+        duplicated here (the script speaks and notifies on its own).
+        """
+        if not self.settings.get('user_intents', True):
+            return
+        data = self.user_intents_check()
+        item = next((i for i in data.get('intents') or ()
+                     if str(i.get('id') or '') == REMINDERS_TICK_ID
+                     and i.get('enabled', True)), None)
+        if not item:
+            return
+        action = item.get('action') or {}
+        command = str(action.get('value') or '').strip()
+        if str(action.get('type') or '') != 'command' or not command:
+            return
+        root = getattr(self, 'user_intents_path', None) or user_intents.INTENTS_DIR
+        try:
+            cwd = str(user_intents.intent_dir(REMINDERS_TICK_ID, root))
+        except ValueError:
+            cwd = ''
+        self.requests.append(('run_in', command, cwd))
 
     def clock_status_text(self):
         """One read-only line for her GTK menu: the same snapshot the panel shows."""
@@ -364,20 +399,21 @@ class Extras:
             self.custom = load_actions(self.actions_path)
 
     def user_intents_check(self):
-        """user_intents.json, edited in the panel or by hand, needs no restart.
+        """user-intents/<id>/intent.json, edited in the panel or by hand, needs
+        no restart.  The mtime covers every rule file, not just index.json.
 
         Tests build partial Brains with ``__new__``; a missing path or cache means
-        the file simply has to be read once, not that the phrase layer crashes.
+        the store simply has to be read once, not that the phrase layer crashes.
         """
-        path = getattr(self, 'user_intents_path', None) or user_intents.INTENTS_FILE
+        path = getattr(self, 'user_intents_path', None) or user_intents.INTENTS_DIR
         try:
-            m = Path(path).stat().st_mtime
+            m = user_intents.mtime(path)
         except (OSError, TypeError, ValueError):
             m = 0.0
         if m != getattr(self, 'user_intents_mtime', None) or \
                 getattr(self, 'user_intents_data', None) is None:
-            self.user_intents_mtime = m
             self.user_intents_data = user_intents.load(path)
+            self.user_intents_mtime = user_intents.mtime(path)
         return self.user_intents_data
 
     def extras_do(self, action, arg):

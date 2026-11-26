@@ -14,12 +14,14 @@ export function render(view, ctx) {
   view.append(
     el('h2', { class: 'pagehead', text: L('Мои фразы', 'My phrases') }),
     el('p', { class: 'pagelead', text: L(
-      'Свои правила распознавания в user_intents.json. Они работают после встроенных навыков '
-      + 'и кнопок, не требуют дообучения ONNX и подхватываются без перезапуска. '
-      + 'Редактора в GTK нет: правь здесь или прямо в файле.',
-      'Your own rules in user_intents.json. They run after the built-in skills and buttons, '
-      + 'need no ONNX retraining and are picked up without a restart. There is no GTK editor: '
-      + 'use this page or edit the file by hand.') }),
+      'Свои правила распознавания в user-intents/<id>/intent.json. У каждого правила своя папка: '
+      + 'положи рядом скрипт — команда запустится в этой папке. Правила работают после встроенных '
+      + 'навыков и кнопок, не требуют дообучения ONNX и подхватываются без перезапуска. '
+      + 'Редактора в GTK нет: правь здесь или прямо в intent.json.',
+      'Your own rules in user-intents/<id>/intent.json. Each rule has its own folder: keep a '
+      + 'script beside intent.json and the command runs in that folder. They run after the built-in '
+      + 'skills and buttons, need no ONNX retraining and are picked up without a restart. There is '
+      + 'no GTK editor: use this page or edit intent.json by hand.') }),
   );
 
   const fileInput = el('input', {
@@ -86,6 +88,162 @@ export function render(view, ctx) {
       'Match only: nothing runs and the file is unchanged. The card’s “Test” button runs the intent.') }),
   ));
 
+  // The action journal shares this page: no extra route, no GTK viewer.
+  const LOG_LEVELS = [
+    ['off', L('Выкл', 'Off')],
+    ['error', L('Ошибки', 'Errors')],
+    ['result', L('Ответы', 'Results')],
+    ['action', L('Действия', 'Actions')],
+    ['match', L('Совпадения', 'Matches')],
+    ['trace', L('Всё', 'Trace')],
+  ];
+  const LOG_STAGES = [
+    ['', L('Все этапы', 'All stages')],
+    ['heard', 'heard'], ['match', 'match'], ['decision', 'decision'],
+    ['skip', 'skip'], ['start', 'start'], ['result', 'result'],
+    ['error', 'error'], ['panel', 'panel'],
+  ];
+  const logLevel = el('select', { 'aria-label': L('Уровень журнала', 'Log level') });
+  for (const [value, label] of LOG_LEVELS) {
+    logLevel.append(el('option', { value, text: label }));
+  }
+  logLevel.addEventListener('change', async () => {
+    await ctx.applySettings({ intents_log_level: logLevel.value }, { quiet: false });
+    await loadLog();
+  });
+  const textOptIn = el('input', { type: 'checkbox' });
+  textOptIn.addEventListener('change', async () => {
+    await ctx.applySettings({ intents_log_include_text: textOptIn.checked }, { quiet: false });
+    if (textOptIn.checked) {
+      toast(L('Фраза и вывод команды теперь попадают в журнал',
+              'The phrase and command output are now written to the journal'), 'warn');
+    }
+    await loadLog();
+  });
+  const maxChars = el('input', { type: 'number', min: '100', max: '8000', step: '100' });
+  maxChars.addEventListener('change', async () => {
+    await ctx.applySettings({ intents_log_max_chars: Number.parseInt(maxChars.value, 10) || 200 }, { quiet: false });
+  });
+  const maxLines = el('input', { type: 'number', min: '100', max: '20000', step: '100' });
+  maxLines.addEventListener('change', async () => {
+    await ctx.applySettings({ intents_log_max_lines: Number.parseInt(maxLines.value, 10) || 2000 }, { quiet: false });
+  });
+  const logIntent = el('input', {
+    type: 'text', placeholder: L('Фильтр: id правила', 'Filter: intent id'),
+    'aria-label': L('Фильтр по правилу', 'Filter by intent'),
+  });
+  const logStage = el('select', { 'aria-label': L('Фильтр по этапу', 'Filter by stage') });
+  for (const [value, label] of LOG_STAGES) {
+    logStage.append(el('option', { value, text: label }));
+  }
+  const logInfo = el('div', { class: 'card-hint' });
+  const logRows = el('div', {
+    class: 'stack log-terminal',
+    style: { maxHeight: '320px', overflow: 'auto', fontFamily: 'monospace', fontSize: '11px' },
+  });
+  view.append(el('div', { class: 'card', style: { marginTop: '16px' } },
+    el('h3', { text: L('Журнал действий',
+                       'Action log') }),
+    el('p', { class: 'card-hint', text: L(
+      'Команды и ссылки никогда не пишутся в журнал — только их хэш и длина. '
+      + 'Услышанная фраза и вывод команды попадают туда только с явным включением ниже.',
+      'Commands and URLs are never written to the journal — only their hash and length. '
+      + 'The heard phrase and command output are stored only with the explicit opt-in below.') }),
+    el('div', { class: 'form-grid' },
+      field(L('Уровень', 'Level'), logLevel),
+      field(L('Длина превью', 'Preview length'), maxChars,
+        L('100–8000 символов.', '100–8000 characters.')),
+      field(L('Строк в файле', 'Lines in file'), maxLines,
+        L('100–20000 строк.', '100–20000 lines.')),
+      el('div', { class: 'full' }, el('label', { class: 'row' }, textOptIn,
+        el('span', { text: L('Записывать фразу и вывод команды',
+                             'Store the phrase and command output') })))),
+    el('div', { class: 'row', style: { marginTop: '10px', marginBottom: '8px' } },
+      logIntent, logStage,
+      button(L('Обновить', 'Refresh'), { small: true, onClick: () => loadLog() }),
+      button(L('Очистить', 'Clear'), {
+        small: true, kind: 'btn-danger', onClick: async () => {
+          if (!await confirmDialog({
+            title: L('Очистить журнал?', 'Clear the journal?'),
+            message: L('Строки будут удалены из user-intents.log.',
+                       'The entries will be removed from user-intents.log.'),
+            confirmLabel: L('Очистить', 'Clear'), danger: true,
+          })) return;
+          try {
+            await api.intentsLogClear();
+            toast(L('Журнал очищен', 'Journal cleared'), 'good');
+            await loadLog();
+          } catch (err) { errToast(err); }
+        },
+      })),
+    logInfo, logRows));
+
+  function syncLogControls() {
+    const s = ctx.status?.settings || {};
+    if (s.intents_log_level && logLevel.value !== s.intents_log_level) {
+      logLevel.value = s.intents_log_level;
+    }
+    textOptIn.checked = Boolean(s.intents_log_include_text);
+    if (document.activeElement !== maxChars && s.intents_log_max_chars != null) {
+      maxChars.value = String(s.intents_log_max_chars);
+    }
+    if (document.activeElement !== maxLines && s.intents_log_max_lines != null) {
+      maxLines.value = String(s.intents_log_max_lines);
+    }
+  }
+
+  function logCell(value, width) {
+    const text = value == null ? '' : String(value);
+    return el('span', {
+      class: 'card-hint', title: text,
+      style: { flex: `0 0 ${width}`, overflow: 'hidden', textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap' },
+      text,
+    });
+  }
+
+  function logRow(values, head = false) {
+    return el('div', { class: 'row', style: { gap: '8px', marginBottom: '4px' } },
+      ...values.map(([value, width]) => logCell(value, width)));
+  }
+
+  async function loadLog() {
+    syncLogControls();
+    const params = new URLSearchParams({ limit: '200' });
+    if (logIntent.value.trim()) params.set('intent', logIntent.value.trim());
+    if (logStage.value) params.set('stage', logStage.value);
+    try {
+      const result = await api.intentsLogGet(params.toString());
+      const info = result.info || {};
+      logInfo.textContent = L(
+        `Уровень ${info.level || 'off'} · строк ${info.lines || 0} · ошибок ${info.errors || 0}`,
+        `Level ${info.level || 'off'} · lines ${info.lines || 0} · errors ${info.errors || 0}`);
+      logRows.replaceChildren();
+      const items = result.items || [];
+      if (!items.length) {
+        logRows.append(el('div', { class: 'card-hint',
+          text: L('Записей нет', 'No entries') }));
+        return;
+      }
+      logRows.append(logRow([
+        [L('Время', 'Time'), '150px'], ['stage', '78px'], ['intent', '110px'],
+        ['run', '78px'], ['status', '78px'], ['heard', '170px'],
+        ['stdout', '170px'], [L('Детали', 'Details'), '220px'],
+      ], true));
+      for (const item of items) {
+        logRows.append(logRow([
+          [item.ts ? new Date(item.ts * 1000).toLocaleString() : '', '150px'],
+          [item.stage, '78px'], [item.intent_id, '110px'], [item.run_id, '78px'],
+          [item.status, '78px'], [item.heard_text, '170px'],
+          [item.stdout_preview, '170px'],
+          [JSON.stringify(item.details || {}), '220px'],
+        ]));
+      }
+    } catch (err) {
+      logRows.replaceChildren(el('div', { class: 'card-hint', text: err.message }));
+    }
+  }
+
   async function load() {
     try {
       data = await api.userIntentsGet();
@@ -101,9 +259,11 @@ export function render(view, ctx) {
   }
 
   function draw() {
+    const store = ctx.status?.runtime?.user_intents?.path || '';
+    const place = store ? ` · ${store}` : '';
     meta.textContent = L(
-      `Версия ${data.version} · правка ${data.revision} · правил: ${data.intents.length}`,
-      `Version ${data.version} · revision ${data.revision} · ${data.intents.length} intents`);
+      `Версия ${data.version} · правка ${data.revision} · правил: ${data.intents.length}${place}`,
+      `Version ${data.version} · revision ${data.revision} · ${data.intents.length} intents${place}`);
     list.replaceChildren();
     if (!data.intents.length) {
       list.append(emptyBox(L('Пока нет своих правил. Добавь фразу, которую Юми должна узнать.',
@@ -344,6 +504,12 @@ export function render(view, ctx) {
     } catch (err) { errToast(err); }
   }
 
+  const offLogEvent = ctx?.onEvent?.('intents_log', () => loadLog());
+  const offStatus = ctx?.onStatus?.(() => syncLogControls());
   load();
-  return null;
+  loadLog();
+  return () => {
+    if (typeof offLogEvent === 'function') offLogEvent();
+    if (typeof offStatus === 'function') offStatus();
+  };
 }

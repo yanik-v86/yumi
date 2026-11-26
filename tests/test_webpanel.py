@@ -49,6 +49,8 @@ class Bridge:
         self.chat_rev = 0
         self.ask_calls = []
         self.said_facts = []
+        self.intents_log_reads = []
+        self.intents_log_clears = 0
 
     def file_allowed(self, path):
         try:
@@ -89,7 +91,13 @@ class Bridge:
                         'clock': {'enabled': True, 'now_wall': 1000.0,
                                   'jobs_active': 2, 'jobs_persisted': 1,
                                   'next_due_at': 1010.0, 'last_fired_at': 999.0,
-                                  'last_error': None}},
+                                  'last_error': None},
+                        'user_intents': {'enabled': True, 'revision': 0, 'count': 0,
+                                         'path': '/tmp/user-intents',
+                                         'log': {'level': 'off',
+                                                 'path': '/tmp/user-intents.log',
+                                                 'last_event_at': 0.0, 'errors': 0,
+                                                 'lines': 0}}},
             'jobs': {'busy': False, 'current': None, 'queued': []},
             'panel': {'running': True},
             'features': {'ffmpeg': True},
@@ -199,8 +207,16 @@ class Bridge:
         self.note_items = []
         return {'deleted': gone}
 
+    def intents_log_get(self, limit=200, intent='', stage=''):
+        self.intents_log_reads.append((limit, intent, stage))
+        return {'items': [], 'info': {'level': 'off', 'lines': 0, 'errors': 0}}
+
+    def intents_log_clear(self):
+        self.intents_log_clears += 1
+        return {'cleared': True, 'info': {'level': 'off', 'lines': 0, 'errors': 0}}
+
     def logs(self, name, lines):
-        if name not in ('yumi', 'judge', 'ears', 'web'):
+        if name not in ('intents', 'yumi', 'judge', 'ears', 'web'):
             raise ValueError('unknown log')
         return {'name': name, 'path': '/tmp/yumi.log', 'text': 'line\n' * 3}
 
@@ -365,7 +381,9 @@ class Bridge:
 tmp = Path(tempfile.mkdtemp(prefix='yumi-webpanel-'))
 orig_state = config.STATE_DIR
 orig_intents = user_intents.INTENTS_FILE
+orig_intents_dir = user_intents.INTENTS_DIR
 config.STATE_DIR = tmp
+user_intents.INTENTS_DIR = tmp / 'user-intents'
 user_intents.INTENTS_FILE = tmp / 'user_intents.json'
 settings = dict(config.DEFAULT_SETTINGS)
 settings['web_panel'] = True
@@ -420,6 +438,23 @@ try:
     assert entries['user_intents']['section'] == 'mind'
     assert entries['user_intents']['title']['ru'] and entries['user_intents']['title']['en']
     assert entries['user_intents']['hint']['ru'] and entries['user_intents']['hint']['en']
+    assert entries['intents_log_level']['section'] == 'mind'
+    assert entries['intents_log_level']['choices'] == [
+        'off', 'error', 'result', 'action', 'match', 'trace']
+    assert entries['intents_log_include_text']['type'] == 'switch'
+    assert (entries['intents_log_max_chars']['min'],
+            entries['intents_log_max_chars']['max']) == (100, 8000)
+    assert (entries['intents_log_max_lines']['min'],
+            entries['intents_log_max_lines']['max']) == (100, 20000)
+    assert catalog.validate_settings_patch({'intents_log_level': 'TRACE'}) == {
+        'intents_log_level': 'trace'}
+    assert catalog.validate_settings_patch({'intents_log_max_lines': '500'}) == {
+        'intents_log_max_lines': 500}
+    try:
+        catalog.validate_settings_patch({'intents_log_level': 'verbose'})
+        raise AssertionError('bad journal level accepted')
+    except ValueError:
+        pass
     assert catalog.validate_settings_patch({'chatter_facts': 'ONLY'}) == {'chatter_facts': 'only'}
     try:
         catalog.validate_settings_patch({'chatter_facts': 'sometimes'})
@@ -533,6 +568,8 @@ try:
     assert data['runtime']['conversation']['active'] is False
     assert data['runtime']['clock']['jobs_active'] == 2
     assert data['runtime']['clock']['last_error'] is None
+    assert data['runtime']['user_intents']['log']['level'] == 'off'
+    assert data['runtime']['user_intents']['log']['lines'] == 0
     # the real snapshot helper reads the same shape from Brain.clock
     snap_panel = PanelMixin.__new__(PanelMixin)
     snap_panel.brain = SimpleNamespace(clock=Clock(now_wall=lambda: 1000.0))
@@ -569,6 +606,10 @@ try:
     assert data['intents'][1]['id'] == 'news' and data['intents'][1]['capture'] is True
     assert data['intents'][0]['capture'] is False
     assert data['intents'][0]['bubble_limit'] == 1000
+    store = user_intents.INTENTS_DIR
+    assert (store / 'lamp' / 'intent.json').is_file()
+    assert (store / 'news' / 'intent.json').is_file()
+    assert json.loads((store / 'index.json').read_text(encoding='utf-8'))['revision'] == 1
     news = data['intents'][1]
     assert news['voice_answer'] is False and news['bubble_answer'] is True
     assert news['bubble_limit'] == 150
@@ -592,6 +633,31 @@ try:
                          {'text': 'совсем другое'}, csrf=csrf)
     assert code == 200 and data['matched'] is False and data['ran'] is False
 
+    # the action journal: authenticated read, filtered, CSRF on clearing
+    code, data, _ = call('GET', '/api/user-intents/log?limit=25&intent=lamp&stage=match')
+    assert code == 200 and data['items'] == [] and data['info']['level'] == 'off'
+    assert bridge.intents_log_reads[-1] == (25, 'lamp', 'match')
+    code, data, _ = call('POST', '/api/user-intents/log/clear')
+    assert code == 403, 'clearing the journal without CSRF must fail'
+    code, data, _ = call('POST', '/api/user-intents/log/clear', csrf=csrf)
+    assert code == 200 and data['cleared'] is True and bridge.intents_log_clears == 1
+    audit = panel.audit_tail(20)
+    assert any(item.get('action') == 'intents-log-clear' for item in audit)
+    # a clear publishes one safe summary; the browser listens for intents_log
+    events = panel.bus.subscribe()
+    try:
+        code, data, _ = call('POST', '/api/user-intents/log/clear', csrf=csrf)
+        assert code == 200
+        seen = []
+        while not events.empty():
+            seen.append(events.get_nowait())
+        assert [e['event'] for e in seen] == ['intents_log'], seen
+        assert seen[0]['data']['lines'] == 0
+    finally:
+        panel.bus.unsubscribe(events)
+    code, data, _ = call('GET', '/api/logs?name=intents&lines=20')
+    assert code == 200 and data['name'] == 'intents'
+
     code, data, _ = call('PUT', '/api/user-intents',
                          {'version': 1, 'revision': 0, 'intents': []}, csrf=csrf)
     assert code == 409, (code, data)
@@ -602,9 +668,10 @@ try:
     exported = body.decode('utf-8')
     assert '"lamp"' in exported
     # a bad import is rejected before the file is touched
-    before = json.loads(user_intents.INTENTS_FILE.read_text(encoding='utf-8'))
+    index_file = user_intents.INTENTS_DIR / user_intents.INDEX_FILE
+    before = index_file.read_bytes()
     code, data, _ = call('POST', '/api/user-intents/import', {'text': '{broken'}, csrf=csrf)
-    assert code == 400 and json.loads(user_intents.INTENTS_FILE.read_text(encoding='utf-8')) == before
+    assert code == 400 and index_file.read_bytes() == before
     # a good import through multipart, as the browser's file picker sends it
     boundary = '----yumi-test-boundary'
     payload = (f'--{boundary}\r\n'
@@ -887,4 +954,5 @@ finally:
     panel.stop()
     config.STATE_DIR = orig_state
     user_intents.INTENTS_FILE = orig_intents
+    user_intents.INTENTS_DIR = orig_intents_dir
     shutil.rmtree(tmp, ignore_errors=True)

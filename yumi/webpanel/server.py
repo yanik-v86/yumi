@@ -383,6 +383,8 @@ def _make_handler(panel):
                 ('GET', '/api/user-intents/export'): self._user_intents_export,
                 ('POST', '/api/user-intents/test'): self._user_intents_test,
                 ('POST', '/api/user-intents/run'): self._user_intents_run,
+                ('GET', '/api/user-intents/log'): self._user_intents_log,
+                ('POST', '/api/user-intents/log/clear'): self._user_intents_log_clear,
                 ('POST', '/api/nlu/confirm'): self._nlu_confirm,
                 ('POST', '/api/doctor'): self._doctor,
                 ('GET', '/api/models'): self._models_get,
@@ -548,6 +550,10 @@ def _make_handler(panel):
             before = {k: panel.settings.get(k) for k in clean}
             result = panel.bridge.apply_settings(clean)
             panel.audit(self._ip(), 'settings', ', '.join(clean))
+            if (not before.get('intents_log_include_text')
+                    and bool(clean.get('intents_log_include_text'))):
+                panel.audit(self._ip(), 'settings',
+                            'intents action log: text previews enabled')
             panel.publish('settings', {'changed': clean, 'settings': catalog.redact(panel.settings)})
             return self._json(200, {'ok': True, 'changed': clean, 'before': before,
                                     'result': result, 'settings': catalog.redact(panel.settings)})
@@ -679,6 +685,24 @@ def _make_handler(panel):
             result = panel.bridge.user_intents_run(str(body.get('text') or ''))
             panel.audit(self._ip(), 'user-intents-run',
                         'matched' if result.get('matched') else 'no match')
+            return self._json(200, {'ok': True, **result})
+
+        def _user_intents_log(self, q):
+            def one(key, default=''):
+                values = q.get(key) or []
+                return str(values[0]) if values else default
+
+            try:
+                limit = min(2000, max(1, int(one('limit', '200'))))
+            except ValueError:
+                limit = 200
+            result = panel.bridge.intents_log_get(limit, one('intent'), one('stage'))
+            return self._json(200, {'ok': True, **result})
+
+        def _user_intents_log_clear(self, _q):
+            result = panel.bridge.intents_log_clear()
+            panel.audit(self._ip(), 'intents-log-clear', '')
+            panel.publish('intents_log', result.get('info') or {})
             return self._json(200, {'ok': True, **result})
 
         def _nlu_confirm(self, _q):
