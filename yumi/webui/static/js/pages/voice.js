@@ -9,7 +9,7 @@ const CARD_KEYS = {
   judge: ['stt_engine', 'stt_size', 'stt_beam', 'stt_hotwords', 'wake_read_s',
     'phrase_tail_ms', 'wake_after', 'wake_judge_log'],
   voice: ['voice_kind', 'voice_vol', 'tts_ru_speaker', 'tts_en_speaker',
-    'tts_pitch', 'tts_ru_model'],
+    'voice_en_ru', 'tts_pitch', 'tts_ru_model'],
   rest: ['stt_mic', 'stt_echo', 'stt_selfmute', 'name_duck', 'tap_ears', 'timer_sound'],
 };
 const SPEAKER_KEYS = ['speaker_verify', 'speaker_threshold', 'speaker_min_ms',

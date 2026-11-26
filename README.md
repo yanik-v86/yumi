@@ -488,6 +488,10 @@ seconds), and the panel's **Listen to the voice** button plays a sample even whi
 voice is still the 8-bit blips. `tts.json` remains the source of truth: a manual edit is picked
 up on the next start.
 
+There is also an **“English as Russian sounds”** toggle: when it is on, Latin words are
+transliterated to rough Russian phonetics before TTS and spoken with the Russian voice,
+which helps with mixed phrases like `OpenCode` or `Good morning`.
+
 She puts the stress on the wrong syllable? Fix it in `~/.config/yumi/stress.json`: a word and
 the stressed vowel with a `+` after it. The file is re-read for every phrase, no restart needed:
 

@@ -319,12 +319,14 @@ def _concat(parts):
     return out.getvalue()
 
 
-def speak(text, volume=0.5):
+def speak(text, volume=0.5, en_ru=False):
     """voice the line: the path of a WAV, or None (she falls back to her blips);
     a line of two languages is said by both voices, a small pause in between"""
     global last_error
     last_error = ''
     text = ' '.join(str(text).split())[:500]
+    if en_ru:
+        text = translit_en_to_ru(text)
     # convert digits like 14:00 to words for better Silero TTS pronunciation
     text = _convert_digits_for_tts(text)
     text = apply_stress(text)      # the user's stress marks win over the auto-accentor
@@ -356,6 +358,98 @@ def speak(text, volume=0.5):
     return path
 
 
+# ---- English to Russian sounds: optional phonetic translit for TTS ----
+
+_EN_DIGRAPHS = [
+    ('tion', 'шн'), ('sion', 'жн'), ('ight', 'айт'), ('tch', 'ч'),
+    ('sch', 'ск'), ('sh', 'ш'), ('ch', 'ч'), ('ph', 'ф'), ('th', 'з'),
+    ('ck', 'к'), ('qu', 'кв'), ('wh', 'в'), ('wr', 'р'), ('kn', 'н'),
+    ('gh', ''), ('ng', 'нг'), ('oo', 'у'), ('ee', 'и'), ('ea', 'и'),
+    ('ou', 'ау'), ('ow', 'оу'), ('ai', 'эй'), ('ay', 'эй'), ('ei', 'эй'),
+    ('ey', 'и'), ('oi', 'ой'), ('oy', 'ой'), ('ur', 'ёр'), ('ir', 'ёр'),
+    ('er', 'ер'), ('ar', 'ар'), ('or', 'ор'),
+]
+_EN_LETTERS = {
+    'a': 'а', 'b': 'б', 'c': 'к', 'd': 'д', 'e': 'е', 'f': 'ф', 'g': 'г',
+    'h': 'х', 'i': 'и', 'j': 'дж', 'k': 'к', 'l': 'л', 'm': 'м', 'n': 'н',
+    'o': 'о', 'p': 'п', 'q': 'к', 'r': 'р', 's': 'с', 't': 'т', 'u': 'у',
+    'v': 'в', 'w': 'в', 'x': 'кс', 'y': 'й', 'z': 'з',
+}
+_EN_LETTER_NAMES = {
+    'a': 'эй', 'b': 'би', 'c': 'си', 'd': 'ди', 'e': 'и', 'f': 'эф',
+    'g': 'джи', 'h': 'эйч', 'i': 'ай', 'j': 'джей', 'k': 'кей', 'l': 'эл',
+    'm': 'эм', 'n': 'эн', 'o': 'оу', 'p': 'пи', 'q': 'кью', 'r': 'ар',
+    's': 'эс', 't': 'ти', 'u': 'ю', 'v': 'ви', 'w': 'дабл ю', 'x': 'икс',
+    'y': 'уай', 'z': 'зед',
+}
+_LATIN_RUN_RE = re.compile(r"[A-Za-z][A-Za-z']*")
+
+
+def _translit_latin_word(word):
+    """one English token as rough Russian sounds; keeps non-Latin chars as-is"""
+    if word.isupper() and 2 <= len(word) <= 5 and word.isalpha():
+        return ' '.join(_EN_LETTER_NAMES.get(ch.lower(), ch) for ch in word)
+    low = word.lower()
+    out = []
+    i = 0
+    while i < len(low):
+        ch = low[i]
+        if not ('a' <= ch <= 'z'):
+            out.append(word[i])
+            i += 1
+            continue
+        matched = False
+        for src, dst in _EN_DIGRAPHS:
+            if low.startswith(src, i):
+                # keep simple capitalization feel: if original chunk starts upper, capitalize first letter
+                piece = dst
+                if piece and word[i].isupper() and (i == 0 or not word[i - 1].isalpha()):
+                    piece = piece[0].upper() + piece[1:]
+                out.append(piece)
+                i += len(src)
+                matched = True
+                break
+        if matched:
+            continue
+        if ch == 'c' and i + 1 < len(low) and low[i + 1] in 'eiy':
+            dst = 'с'
+        elif ch == 'g' and i + 1 < len(low) and low[i + 1] in 'eiy':
+            dst = 'дж'
+        elif ch == 'y' and (i == len(low) - 1 or not ('a' <= low[i + 1] <= 'z')):
+            dst = 'и'  # word-final y: happy -> хаппи
+        else:
+            dst = _EN_LETTERS.get(ch, word[i])
+        if word[i].isupper() and (i == 0 or not word[i - 1].isalpha()):
+            dst = dst[0].upper() + dst[1:] if dst else dst
+        out.append(dst)
+        i += 1
+    return ''.join(out)
+
+
+def translit_en_to_ru(text):
+    """replace Latin words with rough Russian phonetic spelling for TTS"""
+    if not text or not any('A' <= c <= 'Z' or 'a' <= c <= 'z' for c in text):
+        return text
+
+    def repl(m):
+        token = m.group(0)
+        s, e = m.start(), m.end()
+        chunk_l, chunk_r = s, e
+        while chunk_l > 0 and (text[chunk_l - 1].isalnum() or text[chunk_l - 1] in '.-_/:@'):
+            chunk_l -= 1
+        while chunk_r < len(text) and (text[chunk_r].isalnum() or text[chunk_r] in '.-_/:@'):
+            chunk_r += 1
+        chunk = text[chunk_l:chunk_r]
+        low_chunk = chunk.lower()
+        if '://' in low_chunk or 'www.' in low_chunk or '/' in chunk or '@' in chunk:
+            return token
+        if re.search(r'\.[a-z]{2,4}\b', low_chunk) and '.' in chunk:
+            return token
+        return _translit_latin_word(token)
+
+    return _LATIN_RUN_RE.sub(repl, text)
+
+
 # ---- digits into words: Silero reads «14:00» badly, «четырнадцать часов» well ----
 
 _digit_to_word = {
@@ -375,6 +469,7 @@ _EN_SMALL = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eig
 _EN_TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty',
             'sixty', 'seventy', 'eighty', 'ninety']
 _TIME_RE = re.compile(r'(?<!\d)(\d{1,2}):(\d{2})(?!\d)(\s*(?:am|pm)\b)?', re.IGNORECASE)
+_PERCENT_RE = re.compile(r'(\d+)\s*%')
 
 
 def _ru_plural(n, one, few, many):
@@ -459,10 +554,17 @@ def _convert_digits_for_tts(text):
             words += ' ' + _ru_words(mins, female=True) + ' ' + _ru_plural(mins, 'минута', 'минуты', 'минут')
         return words
 
+    def percent_repl(m):
+        n = int(m.group(1))
+        if ru:
+            return _ru_words(n) + ' ' + _ru_plural(n, 'процент', 'процента', 'процентов')
+        return _en_number(n) + ' percent'
+
     def num_repl(m):
         return _ru_words(int(m.group())) if ru else _en_number(int(m.group()))
 
     text = _TIME_RE.sub(time_repl, text)
+    text = _PERCENT_RE.sub(percent_repl, text)
     return re.sub(r'\d+', num_repl, text)
 
 # ---- stresses: her own dictionary where the auto-accentor gets it wrong ----

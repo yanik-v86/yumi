@@ -529,7 +529,7 @@ class WebBridge:
                     else 'Hi! This is Yumi, speaking with my real voice.')
         report = tts.sync_profile(s)
         volume = max(0.1, min(1.0, float(s.get('voice_vol', 50) or 50) / 100.0))
-        path = tts.speak(text, volume)
+        path = tts.speak(text, volume, en_ru=bool(s.get('voice_en_ru')))
         if not path:
             raise ValueError('the real voice is not set up (tools/tts_setup.sh)')
         started = self._on(lambda: self.app.play_voice_file(path))

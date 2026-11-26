@@ -108,9 +108,10 @@ class SensesMixin:
         self.voice_pending += 1
         path = config.CACHE_DIR / f'voice{bid % 3}.wav'
         real = bool(text) and self.settings.get('voice_kind') == 'tts'
+        en_ru = bool(self.settings.get('voice_en_ru'))
 
         def work():
-            p = tts.speak(text, volume) if real else None
+            p = tts.speak(text, volume, en_ru=en_ru) if real else None
             if real and not p:
                 self.warn_tts()               # not set up or failed: the blips speak instead
             if not p:
@@ -145,7 +146,8 @@ class SensesMixin:
         path = config.CACHE_DIR / f'voice{bid % 5}-{seq}.wav'
 
         def work():
-            p = tts.speak(text, volume)
+            en_ru = bool(self.settings.get('voice_en_ru'))
+            p = tts.speak(text, volume, en_ru=en_ru)
             if not p:
                 self.warn_tts()
                 try:

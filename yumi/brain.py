@@ -564,6 +564,7 @@ class Brain(Extras):
                 'voice_vol': [0, 25, 50, 75, 100], 'voice_kind': ['blips', 'tts'],
                 'tts_ru_speaker': ['kseniya', 'baya', 'xenia', 'aidar', 'eugene'],
                 'tts_en_speaker': ['en_0', 'en_10', 'en_21', 'en_50', 'en_99', 'en_117'],
+                'voice_en_ru': [True, False],
                 'tts_ru_model': ['v5_6_ru', 'v4_ru'],
                 'tts_pitch': [1.0, 1.12, 1.25, 1.4],
                 'stt_engine': ['whisper', 'nemotron'],
@@ -601,6 +602,8 @@ class Brain(Extras):
             return t('off') if not val else f'{val}%'
         if arg == 'voice_kind':
             return t('v_' + str(val)) if f'v_{val}' in UI['en'] else str(val)
+        if arg == 'voice_en_ru':
+            return t('on') if val else t('off')
         if arg == 'tts_pitch':
             return f'{float(val):.2f}×' if val is not None else t('n_a')
         if arg in ('tts_ru_speaker', 'tts_en_speaker', 'tts_ru_model'):
@@ -993,6 +996,7 @@ class Brain(Extras):
             if (s.get('voice_kind') or 'blips') == 'tts':
                 rows += [('set', 'tts_ru_speaker', t('tts_ru_speaker')),
                          ('set', 'tts_en_speaker', t('tts_en_speaker')),
+                         ('set', 'voice_en_ru', t('voice_en_ru')),
                          ('set', 'tts_pitch', t('tts_pitch')),
                          ('set', 'tts_ru_model', t('tts_ru_model'))]
             rows.append(('sound_pick', None, t('timer_sound')))

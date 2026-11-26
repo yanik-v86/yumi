@@ -31,6 +31,7 @@ DEFAULT_SETTINGS = {
     'voice_kind': 'blips',    # her voice: blips (8-bit) / tts (a real one, tools/tts_setup.sh)
     'tts_ru_speaker': 'kseniya',  # her Russian Silero voice: kseniya/baya/xenia/aidar/eugene
     'tts_en_speaker': 'en_10',    # her English Silero voice: en_0 … en_117
+    'voice_en_ru': False,     # read English words with Russian sounds (phonetic translit)
     'tts_ru_model': 'v5_6_ru',    # v5_6_ru (questions) / v4_ru (the older one)
     'tts_pitch': 1.12,        # 1.0 = as recorded, 1.2 = a proper squeak
     'scale': 1,               # integer pixel scale of the sprites
@@ -452,6 +453,7 @@ UI = {
         'breaks': 'Health breaks', 'idle_nap': 'Nap when idle', 'outfit': 'Outfit',
         'voice': 'Voice', 'voice_kind': 'Voice type', 'v_blips': '8-bit', 'v_tts': 'Real voice',
         'tts_ru_speaker': 'Russian voice', 'tts_en_speaker': 'English voice',
+        'voice_en_ru': 'English as Russian sounds',
         'tts_ru_model': 'Russian voice model', 'tts_pitch': 'Voice pitch',
         'cat_her': 'Her', 'cat_sound': 'Sound', 'cat_look': 'Look', 'cat_lang': 'Language', 'n_a': 'not available yet', 'o_auto': 'auto', 'o_off': 'none', 'o_halloween': 'Halloween', 'o_newyear': 'New Year',
         'o_valentine': 'Valentine', 'o_spring': 'March 8', 'min': 'min', 'ms': 'ms', 'monitor': 'Screen',
@@ -561,6 +563,7 @@ UI = {
         'breaks': 'Перерывы', 'idle_nap': 'Дремать без тебя', 'outfit': 'Наряд',
         'voice': 'Голосок', 'voice_kind': 'Тип голоска', 'v_blips': 'Пищалка', 'v_tts': 'Настоящий',
         'tts_ru_speaker': 'Русский голос', 'tts_en_speaker': 'Английский голос',
+        'voice_en_ru': 'Английский русскими звуками',
         'tts_ru_model': 'Модель русского голоса', 'tts_pitch': 'Высота голоса',
         'cat_her': 'Поведение', 'cat_sound': 'Звук', 'cat_look': 'Внешний вид', 'cat_lang': 'Язык', 'n_a': 'пока недоступно', 'o_auto': 'авто', 'o_off': 'нет', 'o_halloween': 'Хэллоуин', 'o_newyear': 'Новый год',
         'hourly_chimes': 'Каждый час она говорит время',
