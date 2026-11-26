@@ -142,6 +142,13 @@ DEFAULT_SETTINGS = {
                                        # commands and URLs are never written, at any level
     'intents_log_max_chars': 200,  # one preview's length, 100..8000
     'intents_log_max_lines': 2000,  # JSONL lines kept in STATE_DIR/user-intents.log
+    'user_intents_repo_url': '',   # base URL of the official intent repository:
+                                   # index.json + signed ZIP bundles; empty = no
+                                   # remote lookups at all (intents_remote.py)
+    'user_intents_trusted_keys': [],  # Ed25519 public keys for repository and bundle
+                                      # signatures, one "key_id:base64_key" per line
+    'user_intents_require_signature': True,  # remote catalogs and bundles must carry
+                                             # a valid signature; local ZIPs may not
     'intents': True,          # the tiny trained mind (yumi/intents.py) hears the
                               # phrases the sayings miss; tools/intents_setup.sh
     'wake_word': 'юми',       # the wake word itself (say it, then the question);
@@ -537,6 +544,8 @@ UI = {
         'm_local': 'my folders', 'music_skill': 'Music control by voice',
         'cat_web': 'Browser panel', 'web_panel': 'Browser panel',
         'web_open': 'Open in the browser', 'web_copy': 'Copy the link',
+        'web_intents': 'My phrases in the browser',
+        'user_intents_require_signature': 'Demand a signature for official bundles',
         'web_rotate': 'New link', 'web_on': 'The panel is at {url}',
         'web_fail': 'The panel did not start: {err}',
         'web_off': 'The browser panel is off (it opens no port)',
@@ -650,6 +659,8 @@ UI = {
         'm_local': 'мои папки', 'music_skill': 'Управление музыкой голосом',
         'cat_web': 'Веб-панель', 'web_panel': 'Панель в браузере',
         'web_open': 'Открыть в браузере', 'web_copy': 'Скопировать ссылку',
+        'web_intents': 'Мои фразы в браузере',
+        'user_intents_require_signature': 'Требовать подпись у официальных наборов',
         'web_rotate': 'Новая ссылка', 'web_on': 'Панель тут: {url}',
         'web_fail': 'Панель не запустилась: {err}',
         'web_off': 'Веб-панель выключена (порт не открывается)',

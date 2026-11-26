@@ -188,8 +188,8 @@
 - Роуты в `server.py`:
   - `GET /api/user-intents` → `{version, revision, mtime, intents}`;
   - `PUT /api/user-intents` — полная замена, обязателен `revision`, при расхождении `409`;
-  - `POST /api/user-intents/import` — multipart-файл **или** JSON-тело, валидация до записи;
-  - `GET /api/user-intents/export` — `application/json` + `Content-Disposition: attachment`;
+  - `POST /api/user-intents/import.zip` — multipart ZIP, валидация до записи;
+  - `GET /api/user-intents/export.zip` — `application/zip` + `Content-Disposition: attachment`;
   - `POST /api/user-intents/test` → `{matched, intent, score, source}`.
 - CSRF/origin уже проверяются централизованно для всех `POST/PUT/PATCH/DELETE`
   (`server.py:364-368`) — отдельной проверки в роутах не добавляем. Аудит изменений ведём

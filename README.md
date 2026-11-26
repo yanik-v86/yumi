@@ -382,7 +382,26 @@ made in the panel from being overwritten by an open editor or a hand edit. Rules
 `nlu` sayings — no ONNX retraining and no restart are needed for a new phrase. They are matched
 **after** the built-in skills and the buttons from `actions.json`, so a button wins a contested
 phrase. There is no GTK editor: Yumi only runs the rules; the panel and `intent.json` are the two
-places to edit them.
+places to edit them. The desktop menu has a **Require a signature for official bundles** switch
+(Settings → Browser panel) and a **My phrases in the browser** shortcut to `#/user-intents`;
+the repository URL and the signing keys are text fields, so they live only on that page, like
+the Jellyfin addresses.
+
+**Import/export is a ZIP**, not a JSON document. The archive holds `manifest.json`,
+`intents/index.json`, one `intents/<id>/intent.json` per rule and **every other file** beside it
+(your scripts, their permission bits included). The manifest lists SHA-256 and size for each file;
+import rejects a bad path, a bad hash or an unknown file before touching the live store. A local
+archive is unsigned. Official bundles may carry `manifest.sig`: a detached Ed25519 signature over
+the canonical manifest, verified against the public keys in **Settings → Her mind → Trusted
+signature keys** (`user_intents_trusted_keys`, `key_id:base64_key` lines). Verification needs the
+optional `cryptography` package; without it, signed remote bundles are refused.
+
+For future official packs, set **Official intent repository** (`user_intents_repo_url`) to the
+HTTPS address of `index.json`. The **Official bundles** block on **My phrases** lists the catalog,
+checks `index.sig` and each ZIP's signature/SHA-256, then merges an explicitly installed bundle
+into your rules without deleting them. **Require a signature** is on by default for remote data;
+local ZIPs stay usable without keys. Nothing is downloaded until you refresh the catalog, and no
+command is executed during import — rules run only on a matching spoken phrase.
 
 #### Action journal for your intents
 

@@ -10,9 +10,9 @@ from pathlib import Path
 
 from gi.repository import Gdk, GLib
 
-from yumi import (chat, config, doctor, ears, engines, facts, intent_log, memory,
-                  models, music, notes, permission, pixui, speaker, speaker_sherpa,
-                  system, tts, user_intents, webpanel)
+from yumi import (chat, config, doctor, ears, engines, facts, intent_log, intents_bundle,
+                  intents_remote, memory, models, music, notes, permission, pixui,
+                  speaker, speaker_sherpa, system, tts, user_intents, webpanel)
 from yumi.sprites import ui_colors
 from yumi.webpanel import catalog as webcatalog
 
@@ -197,8 +197,12 @@ class PanelMixin:
             self.web_sig = None
             self._web_panel_report('off', panel.error or 'port is busy')
 
-    def web_open(self):
+    def web_open(self, anchor=''):
+        """open the panel; `anchor` is a hash like '#/user-intents' (token stays in ?t=)"""
         was_running = bool(self.web and self.web.running)
+        if anchor:
+            # let web_sync() skip its bare URL: this click opens the exact page instead
+            self.web_opened = True
         if not self.settings.get('web_panel'):
             self.settings['web_panel'] = True
             self.settings.save()
@@ -207,8 +211,8 @@ class PanelMixin:
             self.web_sync()
         if self.web and self.web.running:
             # web_sync() may already have opened the browser via web_panel_open
-            if was_running or not self.settings.get('web_panel_open'):
-                system.open_url(self.web.url(True))
+            if was_running or not self.settings.get('web_panel_open') or anchor:
+                system.open_url(self.web.url(True) + anchor)
             self.brain.say_text(config.tr(self.settings, 'web_on', url=self.web.url(False)))
         else:
             err = (self.web.error if self.web else 'port is busy') or 'port is busy'
@@ -440,6 +444,11 @@ class PanelMixin:
                                   else {}).get('intents') or []),
                     'path': str(user_intents.INTENTS_DIR),
                     'log': intent_log.info(s),
+                    'bundle_format': intents_bundle.BUNDLE_FORMAT,
+                    'signatures_available': intents_bundle.signature_available(),
+                    'repo_url': str(s.get('user_intents_repo_url') or ''),
+                    'signature_required': intents_remote.require_signature(s),
+                    'trusted_keys': len(intents_remote.trusted_keys(s)),
                 },
                 'wake_on': bool(self.wake_on),
                 'facts': {**facts.get_book(s).info(),
@@ -789,18 +798,41 @@ class PanelMixin:
         return {'version': saved['version'], 'revision': saved['revision'],
                 'mtime': mtime, 'intents': saved['intents']}
 
-    def _web_user_intents_import(self, text):
-        data = user_intents.import_json(text)
+    def _web_user_intents_export_zip(self):
+        """a ZIP with intent folders and every file they need, plus a manifest"""
+        raw = intents_bundle.export_bundle(self._intents_path())
+        return {'data': raw, 'revision': user_intents.load(self._intents_path())['revision']}
+
+    def _web_user_intents_import_zip(self, raw, name=''):
+        """validate hashes/paths/signature before replacing or merging the store"""
         path = self._intents_path()
-        data['revision'] = user_intents.load(path)['revision']
-        saved = user_intents.save(data, path)
+        keys = intents_remote.trusted_keys(self.settings)
+        saved = intents_bundle.import_bundle(raw, path, mode='replace', trusted_keys=keys)
         self._intents_refresh(saved)
         return {'version': saved['version'], 'revision': saved['revision'],
-                'intents': saved['intents']}
+                'intents': saved['intents'],
+                'files': saved['files'], 'signature': saved['signature'],
+                'warnings': saved['warnings'], 'name': str(name or '')[:160]}
 
-    def _web_user_intents_export(self):
-        data = user_intents.load(self._intents_path())
-        return {'text': user_intents.export_json(data), 'revision': data['revision']}
+    def _web_user_intents_remote_index(self):
+        """read the signed catalog; no files are installed by this call"""
+        return intents_remote.fetch_index(self.settings)
+
+    def _web_user_intents_remote_install(self, bundle_id, mode='merge'):
+        """one explicit bundle install: verify the catalog, ZIP and signature"""
+        if mode not in ('replace', 'merge'):
+            raise ValueError('mode must be replace or merge')
+        fetched = intents_remote.fetch_bundle(self.settings, bundle_id)
+        keys = intents_remote.trusted_keys(self.settings)
+        saved = intents_bundle.import_bundle(
+            fetched['raw'], self._intents_path(), mode=mode, trusted_keys=keys,
+            require_signature=intents_remote.require_signature(self.settings))
+        self._intents_refresh(saved)
+        return {'version': saved['version'], 'revision': saved['revision'],
+                'intents': saved['intents'], 'files': saved['files'],
+                'signature': saved['signature'], 'warnings': saved['warnings'],
+                'bundle': {k: fetched['entry'][k] for k in ('id', 'name', 'version')},
+                'preview': intents_bundle.public_view(fetched['view'])}
 
     def _web_user_intents_test(self, text):
         data = user_intents.load(self._intents_path())

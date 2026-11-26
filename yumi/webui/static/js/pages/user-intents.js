@@ -17,23 +17,28 @@ export function render(view, ctx) {
       'Свои правила распознавания в user-intents/<id>/intent.json. У каждого правила своя папка: '
       + 'положи рядом скрипт — команда запустится в этой папке. Правила работают после встроенных '
       + 'навыков и кнопок, не требуют дообучения ONNX и подхватываются без перезапуска. '
-      + 'Редактора в GTK нет: правь здесь или прямо в intent.json.',
+      + 'Редактора в GTK нет: правь здесь или прямо в intent.json. Экспорт и импорт — ZIP '
+      + 'со всеми файлами папки правила и манифестом с контрольными суммами.',
       'Your own rules in user-intents/<id>/intent.json. Each rule has its own folder: keep a '
       + 'script beside intent.json and the command runs in that folder. They run after the built-in '
       + 'skills and buttons, need no ONNX retraining and are picked up without a restart. There is '
-      + 'no GTK editor: use this page or edit intent.json by hand.') }),
+      + 'no GTK editor: use this page or edit intent.json by hand. Import and export use a ZIP '
+      + 'with every file of each rule folder and a manifest of SHA-256 checksums.') }),
   );
 
   const fileInput = el('input', {
-    type: 'file', accept: '.json,application/json', style: { display: 'none' },
+    type: 'file', accept: '.zip,application/zip', style: { display: 'none' },
   });
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files?.[0];
     if (!file) return;
     try {
-      const result = await api.userIntentsImport(await file.text());
-      toast(L(`Импортировано правил: ${result.intents?.length || 0}`,
-              `Imported ${result.intents?.length || 0} intents`), 'good');
+      const result = await api.userIntentsImportZip(file);
+      const signed = result.signature?.status || 'unsigned';
+      toast(L(`Импортировано правил: ${result.intents?.length || 0} · файлов: ${result.files || 0} · подпись: ${signed}`,
+              `Imported ${result.intents?.length || 0} intents · ${result.files || 0} files · signature: ${signed}`),
+      'good');
+      for (const warning of result.warnings || []) toast(warning, 'warn');
       await load();
     } catch (err) { errToast(err); }
     fileInput.value = '';
@@ -43,16 +48,46 @@ export function render(view, ctx) {
     button(L('Новое правило', 'New intent'), {
       kind: 'btn-primary', iconName: 'plus', onClick: () => edit(null),
     }),
-    button(L('Импорт JSON', 'Import JSON'), {
+    button(L('Импорт ZIP', 'Import ZIP'), {
       iconName: 'upload', onClick: () => fileInput.click(),
     }),
     el('a', {
-      class: 'btn', href: '/api/user-intents/export', download: 'user_intents.json',
-      title: L('Скачать JSON', 'Download JSON'),
-    }, icon('download', 15), el('span', { text: L('Экспорт', 'Export') })),
+      class: 'btn', href: '/api/user-intents/export.zip', download: 'user_intents.zip',
+      title: L('Скачать ZIP со всеми файлами', 'Download a ZIP with all files'),
+    }, icon('download', 15), el('span', { text: L('Экспорт ZIP', 'Export ZIP') })),
     fileInput,
   );
   view.append(toolbar);
+
+  // Official repository: the URL and trusted keys are ordinary settings, but
+  // the catalog and the install buttons live here, next to the rules they add.
+  const repoInput = el('input', {
+    type: 'url', placeholder: 'https://…/index.json',
+    'aria-label': L('Адрес репозитория интентов', 'Intent repository URL'),
+  });
+  const repoStatus = el('div', { class: 'card-hint' });
+  const remoteList = el('div', { class: 'stack', style: { marginTop: '8px' } });
+  view.append(el('div', { class: 'card', style: { marginTop: '16px' } },
+    el('h3', { text: L('Официальные наборы', 'Official bundles') }),
+    el('p', { class: 'card-hint', text: L(
+      'Каталог и архивы проверяются подписью Ed25519 и контрольными суммами. '
+      + 'Ключи задаются на странице настроек. Установка добавляет правила, не удаляя свои.',
+      'The catalog and ZIP files are checked with Ed25519 signatures and SHA-256. '
+      + 'Trusted keys are set on the Settings page. Installing adds rules without deleting yours.') }),
+    el('div', { class: 'row' },
+      repoInput,
+      button(L('Сохранить адрес', 'Save URL'), {
+        small: true, onClick: async () => {
+          try {
+            await ctx.applySettings({ user_intents_repo_url: repoInput.value.trim() }, { quiet: false });
+            await loadRemote();
+          } catch (err) { errToast(err); }
+        },
+      }),
+      button(L('Обновить список', 'Refresh list'), {
+        small: true, onClick: () => loadRemote(),
+      })),
+    repoStatus, remoteList));
 
   const meta = el('p', { class: 'card-hint' });
   const list = el('div', { class: 'grid auto', style: { marginTop: '12px' } });
@@ -241,6 +276,69 @@ export function render(view, ctx) {
       }
     } catch (err) {
       logRows.replaceChildren(el('div', { class: 'card-hint', text: err.message }));
+    }
+  }
+
+  function syncRepoControl() {
+    const url = String(ctx.status?.settings?.user_intents_repo_url || '');
+    if (document.activeElement !== repoInput && repoInput.value !== url) repoInput.value = url;
+  }
+
+  async function loadRemote() {
+    syncRepoControl();
+    const url = repoInput.value.trim();
+    if (!url) {
+      repoStatus.textContent = L('Адрес репозитория не задан.',
+                                 'No repository address is configured.');
+      remoteList.replaceChildren();
+      return;
+    }
+    try {
+      const result = await api.userIntentsRemoteIndex();
+      const bundles = result.bundles || [];
+      const signed = result.signature?.status || 'unsigned';
+      repoStatus.textContent = L(
+        `Наборов: ${bundles.length} · подпись каталога: ${signed}`,
+        `Bundles: ${bundles.length} · catalog signature: ${signed}`);
+      remoteList.replaceChildren();
+      if (!bundles.length) {
+        remoteList.append(el('div', { class: 'card-hint', text: L('Наборов нет', 'No bundles') }));
+      }
+      for (const bundle of bundles) {
+        remoteList.append(el('div', {
+          class: 'row between', style: { padding: '6px 0', borderBottom: '1px solid var(--line, #444)' },
+        },
+        el('div', {},
+          el('strong', { text: bundle.name || bundle.id }),
+          el('div', {
+            class: 'card-hint',
+            text: [bundle.version, bundle.description].filter(Boolean).join(' · '),
+          })),
+        button(L('Установить', 'Install'), {
+          small: true, onClick: async () => {
+            if (!await confirmDialog({
+              title: L('Установить набор?', 'Install this bundle?'),
+              message: L(
+                'Правила набора будут добавлены или обновлены; свои останутся. '
+                + 'Команды из набора выполняются только по совпавшей фразе и с подтверждением.',
+                'The bundle’s rules will be added or updated; yours stay. Its commands '
+                + 'run only on a matched phrase and with confirmation.'),
+              confirmLabel: L('Установить', 'Install'),
+            })) return;
+            try {
+              const installed = await api.userIntentsRemoteInstall(bundle.id);
+              toast(L(`Установлено правил: ${installed.intents?.length || 0} · подпись: ${installed.signature?.status || '—'}`,
+                      `Installed ${installed.intents?.length || 0} rules · signature: ${installed.signature?.status || '—'}`),
+              'good');
+              for (const warning of installed.warnings || []) toast(warning, 'warn');
+              await load();
+            } catch (err) { errToast(err); }
+          },
+        })));
+      }
+    } catch (err) {
+      repoStatus.textContent = err.message;
+      remoteList.replaceChildren();
     }
   }
 
@@ -505,9 +603,10 @@ export function render(view, ctx) {
   }
 
   const offLogEvent = ctx?.onEvent?.('intents_log', () => loadLog());
-  const offStatus = ctx?.onStatus?.(() => syncLogControls());
+  const offStatus = ctx?.onStatus?.(() => { syncLogControls(); syncRepoControl(); });
   load();
   loadLog();
+  syncRepoControl();
   return () => {
     if (typeof offLogEvent === 'function') offLogEvent();
     if (typeof offStatus === 'function') offStatus();

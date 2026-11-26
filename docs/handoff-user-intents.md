@@ -19,7 +19,8 @@
 редактирование `user-intents/<id>/intent.json`**. Отдельный GTK-редактор не делается —
 осознанное исключение из общего правила `AGENTS.md` по решению владельца.
 
-- В GTK остаётся только **исполнение** фраз, распознанных как пользовательский интент.
+- В GTK остаётся **исполнение** фраз, распознанных как пользовательский интент, плюс
+  переключатель требования подписи и ссылка на страницу панели (без редактирования правил).
 - Единый источник истины — каталог с одним JSON-файлом на правило; панель даёт полный CRUD
   с валидацией, файл даёт офлайн-путь без запуска панели.
 - Дублирования валидации в GTK не допускается: никаких скрытых форм и вторых правил записи.
@@ -222,6 +223,8 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
 **Отдельного GTK-редактора нет.** В `brain.py` не добавляется пункт меню «Свои интенты»;
 `extras.form_open()` остаётся редактором кнопок. Пользователь правит `intent.json`
 вручную или пользуется панелью; исполнение фраз работает одинаково в обоих случаях.
+Позже в меню «Веб-панель» добавлены переключатель требования подписи и переход на
+`#/user-intents` — это не редактор правил, а только доступ к панели (см. §8.4).
 Простые команды уходят в `('run_in', command, cwd)`, команды с `capture` несут `cwd`
 седьмым элементом `('run_capture', ...)`: оба запускаются в папке правила.
 
@@ -237,14 +240,15 @@ ONNX-классификатором `yumi/intents.py` с метками из `la
 вызывает `/test` и ничего не исполняет. UX и DOM-безопасность — по образцу `buttons.js`: только
 `createElement`/`textContent`.
 
-`api.js`: `userIntentsGet/Put/Import/Export/Test/Run`.
+`api.js`: `userIntentsGet/Put/ImportZip/RemoteIndex/RemoteInstall/Test/Run`
+(экспорт — прямая ссылка на `/api/user-intents/export.zip`).
 
 `bridge.py` + `webpanel.py` + `server.py`:
 
 - `GET /api/user-intents` — `{version, revision, mtime, intents}`;
 - `PUT /api/user-intents` — полная замена, обязателен `revision`, конфликт → `409`;
-- `POST /api/user-intents/import` — multipart-файл **или** JSON-тело, валидация до записи;
-- `GET /api/user-intents/export` — `application/json` + `Content-Disposition: attachment`;
+- `POST /api/user-intents/import.zip` — multipart ZIP, валидация до записи (см. §8);
+- `GET /api/user-intents/export.zip` — `application/zip` + `Content-Disposition: attachment`;
 - `POST /api/user-intents/test` — `{text}` → `{matched, intent, score, source}`, без выполнения;
 - `POST /api/user-intents/run` — `{text}` → `{matched, ran, intent, score, source}`; через
   `WebBridge.user_intents_run()` → `PanelMixin._web_user_intents_run()` (GTK-поток) вызывает
@@ -348,7 +352,7 @@ GTK-этапа нет.
 
 - [x] Пользователь может создать/удалить/изменить свой интент **из панели** и **вручную в JSON**.
 - [x] GTK-редактор не добавлен; исполнение фраз в GTK работает как раньше + новый слой.
-- [x] Есть импорт/экспорт JSON через панель с валидацией и защитой от конфликта правок.
+- [x] Есть импорт/экспорт ZIP через панель: манифест, все файлы папки правила, проверка до записи.
 - [x] Тест фразы показывает совпадение без выполнения действия.
 - [x] Кнопка «Проверить» в панели запускает найденный интент со всеми обычными эффектами.
 - [x] Ответ `capture`-интента появляется в бабле и озвучивается обычным путём `say_text()`.
@@ -366,3 +370,66 @@ GTK-этапа нет.
 pre-existing состояние тестов спикера, а не регрессия фичи. Профильные тесты
 (`test_user_intents.py`, `test_nlu.py`, `test_voice_intent.py`, `test_webpanel.py`,
 `test_addressing.py`), `py_compile`, JS syntax check и smoke зелёные.
+
+## 8. ZIP-бандлы и официальный репозиторий (2026-11-26)
+
+Старый JSON-экспорт/импорт удалён из панели: теперь только ZIP. Чистые функции
+`import_json/export_json` остаются во внутреннем модуле как утилиты для миграций и тестов,
+но роутов и кнопок для них нет.
+
+### 8.1 Формат архива
+
+```
+manifest.json                  # format, version, created_at, revision, intents, files[]
+manifest.sig                   # необязательная отсоединённая подпись (JSON-запись)
+intents/index.json             # как живой index.json
+intents/<id>/intent.json       # валидированное правило
+intents/<id>/<свой файл>       # скрипты и прочие нужные файлы, с режимом доступа
+```
+
+`files[]` содержит `path`, `sha256`, `size`, `mode` для каждого файла. Подпись покрывает
+**канонические байты манифеста** (`sort_keys`,compact separators, UTF-8), поэтому хэши всех
+файлов защищены одной подписью. Локальный экспорт не подписывает: у пользователя нет
+приватного ключа. `yumi/intents_bundle.py` — единственное место валидации архива: он
+отклоняет символические ссылки, абсолютные пути, `..`, файлы не из манифеста, лишние
+члены ZIP, несовпадение размера/хэша и неверную подпись. Ограничения: 8 MiB архив,
+1 MiB файл, 200 файлов. Импорт собирает новое дерево во временной папке рядом с хранилищем
+и меняет местами только после полной проверки; старое дерево удаляется после успешной
+замены. Режим `merge` сохраняет чужие правила и их файлы, `replace` восстанавливает бэкап
+целиком. Оба инкрементируют `revision`.
+
+### 8.2 Подпись
+
+Ed25519 проверяется через необязательный `cryptography` (`signature_available()` в
+`/api/status`). Публичные ключи задаются в `user_intents_trusted_keys` построчно как
+`key_id:base64(32 raw bytes)`; строка без `key_id` работает, когда ключ один. Статусы:
+`valid`, `invalid`, `unknown-key`, `unsupported-algorithm`, `no-verifier`, `unsigned`.
+Подписанный, но непроверенный архив **не** принимается; неподписанный локальный архив
+принимается. Для удалённых данных `user_intents_require_signature=True` по умолчанию.
+
+### 8.3 Удалённый репозиторий
+
+`yumi/intents_remote.py` читает `index.json` и `index.sig` по HTTPS-адресу из
+`user_intents_repo_url`. Путь по умолчанию пуст — сеть не трогается без явной настройки.
+Каталог содержит `{format: "yumi-intents-repo", version: 1, bundles: [...]}`, где запись
+даёт `id`, `name`, `version`, `url`, `sha256`, `description`. Проверяются: схема https
+(http только для localhost), отсутствие редиректа на другой хост, подпись каталога,
+SHA-256 ZIP-файла и подпись самого бандла. Установка — явная кнопка с подтверждением,
+всегда режим `merge`. Каталог и загрузка идут через `WebBridge` и `PanelMixin`, аудит
+пишет только id набора и никогда — текст команд.
+
+### 8.4 Точки входа
+
+- Роуты: `GET /api/user-intents/export.zip`, `POST /api/user-intents/import.zip`,
+  `GET /api/user-intents/remote`, `POST /api/user-intents/remote/install`.
+- Настройки: `user_intents_repo_url`, `user_intents_trusted_keys`,
+  `user_intents_require_signature` (секция `mind`, статус `/api/status`).
+- Страница `#/user-intents`: кнопки ZIP-импорта/экспорта и блок «Официальные наборы».
+- Десктоп: переключатель `user_intents_require_signature` есть в GTK-меню «Настройки →
+  Веб-панель» (`brain.py`, `cycles()`/`cycle_text()`), а пункт «Мои фразы в браузере»
+  открывает панель сразу на `#/user-intents` (`web_open(anchor=...)`).
+- Адрес репозитория и список ключей — длинный текст, в GTK-меню их нет: это явное
+  исключение из правила «всё и в GTK, и в панели», как адреса Jellyfin и хост панели.
+  Их единственный редактор — страница `#/user-intents`; GTK-меню ведёт на неё кнопкой.
+- Тесты: `tests/test_intents_bundle.py` (хэши, путь, подпись, merge, GTK-меню),
+  `tests/test_webpanel.py` (HTTP), `tests/smoke_user_intents.sh` (сквозной ZIP).

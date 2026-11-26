@@ -535,6 +535,8 @@ class App(PanelMixin, SensesMixin, Gtk.Application):
                 self.web_sync_soon()                  # on / off / another port, live
             elif kind == 'web_open':
                 self.web_open()
+            elif kind == 'web_intents':
+                self.web_open(anchor='#/user-intents')
             elif kind == 'web_copy':
                 self.web_copy()
             elif kind == 'web_rotate':

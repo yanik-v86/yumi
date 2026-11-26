@@ -152,8 +152,10 @@ ctx.navigate(id)
 | GET/PUT | `/api/actions` | свои кнопки; PUT сохраняет и поля `id`, `priority`, `requires_confirmation`, `entities` |
 | POST | `/api/actions/<i>/run` | нажать свою кнопку |
 | GET/PUT | `/api/user-intents` | свои интенты: `{version, revision, mtime, intents}`; PUT требует `revision`, конфликт → 409 |
-| POST | `/api/user-intents/import` | multipart JSON-файл или `{text}`; валидация до записи, `/api/upload` не используется |
-| GET | `/api/user-intents/export` | `application/json`, attachment `user_intents.json` (документ-бэкап, не файл каталога) |
+| POST | `/api/user-intents/import.zip` | multipart ZIP: `manifest.json` + `intents/**`; проверка путей, SHA-256 и подписи до записи; `/api/upload` не используется |
+| GET | `/api/user-intents/export.zip` | `application/zip`, attachment `user_intents.zip`: все файлы папок правил и манифест |
+| GET | `/api/user-intents/remote` | подписанный каталог с `user_intents_repo_url`: `{url, bundles, signature}`; без установки |
+| POST | `/api/user-intents/remote/install` | `{id, mode}`; скачать ZIP, сверить подпись и SHA-256, добавить правила режимом `merge` (по умолчанию) |
 | POST | `/api/user-intents/test` | `{text}` → `{matched, intent, score, source}`, без выполнения |
 | POST | `/api/user-intents/run` | `{text}` → `{matched, ran, intent, score, source, run_id}`; запускает найденный интент через Brain (бабла/голос/команда); `run_id` связывает событие `panel` с действием в журнале |
 | GET | `/api/user-intents/log?limit=&intent=&stage=` | свежие записи журнала (`items`) и безопасная сводка (`info`); только для вошедшей сессии |

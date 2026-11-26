@@ -586,7 +586,8 @@ class Brain(Extras):
                 'speaker_min_ms': [800, 1200, 2000, 3000],
                 'speaker_join_policy': ['addressed', 'strict', 'off'],
                 'music_source': ['auto', 'jellyfin', 'local'],
-                'intents_log_level': list(intent_log.LEVELS)}
+                'intents_log_level': list(intent_log.LEVELS),
+                'user_intents_require_signature': [True, False]}
 
     outfit_names = []                 # outfit folders found in sprites/outfits (set by the app)
 
@@ -634,6 +635,8 @@ class Brain(Extras):
             return t('m_' + str(val)) if f'm_{val}' in UI['en'] else str(val)
         if arg == 'intents_log_level':
             return t('il_' + str(val)) if f'il_{val}' in UI['en'] else str(val)
+        if arg == 'user_intents_require_signature':
+            return t('on') if val else t('off')
         if arg == 'stt_mic':
             if not val:
                 return t('mic_auto')
@@ -1081,9 +1084,14 @@ class Brain(Extras):
                 rows.append(('chat_refresh', None, t('chat_refresh')))
             rows.append(('menu', 'settings', t('back')))
         elif kind == 'set_web':
-            rows = [('set', 'web_panel', t('web_panel'))]
+            # the repository URL and signing keys are long text: they are edited on the
+            # browser panel's «my phrases» page, which the shortcut below opens
+            rows = [('set', 'web_panel', t('web_panel')),
+                    ('set', 'user_intents_require_signature',
+                     t('user_intents_require_signature'))]
             if self.settings.get('web_panel'):
                 rows.append(('web_open', None, t('web_open')))
+                rows.append(('web_intents', None, t('web_intents')))
                 rows.append(('web_copy', None, t('web_copy')))
                 rows.append(('web_rotate', None, t('web_rotate')))
             rows.append(('menu', 'settings', t('back')))
@@ -1290,6 +1298,10 @@ class Brain(Extras):
         elif action == 'web_open':
             self.menu = None
             self.requests.append(('web_open',))
+        elif action == 'web_intents':
+            self.menu = None
+            self.close_radial()
+            self.requests.append(('web_intents',))
         elif action == 'web_copy':
             self.requests.append(('web_copy',))
         elif action == 'web_rotate':

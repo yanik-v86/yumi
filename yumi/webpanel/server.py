@@ -379,8 +379,10 @@ def _make_handler(panel):
                 ('PUT', '/api/actions'): self._actions_put,
                 ('GET', '/api/user-intents'): self._user_intents_get,
                 ('PUT', '/api/user-intents'): self._user_intents_put,
-                ('POST', '/api/user-intents/import'): self._user_intents_import,
-                ('GET', '/api/user-intents/export'): self._user_intents_export,
+                ('POST', '/api/user-intents/import.zip'): self._user_intents_import_zip,
+                ('GET', '/api/user-intents/export.zip'): self._user_intents_export_zip,
+                ('GET', '/api/user-intents/remote'): self._user_intents_remote,
+                ('POST', '/api/user-intents/remote/install'): self._user_intents_remote_install,
                 ('POST', '/api/user-intents/test'): self._user_intents_test,
                 ('POST', '/api/user-intents/run'): self._user_intents_run,
                 ('GET', '/api/user-intents/log'): self._user_intents_log,
@@ -626,8 +628,8 @@ def _make_handler(panel):
             panel.publish('actions', {'user_intents': result.get('revision')})
             return self._json(200, {'ok': True, **result})
 
-        def _multipart_file(self, limit=2 * 1024 * 1024):
-            """the one uploaded JSON file, never saved to CACHE_DIR/uploads"""
+        def _multipart_file(self, limit=8 * 1024 * 1024 + 64 * 1024, binary=False):
+            """the one uploaded file (a ZIP for intents), never in CACHE_DIR/uploads"""
             ctype = self.headers.get('Content-Type') or ''
             m = re.search(r'boundary=(?:"([^"]+)"|([^;]+))', ctype)
             if not m:
@@ -641,37 +643,47 @@ def _make_handler(panel):
                 raise ValueError('file is too large')
             raw = self.rfile.read(length)
             for part in raw.split(boundary)[1:]:
-                head, sep, content = part.strip(b'\r\n').partition(b'\r\n\r\n')
+                part = part.lstrip(b'\r\n')
+                if part.startswith(b'--'):     # the closing boundary
+                    continue
+                head, sep, content = part.partition(b'\r\n\r\n')
                 if not sep or b'filename=' not in head.lower():
                     continue
+                if content.endswith(b'\r\n'):  # exactly the delimiter's CRLF
+                    content = content[:-2]
+                payload = content if binary else content.decode('utf-8', 'replace')
                 name = re.search(rb'filename="([^"]*)"', head)
-                return (name.group(1).decode('utf-8', 'replace') if name else 'intents.json',
-                        content.rstrip(b'\r\n'))
-            raise ValueError('a JSON file is needed for the import')
+                return (name.group(1).decode('utf-8', 'replace') if name else 'upload',
+                        payload)
+            raise ValueError('a file is needed for the import')
 
-        def _user_intents_import(self, _q):
-            if 'multipart/form-data' in (self.headers.get('Content-Type') or '').lower():
-                name, raw = self._multipart_file()
-                text = raw.decode('utf-8', 'replace')
-            else:
-                body = self._body()
-                name = str(body.get('name') or 'intents.json')[:160]
-                if isinstance(body.get('text'), str):
-                    text = body['text']
-                elif isinstance(body.get('data'), (dict, list)):
-                    text = json.dumps(body['data'], ensure_ascii=False)
-                else:
-                    raise ValueError('send a JSON file or {"text": "..."}')
-            result = panel.bridge.user_intents_import(text)  # validated before any write
-            panel.audit(self._ip(), 'user-intents-import', Path(name).name[:120])
+        def _user_intents_import_zip(self, _q):
+            if 'multipart/form-data' not in (self.headers.get('Content-Type') or '').lower():
+                raise ValueError('send a ZIP file')
+            name, raw = self._multipart_file(binary=True)
+            result = panel.bridge.user_intents_import_zip(raw, Path(name).name)
+            panel.audit(self._ip(), 'user-intents-import-zip', Path(name).name[:120])
             panel.publish('actions', {'user_intents': result.get('revision')})
             return self._json(200, {'ok': True, **result})
 
-        def _user_intents_export(self, _q):
-            result = panel.bridge.user_intents_export()
-            panel.audit(self._ip(), 'user-intents-export', '')
-            return self._send(200, result['text'], 'application/json; charset=utf-8',
-                              {'Content-Disposition': 'attachment; filename="user_intents.json"'})
+        def _user_intents_export_zip(self, _q):
+            result = panel.bridge.user_intents_export_zip()
+            panel.audit(self._ip(), 'user-intents-export-zip', '')
+            return self._send(200, result['data'], 'application/zip',
+                              {'Content-Disposition': 'attachment; filename="user_intents.zip"'})
+
+        def _user_intents_remote(self, _q):
+            result = panel.bridge.user_intents_remote_index()
+            return self._json(200, {'ok': True, **result})
+
+        def _user_intents_remote_install(self, _q):
+            body = self._body()
+            bundle_id = str(body.get('id') or '')[:64]
+            mode = 'replace' if body.get('mode') == 'replace' else 'merge'
+            result = panel.bridge.user_intents_remote_install(bundle_id, mode)
+            panel.audit(self._ip(), 'user-intents-remote-install', bundle_id[:120])
+            panel.publish('actions', {'user_intents': result.get('revision')})
+            return self._json(200, {'ok': True, **result})
 
         def _user_intents_test(self, _q):
             body = self._body()

@@ -7,6 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 exec python3 - "$ROOT" <<'PY'
 import http.cookiejar
+import io
 import json
 import os
 import shutil
@@ -15,6 +16,7 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 
 ROOT = Path(sys.argv[1]).resolve()
@@ -74,11 +76,11 @@ class Bridge:
     def user_intents_put(self, payload):
         return self.side._web_user_intents_put(payload)
 
-    def user_intents_import(self, text):
-        return self.side._web_user_intents_import(text)
+    def user_intents_import_zip(self, raw, name=''):
+        return self.side._web_user_intents_import_zip(raw, name)
 
-    def user_intents_export(self):
-        return self.side._web_user_intents_export()
+    def user_intents_export_zip(self):
+        return self.side._web_user_intents_export_zip()
 
     def user_intents_test(self, text):
         return self.side._web_user_intents_test(text)
@@ -201,13 +203,24 @@ try:
     assert code == 200 and data['matched'] and data['intent']['id'] == 'lamp', (code, data)
     assert data['score'] == 1.0 and data['source'] == 'user-intents'
 
-    # 4. export, import the same document back, then delete the rule
-    code, body, headers = call('GET', '/api/user-intents/export', raw=True)
+    # 4. export a ZIP, import the same archive back, then delete the rule
+    code, exported, headers = call('GET', '/api/user-intents/export.zip', raw=True)
     assert code == 200 and 'attachment' in headers.get('Content-Disposition', '')
-    exported = body.decode('utf-8')
-    assert 'включи свет' in exported
-    code, data, _ = call('POST', '/api/user-intents/import', {'text': exported}, csrf=csrf)
-    assert code == 200 and data['revision'] == 3 and data['intents'][0]['id'] == 'lamp', (code, data)
+    with zipfile.ZipFile(io.BytesIO(exported)) as archive:
+        dumped = b''.join(archive.read(name) for name in archive.namelist())
+    assert 'включи свет' in dumped.decode('utf-8', 'replace')
+    boundary = '----yumi-smoke-boundary'
+    upload = (f'--{boundary}\r\n'
+              f'Content-Disposition: form-data; name="file"; filename="intents.zip"\r\n'
+              f'Content-Type: application/zip\r\n\r\n').encode() + exported \
+        + f'\r\n--{boundary}--\r\n'.encode()
+    req = urllib.request.Request(f'http://127.0.0.1:{panel.port}/api/user-intents/import.zip',
+                                 data=upload, method='POST', headers={
+                                     'X-Yumi-CSRF': csrf,
+                                     'Content-Type': f'multipart/form-data; boundary={boundary}'})
+    with opener.open(req, timeout=10) as res:
+        data = json.loads(res.read())
+    assert data['revision'] == 3 and data['intents'][0]['id'] == 'lamp', data
 
     code, data, _ = call('GET', '/api/user-intents')
     assert code == 200 and data['revision'] == 3

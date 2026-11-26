@@ -43,11 +43,18 @@ class WebBridge:
     def user_intents_put(self, payload):
         return self._on(lambda: self.app._web_user_intents_put(payload), 60)
 
-    def user_intents_import(self, text):
-        return self._on(lambda: self.app._web_user_intents_import(text), 60)
+    def user_intents_import_zip(self, raw, name=''):
+        return self._on(lambda: self.app._web_user_intents_import_zip(raw, name), 60)
 
-    def user_intents_export(self):
-        return self._on(self.app._web_user_intents_export)
+    def user_intents_export_zip(self):
+        return self._on(self.app._web_user_intents_export_zip, 60)
+
+    def user_intents_remote_index(self):
+        return self._on(self.app._web_user_intents_remote_index, 60)
+
+    def user_intents_remote_install(self, bundle_id, mode='merge'):
+        return self._on(
+            lambda: self.app._web_user_intents_remote_install(bundle_id, mode), 120)
 
     def user_intents_test(self, text):
         return self._on(lambda: self.app._web_user_intents_test(text))

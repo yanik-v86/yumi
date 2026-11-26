@@ -16,7 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from yumi import config, user_intents  # noqa: E402
+from yumi import config, intents_bundle, intents_remote, user_intents  # noqa: E402
 from yumi.clock import Clock  # noqa: E402
 from yumi.ui.webpanel import PanelMixin  # noqa: E402
 from yumi.webpanel import auth, catalog, server  # noqa: E402
@@ -147,16 +147,24 @@ class Bridge:
         return {'version': saved['version'], 'revision': saved['revision'],
                 'mtime': user_intents.info()['mtime'], 'intents': saved['intents']}
 
-    def user_intents_import(self, text):
-        data = user_intents.import_json(text)
-        data['revision'] = user_intents.load()['revision']
-        saved = user_intents.save(data)
+    def user_intents_import_zip(self, raw, name=''):
+        saved = intents_bundle.import_bundle(raw, mode='replace')
         return {'version': saved['version'], 'revision': saved['revision'],
-                'intents': saved['intents']}
+                'intents': saved['intents'], 'files': saved['files'],
+                'signature': saved['signature'], 'warnings': saved['warnings'],
+                'name': str(name or '')[:160]}
 
-    def user_intents_export(self):
-        data = user_intents.load()
-        return {'text': user_intents.export_json(data), 'revision': data['revision']}
+    def user_intents_export_zip(self):
+        raw = intents_bundle.export_bundle()
+        return {'data': raw, 'revision': user_intents.load()['revision']}
+
+    def user_intents_remote_index(self):
+        return {'url': 'https://example.org/intents/', 'bundles': [],
+                'signature': {'status': 'unsigned'}, 'signature_required': False,
+                'signature_available': intents_bundle.signature_available()}
+
+    def user_intents_remote_install(self, bundle_id, mode='merge'):
+        raise intents_remote.BadRepository('there is no such bundle in the repository')
 
     def user_intents_test(self, text):
         return user_intents.test_phrase(text)
@@ -662,27 +670,47 @@ try:
                          {'version': 1, 'revision': 0, 'intents': []}, csrf=csrf)
     assert code == 409, (code, data)
 
-    # export and import round-trip through the real HTTP face
-    code, body, headers = call('GET', '/api/user-intents/export', raw=True)
-    assert code == 200 and b'attachment' in headers.get('Content-Disposition', '').encode()
-    exported = body.decode('utf-8')
-    assert '"lamp"' in exported
-    # a bad import is rejected before the file is touched
+    # ZIP export and import round-trip through the real HTTP face
+    code, exported, headers = call('GET', '/api/user-intents/export.zip', raw=True)
+    assert code == 200 and exported[:2] == b'PK'
+    assert 'user_intents.zip' in headers.get('Content-Disposition', '')
+    assert b'lamp' in exported
+    # a bad archive is rejected before a single file is touched
     index_file = user_intents.INTENTS_DIR / user_intents.INDEX_FILE
     before = index_file.read_bytes()
-    code, data, _ = call('POST', '/api/user-intents/import', {'text': '{broken'}, csrf=csrf)
-    assert code == 400 and index_file.read_bytes() == before
-    # a good import through multipart, as the browser's file picker sends it
     boundary = '----yumi-test-boundary'
-    payload = (f'--{boundary}\r\n'
-               f'Content-Disposition: form-data; name="file"; filename="user.json"\r\n'
-               f'Content-Type: application/json\r\n\r\n{exported}\r\n--{boundary}--\r\n').encode()
-    req = urllib.request.Request(base + '/api/user-intents/import', data=payload, method='POST',
-                                 headers={'X-Yumi-CSRF': csrf,
-                                          'Content-Type': f'multipart/form-data; boundary={boundary}'})
-    with opener.open(req, timeout=10) as res:
-        data = json.loads(res.read())
-    assert data['ok'] and data['revision'] == 2 and data['intents'][0]['id'] == 'lamp'
+
+    def upload_zip(payload, filename='user_intents.zip', token=csrf):
+        body = (f'--{boundary}\r\n'
+                f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+                f'Content-Type: application/zip\r\n\r\n').encode() + payload \
+            + f'\r\n--{boundary}--\r\n'.encode()
+        req = urllib.request.Request(base + '/api/user-intents/import.zip', data=body,
+                                     method='POST', headers={
+                                         'X-Yumi-CSRF': token or '',
+                                         'Content-Type': f'multipart/form-data; boundary={boundary}'})
+        try:
+            with opener.open(req, timeout=10) as res:
+                return res.status, json.loads(res.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
+
+    code, data = upload_zip(b'{broken')
+    assert code == 400 and index_file.read_bytes() == before
+    code, data = upload_zip(exported, token=None)
+    assert code == 403, 'a ZIP import without CSRF must fail'
+    code, data = upload_zip(exported)
+    assert code == 200 and data['revision'] == 2 and data['intents'][0]['id'] == 'lamp'
+    assert data['signature']['status'] == 'unsigned' and data['files'] >= 3
+    assert any(item.get('action') == 'user-intents-import-zip' for item in panel.audit_tail(20))
+
+    # the official repository endpoints: read-only catalog, explicit install
+    code, data, _ = call('GET', '/api/user-intents/remote')
+    assert code == 200 and data['bundles'] == []
+    code, data, _ = call('POST', '/api/user-intents/remote/install', {'id': 'nope'})
+    assert code == 403, 'installing a remote bundle without CSRF must fail'
+    code, data, _ = call('POST', '/api/user-intents/remote/install', {'id': 'nope'}, csrf=csrf)
+    assert code == 400 and data['ok'] is False
 
     # the fact book: no model, explicit sources, CSRF on every mutation
     code, data, _ = call('GET', '/api/facts?lang=ru')

@@ -59,6 +59,32 @@ export async function request(method, path, body, opts = {}) {
   return data;
 }
 
+// Binary import: the browser sets the multipart boundary itself, so only the
+// CSRF header is added here (never Content-Type).
+async function postFile(path, file) {
+  const form = new FormData();
+  form.append('file', file, file.name || 'upload.zip');
+  const headers = {};
+  if (csrf) headers['X-Yumi-CSRF'] = csrf;
+  let res;
+  try {
+    res = await fetch(path, {
+      method: 'POST', headers, credentials: 'same-origin', body: form, cache: 'no-store',
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
+    const ru = (document.documentElement.lang || '') === 'ru';
+    throw new ApiError(0, ru ? 'Юми не отвечает.' : 'Yumi is not answering.', null);
+  }
+  const data = await parse(res);
+  if (!res.ok) {
+    if (res.status === 401) window.dispatchEvent(new CustomEvent('yumi:unauthorized'));
+    const message = (data && (data.error || data.message)) || res.statusText || `HTTP ${res.status}`;
+    throw new ApiError(res.status, String(message), data);
+  }
+  return data;
+}
+
 export const api = {
   get: (path, opts) => request('GET', path, undefined, opts),
   post: (path, body = {}) => request('POST', path, body),
@@ -97,9 +123,11 @@ export const api = {
 
   userIntentsGet: () => api.get('/api/user-intents'),
   userIntentsPut: (payload) => api.put('/api/user-intents', payload),
-  userIntentsImport: (text) => api.post('/api/user-intents/import', { text: String(text || '') }),
-  userIntentsExport: () => api.get('/api/user-intents/export'),
+  userIntentsImportZip: (file) => postFile('/api/user-intents/import.zip', file),
   userIntentsTest: (text) => api.post('/api/user-intents/test', { text: String(text || '') }),
+  userIntentsRemoteIndex: () => api.get('/api/user-intents/remote'),
+  userIntentsRemoteInstall: (id, mode = 'merge') =>
+    api.post('/api/user-intents/remote/install', { id: String(id || ''), mode }),
 
   // Matches the phrase and runs the intent through Brain (bubble, voice, command).
   userIntentsRun: (text) => api.post('/api/user-intents/run', { text: String(text || '') }),

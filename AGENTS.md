@@ -56,6 +56,8 @@ done
 yumi/
   config.py          DEFAULT_SETTINGS, Store, пути
   user_intents.py    пользовательские фразы: схема, валидация, запись, match
+  intents_bundle.py  ZIP-бандлы: манифест, SHA-256, Ed25519, безопасный импорт
+  intents_remote.py  подписанный каталог официального репозитория и загрузка ZIP
   brain.py           поведение, меню, действия в мире
   memory.py          дневник (SQLite)
   chat.py            разговор с умом
@@ -157,8 +159,21 @@ tests/               pytest и интеграционные тесты
 - Правка `intent.json` вручную увеличивает `revision` в `index.json`. Запись из панели
   (`PUT /api/user-intents`) обязана прислать текущий `revision`; при расхождении сервер
   отдаёт `409`, а не перезаписывает чужую правку.
-- Импорт — `POST /api/user-intents/import` (multipart-файл или `{"text": "..."}`), не
-  `/api/upload`. `POST /api/user-intents/test` показывает совпадение и ничего не выполняет;
+- Импорт/экспорт — **только ZIP**: `POST /api/user-intents/import.zip` (multipart) и
+  `GET /api/user-intents/export.zip`, не `/api/upload` и не старый JSON. В архиве лежат
+  `manifest.json` с SHA-256 всех файлов, `intents/index.json`, `intents/<id>/intent.json`
+  и все остальные файлы папки правила (с правами доступа). Валидация архива — в
+  `yumi/intents_bundle.py`, не дублировать её в панели. Импорт заменяет хранилище, но не
+  исполняет команды.
+- Официальный репозиторий на будущее: `GET /api/user-intents/remote` читает подписанный
+  `index.json` с `user_intents_repo_url`, `POST /api/user-intents/remote/install` ставит
+  один набор **merge-ом**, не удаляя свои правила. Каталог и ZIP проверяются подписью
+  Ed25519 (`user_intents_trusted_keys`, опциональный `cryptography`) и SHA-256; по умолчанию
+  подпись обязательна только для удалённых данных. Локальные ZIP без подписи допустимы.
+  Переключатель `user_intents_require_signature` продублирован в GTK-меню «Веб-панель»,
+  оттуда же есть переход на `#/user-intents`; адрес репозитория и ключи — длинный текст,
+  их редактирует только панель (явное исключение, как адреса Jellyfin).
+  `POST /api/user-intents/test` показывает совпадение и ничего не выполняет;
   `POST /api/user-intents/run` находит фразу и запускает интент через тот же `Brain`, что и
   услышанная речь (бабла, голос, команда). Кнопка «Проверить» на карточке страницы
   `user-intents` использует именно `run`; отдельная проверка совпадения остаётся без запуска.
@@ -169,9 +184,11 @@ tests/               pytest и интеграционные тесты
 этого не нужен. Команда и `enabled` правятся на странице `user-intents`, статус
 задачи виден в `runtime.clock` и в GTK-меню.
 
-Ключевые файлы: `yumi/user_intents.py`, `yumi/brain.py` (`voice_user_intent()`),
-`yumi/ui/webpanel.py` (`_web_user_intents_*`), `yumi/webpanel/server.py` (роуты),
-`yumi/webui/static/js/pages/user-intents.js`. Подробности — `docs/handoff-user-intents.md`.
+Ключевые файлы: `yumi/user_intents.py` (валидация правил), `yumi/intents_bundle.py`
+(ZIP, манифест, подпись), `yumi/intents_remote.py` (каталог и загрузка),
+`yumi/brain.py` (`voice_user_intent()`), `yumi/ui/webpanel.py` (`_web_user_intents_*`),
+`yumi/webpanel/server.py` (роуты), `yumi/webui/static/js/pages/user-intents.js`.
+Подробности — `docs/handoff-user-intents.md`.
 
 ## Тесты
 
