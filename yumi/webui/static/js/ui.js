@@ -2,7 +2,8 @@
 // textContent: no user or Yumi string is ever pasted as HTML.
 
 export const UI = { lang: 'ru' };
-let toastTimer = 0;
+const TOAST_LIFETIME = 4200;
+const TOAST_FADE = 220;
 
 export function setLang(lang) {
   UI.lang = lang === 'en' ? 'en' : 'ru';
@@ -218,11 +219,12 @@ export function toast(message, kind = '') {
   const node = el('div', { class: `toast ${kind}`.trim(), text: String(message) });
   host.append(node);
   while (host.children.length > 4) host.firstElementChild.remove();
-  clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => {
+  // Each toast owns its timer: a new message must not cancel the old one's
+  // removal, or the old toast stays in #toasts forever.
+  window.setTimeout(() => {
     node.style.opacity = '0';
-    window.setTimeout(() => node.remove(), 220);
-  }, 4200);
+    window.setTimeout(() => node.remove(), TOAST_FADE);
+  }, TOAST_LIFETIME);
 }
 
 export function errToast(err) {
