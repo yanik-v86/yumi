@@ -47,6 +47,7 @@ class Bridge:
         self.chat_items = []
         self.chat_journal = []
         self.chat_rev = 0
+        self.ask_calls = []
         self.said_facts = []
 
     def file_allowed(self, path):
@@ -155,6 +156,10 @@ class Bridge:
     def user_intents_run(self, text):
         result = user_intents.test_phrase(text)
         return {**result, 'ran': bool(result['matched'])}
+
+    def ask(self, text, speak=True):
+        self.ask_calls.append((text, speak))
+        return {'queued': True}
 
     def notes_list(self, limit=50):
         return list(reversed(self.note_items))[:limit]
@@ -674,6 +679,14 @@ try:
     assert code == 200 and data['state']['generation'] == 5
     code, data, _ = call('POST', '/api/voice/release', {}, csrf=csrf)
     assert code == 200 and data['state']['generation'] == 6
+
+    code, data, _ = call('POST', '/api/ask', {'text': '  включи свет  ', 'speak': True})
+    assert code == 403, 'ask without CSRF must fail'
+    code, data, _ = call('POST', '/api/ask', {'text': '  включи свет  ', 'speak': True}, csrf=csrf)
+    assert code == 200 and data['queued'] is True, (code, data)
+    assert bridge.ask_calls[-1] == ('включи свет', True)
+    code, data, _ = call('POST', '/api/ask', {'text': '   '}, csrf=csrf)
+    assert code == 400
 
     code, data, _ = call('GET', '/api/chat/history')
     assert code == 200 and data['messages'] == [] and data['rev'] == 0
