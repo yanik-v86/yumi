@@ -1693,49 +1693,60 @@ class Ears:
 
     def read_tape(self, said, lang, size='small', engine='whisper', beam=5,
                   hotwords=None):
-        """the phrase's bytes (s16 mono RATE) and who read them: (text, ear).
-        The ear the settings name reads first — Nemotron 0.6b when it is chosen,
-        whisper otherwise. Whisper is the fallback, never the worker: when
-        Nemotron is silent, away or failed, whisper takes the same tape (a second,
-        different reading is what a fallback is for). The small ear reads the tape
-        anew only when both are silent — last, because over music it reads the
-        background as readily as the user. '' and '' when nobody could read it"""
+        """the phrase's bytes (s16 mono RATE) and who read them:
+        (text, ear, variants). The ear the settings name reads first — Nemotron
+        0.6b when it is chosen, whisper otherwise. Whisper is the fallback, never
+        the worker: when Nemotron is silent, away or failed, whisper takes the
+        same tape. The small ear reads the tape anew only when both are silent.
+        variants lists only engines that actually participated, in order."""
         text, ear = '', ''
+        variants = []
         if engine == 'nemotron':
             nrec = self.nemotron(beam)
             if nrec:                    # the streaming ear reads; a failure falls through
                 try:
-                    text = transcribe_nemo_model(nrec, said, lang)
-                    ear = 'nemotron' if text else ''
+                    ntext = transcribe_nemo_model(nrec, said, lang)
+                    variants.append(('nemotron', ntext))
+                    if ntext:
+                        text, ear = ntext, 'nemotron'
                 except Exception as e:  # noqa: BLE001 - it is best effort
+                    variants.append(('nemotron', ''))
                     log('nemotron failed, whisper answers instead: ' + str(e)[-120:])
         else:                           # the whisper ear (the settings name it) reads
             try:
-                text = self.transcribe(said, lang, size, beam, hotwords)   # whisper reads
-                ear = 'whisper' if text else ''
+                wtext = self.transcribe(said, lang, size, beam, hotwords)   # whisper reads
+                variants.append(('whisper', wtext))
+                if wtext:
+                    text, ear = wtext, 'whisper'
             except Exception as e:      # noqa: BLE001 - whisper is best effort
+                variants.append(('whisper', ''))
                 log('whisper failed, the small ear answers instead: ' + str(e)[-120:])
         if not text and engine != 'whisper':
             # whisper is the fallback: the same tape, a different reader — a name
             # or a command Nemotron swallowed must not die on an empty reading
             try:
-                text = self.transcribe(said, lang, size, beam, hotwords)
-                ear = 'whisper' if text else ''
+                wtext = self.transcribe(said, lang, size, beam, hotwords)
+                variants.append(('whisper', wtext))
+                if wtext:
+                    text, ear = wtext, 'whisper'
             except Exception as e:      # noqa: BLE001 - whisper is best effort
+                variants.append(('whisper', ''))
                 log('whisper (fallback) failed, the small ear answers instead: '
                     + str(e)[-120:])
         if not text:                    # both big ears were silent or away: the tape
             back = self.vosk_read(said, lang)   # is read again by the small ear
+            variants.append(('vosk', back))
             if back:
                 log(f'the big ears were silent: the small ear read it as {back!r}')
                 text, ear = back, 'vosk'
-        return text, ear
+        return text, ear, variants
 
     def transcribe_said(self, said, lang, size='small', engine='whisper', beam=5,
                         hotwords=None):
-        """the phrase's bytes (s16 mono RATE) as words: read_tape's text alone —
-        None never leaves here, the caller gets the best reading of the three"""
-        return self.read_tape(said, lang, size, engine, beam, hotwords)[0]
+        """the phrase's bytes (s16 mono RATE) as words: read_tape's text and the
+        variants of engines that actually participated"""
+        text, _ear, variants = self.read_tape(said, lang, size, engine, beam, hotwords)
+        return text, variants
 
     def listen(self, lang, secs, quiet, size='small', mic=None, engine='whisper', beam=5,
                join=False):
@@ -1817,8 +1828,16 @@ class Ears:
                 # hint: whisper keeps «анекдот» whole instead of writing «о негдот».
                 # The hint goes to the decoder only — the mind still gets one reading.
                 hint = hotwords_text(vtext, TUNE.get('stt_hotwords', ''))
+                variants = []
                 if len(said) >= RATE:         # under a second is a breath, not a phrase
-                    text = self.transcribe_said(said, lang, size, engine, beam, hint)
+                    variants.append(('vosk', vtext))
+                    text, tape_variants = self.transcribe_said(said, lang, size, engine, beam, hint)
+                    for eng, val in tape_variants:
+                        name = eng
+                        if eng == 'vosk' and any(e == 'vosk' for e, _ in variants):
+                            name = 'vosk-tape'
+                        variants.append((name, val))
+                    self.tap.note_variants(variants)
                 if not text:                  # whisper silent or away: vosk's words stand in
                     text = vtext
                 # the same tape goes to STT and to the voice-print ear; only the
@@ -1914,14 +1933,18 @@ class Ears:
             """ms from the first voice on the air to now: the wake's latency"""
             return round((time.monotonic() - voice_t0) * 1000.0) if voice_t0 else None
 
-        def wake_result(text, why, score=0.0):
+        def wake_result(text, why, score=0.0, variants=None):
             """the wake's answer and its diary line"""
             # the diary takes the wake's word too: without it a line of
             # recogn.txt never says the name was heard and what was read
             # after it — the name stands first unless the reading already
             # begins with it (the lead often carries the name into STT)
             head = text.split()[0] if text else ''
-            self.tap.note(text if head in spellings else f'{word} {text}'.strip())
+            heard = text if head in spellings else f'{word} {text}'.strip()
+            if variants:
+                self.tap.note_variants(variants)
+            else:
+                self.tap.note(heard)
             diag.event(arbitration='WAKE', reason=why, wake_candidate=True,
                        wake_detected=True, wake_score=round(score, 4),
                        wake_latency_ms=wake_latency(),
@@ -1971,7 +1994,8 @@ class Ears:
             text = vosk_fallback()
             if text and fallback_route(text, hints) != 'ignore':
                 judge_note(f'WAKE vosk fallback ({text!r})')
-                return wake_result(text, 'vosk_fallback', wake_score)
+                return wake_result(text, 'vosk_fallback', wake_score,
+                                   variants=[('vosk', text)])
             if fallback_wake or not TUNE['oww_confirm'] \
                     or wake_score >= TUNE['oww_confirm_below']:
                 return wake_result('', why, wake_score)
@@ -2077,8 +2101,8 @@ class Ears:
                         hint = hotwords_text(
                             fresh_hotwords(vosk_said, wake_t, time.monotonic()),
                             TUNE.get('stt_hotwords', ''))
-                        text, ear = self.read_tape(window, lang, size, engine, beam,
-                                                   hint)
+                        text, ear, tape_variants = self.read_tape(
+                            window, lang, size, engine, beam, hint)
                         if text and ear == 'vosk' and fallback_route(text, hints) == 'ignore':
                             # the weakest ear read the background: an honest «не расслышала»
                             # (she asks what you wanted) beats a confident wrong command
@@ -2087,12 +2111,25 @@ class Ears:
                         diag.event(arbitration='STT', reason='stt_done', stt_text=text,
                                    stt_by=ear, judge_called=False, final_wake=False,
                                    **diag_base('LISTENING', voiced))
+                    else:
+                        tape_variants = []
+                    vosk_alt = vosk_fallback() or ''
+                    variants = []
+                    if vosk_alt or vosk_said:
+                        variants.append(('vosk', vosk_alt))
+                    for eng, val in tape_variants:
+                        name = eng
+                        if eng == 'vosk' and any(e == 'vosk' for e, _ in variants):
+                            name = 'vosk-tape'
+                        variants.append((name, val))
                     if not text and heard_after and (fallback_wake or ear_oww is None):
                         # the wake came from the small ear's own words: the tape may be
                         # empty (the phrase ended before the wake) — its tail is the
                         # phrase, and fallback_route already let it through when it was
                         # not the trained ear that woke
                         text = heard_after
+                        if not any(e == 'vosk' for e, _ in variants):
+                            variants.append(('vosk', heard_after))
                         judge_note(f'WAKE vosk name tail ({text!r})')
                     # a vosk-only wake (no trained ear at all) already came from
                     # that ear's own name and a routed tail: it is trusted as the
@@ -2106,9 +2143,12 @@ class Ears:
                                    judge_called=False, final_wake=False,
                                    **diag_base('LISTENING', voiced))
                         judge_note(f'WAKE rejected (score={wake_score:.2f}, text={text!r})')
+                        if tape_variants:
+                            self.tap.note_variants(variants)
                         return None
                     return wake_result(text, 'phrase_after_name' if text else 'name_alone',
-                                       wake_score)
+                                       wake_score,
+                                       variants=variants if tape_variants else None)
 
                 def reset_candidate():
                     """forget the rejected moment and listen on: the ears start clean,
@@ -2516,11 +2556,23 @@ class Tap:
         lines stay, the old ones are rolled off"""
         if not text:
             return
+        self._write_line(tap_line(text))
+
+    def note_variants(self, variants, now=None):
+        """one recognition event with engine variants into recogn.txt.
+        Only engines that actually participated should be included."""
+        items = [(str(e or '').strip(), ' '.join(str(t or '').split()))
+                 for e, t in (variants or ()) if str(e or '').strip()]
+        if not items:
+            return
+        self._write_line(tap_variants_line(items, now=now))
+
+    def _write_line(self, line):
         with self.lock:
             try:
                 TAP_DIR.mkdir(parents=True, exist_ok=True)
                 with open(TAP_DIR / 'recogn.txt', 'a', encoding='utf-8') as f:
-                    f.write(tap_line(text) + '\n')
+                    f.write(line + '\n')
             except OSError:
                 return
             self.lines += 1
@@ -2878,6 +2930,18 @@ def tap_line(text, now=None):
     """one line of recogn.txt: «time - phrase»"""
     stamp = time.strftime('%H:%M:%S', time.localtime(now if now is not None else time.time()))
     return f'{stamp} - {text}'
+
+
+def tap_variants_line(variants, now=None):
+    """one line of recogn.txt with engine variants: only engines that actually ran.
+    variants: iterable of (engine, text), in participation order."""
+    stamp = time.strftime('%H:%M:%S', time.localtime(now if now is not None else time.time()))
+    parts = [stamp]
+    for engine, text in variants or ():
+        name = str(engine or '').strip() or 'engine'
+        heard = ' '.join(str(text or '').split())
+        parts.append(f'{name}: {heard or "—"}')
+    return ' | '.join(parts)
 
 
 def tap_roll(path, lines):

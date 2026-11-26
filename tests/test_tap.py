@@ -16,6 +16,14 @@ line = stt.tap_line('юми который час', now=time.mktime((2026, 11, 1
 assert line == '15:48:03 - юми который час', line
 assert stt.tap_line('').endswith(' - '), 'an empty phrase still draws its stamp'
 
+# tap_variants_line(): only engines that actually participated, readable in recogn.txt
+when = time.mktime((2026, 11, 11, 22, 54, 1, 0, 0, -1))
+variants = stt.tap_variants_line([('vosk', 'привет'), ('whisper', 'привет как дела')], now=when)
+assert variants == '22:54:01 | vosk: привет | whisper: привет как дела', variants
+empty = stt.tap_variants_line([('vosk', ''), ('nemotron', 'включи свет')], now=when)
+assert empty == '22:54:01 | vosk: — | nemotron: включи свет', empty
+assert stt.tap_variants_line([], now=when) == '22:54:01', stt.tap_variants_line([], now=when)
+
 # the diary is a ring: only the newest segments stay on the shelf
 with tempfile.TemporaryDirectory() as tmp:
     old_tap, stt.TAP_DIR = stt.TAP_DIR, Path(tmp)

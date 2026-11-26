@@ -57,9 +57,10 @@ def test_read_tape_passes_the_hint_to_whisper():
         return 'расскажи анекдот'
 
     ears.transcribe = fake_transcribe
-    text, engine = ears.read_tape(b'\0\0' * 32000, 'ru', engine='whisper',
-                                  beam=5, hotwords='расскажи анекдот')
+    text, engine, variants = ears.read_tape(b'\0\0' * 32000, 'ru', engine='whisper',
+                                             beam=5, hotwords='расскажи анекдот')
     assert (text, engine) == ('расскажи анекдот', 'whisper')
+    assert variants == [('whisper', 'расскажи анекдот')]
     assert seen == [('ru', 5, 'расскажи анекдот')]
 
 
