@@ -97,6 +97,27 @@ def test_other_talk_is_ignored(monkeypatch, tmp_path):
     assert not asked(br)                          # a known voice outside this dialogue
 
 
+def test_ignored_followup_frees_the_wake_loop(monkeypatch, tmp_path):
+    """A gate rejection is still a delivered phrase: release waiting_answer.
+
+    The wake loop refuses to open the next /wake while waiting_answer is set.
+    A phrase from somebody else used to leave it set for good, so the trained
+    ear went silent until an unrelated event closed the dialogue.
+    """
+    br = make_brain(monkeypatch, tmp_path)
+    br.conversation.add_participant('spk_01')
+    br.conversation.wait_start(1.0)
+    br.conversation.waiting_answer = True   # set by followup_listen before heard_text
+
+    br.heard_text('Борис, где ключи?', wake=True, followup=True, speaker=known('spk_01'))
+
+    assert not asked(br)
+    assert not br.conversation.active
+    assert not br.conversation.waiting_answer
+    assert br.conversation.reason == 'speaker'
+    assert ('conversation_stop',) in br.requests
+
+
 def test_newcomer_joins_and_two_voices_take_turns(monkeypatch, tmp_path):
     monkeypatch.setenv('YUMI_SPEAKER_FILE', str(tmp_path / 'speakers.json'))
     pid = profiles.enroll([1.0, 0.0], 'Аня', source='wake')

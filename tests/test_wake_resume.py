@@ -13,6 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from yumi.conversation import Conversation  # noqa: E402
 from yumi.ui import senses  # noqa: E402
 from yumi.voice_state import VoiceState  # noqa: E402
 
@@ -81,6 +82,44 @@ def test_resume_starts_a_fresh_loop_after_a_slow_pause(monkeypatch):
     gate.set()
     first.join(2)
     assert not first.is_alive(), 'the stale loop must retire after the generation bump'
+
+
+def test_stale_waiting_answer_releases_the_wake_loop(monkeypatch):
+    """A phrase whose answer never landed must not park the name ear forever.
+
+    The wake loop holds off /wake while waiting_answer is set.  If the mind
+    drops the phrase (the speaker gate rejects it, a callback is lost), that
+    flag used to stay set and Yumi heard no more wake words until something
+    unrelated closed the dialogue.
+    """
+    calls = []
+
+    def fake_wake(*_a, **_kw):
+        calls.append(1)
+        return {'woke': False}
+
+    monkeypatch.setattr(senses.ears, 'wake', fake_wake)
+    monkeypatch.setattr(senses.ears, 'stop', lambda: None)
+    monkeypatch.setattr(senses.GLib, 'idle_add',
+                        lambda fn, *a, **kw: fn(*a, **kw) or False)
+    app = FakeApp()
+    app.voice_proc = None
+    app.settings['conversation_mode'] = True
+    conv = Conversation(timeout=0.2)
+    conv.begin(0.0, 'voice')
+    conv.wait_start(1.0)               # the follow-up ears opened at 1.0
+    conv.waiting_answer = True
+    app.brain.conversation = conv
+    app.brain.conversation_close = lambda reason: conv.close(reason)
+    app.brain.now = 2.0                # well past the 1.2 s deadline
+
+    app.wake_set(True)
+    deadline = time.monotonic() + 2
+    while not calls and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert calls, 'the wake loop stayed parked on a stale waiting_answer'
+    assert not conv.active and conv.reason == 'stalled'
+    app.wake_set(False)
 
 
 if __name__ == '__main__':

@@ -1642,8 +1642,13 @@ class Brain(Extras):
         if gate_active:
             verdict = self._speaker_gate(text, raw, speaker, join, wake=wake)
             if verdict == 'ignore':
-                # another person's talk must not answer or keep the window alive
+                # another person's talk must not answer or keep the window alive.
+                # followup_listen() had set waiting_answer before handing the
+                # phrase here; leaving it set parked the wake loop forever and
+                # Yumi stopped hearing her name until something else closed
+                # the dialogue (a hide, a stop, a settings change).
                 _mind_log('speaker gate: not for me')
+                self.conversation_close('speaker')
                 return
             if verdict == 'join' and speaker.get('joined_id'):
                 if self.conversation.add_participant(str(speaker['joined_id'])):

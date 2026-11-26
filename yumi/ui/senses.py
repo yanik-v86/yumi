@@ -470,7 +470,21 @@ class SensesMixin:
                         conv.hold(b.now, float(self.settings.get('conversation_timeout_s', 10)))
                         continue
                     if getattr(conv, 'waiting_answer', False):
-                        continue            # a phrase is already on its way to her mind
+                        # A phrase was handed to the mind, but nothing came
+                        # back to clear the flag (a rejected speaker, a lost
+                        # callback): never park the wake loop here for good.
+                        # The deadline moves while she thinks or speaks, so
+                        # only a genuinely stale answer is given up on.
+                        if (conv.due(b.now)
+                                and not (b.thinking or self.talking()
+                                         or b.now < b.talk_until)):
+                            cid = conv.id
+                            GLib.idle_add(lambda cid=cid: self.ev(
+                                lambda br: (not br.conversation.stale(cid)
+                                            and getattr(br.conversation,
+                                                        'waiting_answer', False)
+                                            and br.conversation_close('stalled'))) and False)
+                        continue
                     if conv.due(b.now):
                         GLib.idle_add(lambda: self.ev(
                             lambda br: br.conversation_close('timeout')) and False)
