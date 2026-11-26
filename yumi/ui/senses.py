@@ -414,10 +414,14 @@ class SensesMixin:
         threading.Thread(target=ears.mute, args=(secs,), daemon=True).start()
 
     def wake_hints(self, b):
-        """the user's own phrases and keywords from actions.json: the ears run in
-        another process, so a custom button's wish is passed into the wake router
-        (yumi/addressing.py) or the fallback would not know it"""
-        return addressing.hints_from(getattr(b, 'custom', None))
+        """phrases from actions.json and from the enabled custom intents: the
+        ears run in another process, so both wishes are passed into the wake
+        router (yumi/addressing.py) or the fallback would not know them"""
+        if hasattr(b, 'user_intents_check'):
+            b.user_intents_check()
+        return addressing.hints_from(getattr(b, 'custom', None),
+                                     b.user_intents_phrases()
+                                     if hasattr(b, 'user_intents_phrases') else None)
 
     def _vs(self, method, *args):
         """publish a voice-state transition on the GTK thread (safe from any worker)"""
@@ -466,7 +470,21 @@ class SensesMixin:
                         conv.hold(b.now, float(self.settings.get('conversation_timeout_s', 10)))
                         continue
                     if getattr(conv, 'waiting_answer', False):
-                        continue            # a phrase is already on its way to her mind
+                        # A phrase was handed to the mind, but nothing came
+                        # back to clear the flag (a rejected speaker, a lost
+                        # callback): never park the wake loop here for good.
+                        # The deadline moves while she thinks or speaks, so
+                        # only a genuinely stale answer is given up on.
+                        if (conv.due(b.now)
+                                and not (b.thinking or self.talking()
+                                         or b.now < b.talk_until)):
+                            cid = conv.id
+                            GLib.idle_add(lambda cid=cid: self.ev(
+                                lambda br: (not br.conversation.stale(cid)
+                                            and getattr(br.conversation,
+                                                        'waiting_answer', False)
+                                            and br.conversation_close('stalled'))) and False)
+                        continue
                     if conv.due(b.now):
                         GLib.idle_add(lambda: self.ev(
                             lambda br: br.conversation_close('timeout')) and False)

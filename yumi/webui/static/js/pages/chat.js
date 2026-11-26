@@ -86,40 +86,48 @@ export function render(view, ctx) {
       },
     }))));
 
-  const askInput = el('textarea', {
-    rows: 2,
-    placeholder: lang() === 'ru' ? 'Фраза, которую она услышит и выполнит…' : 'A phrase she will hear and act on…',
+  const askInput = el('input', {
+    type: 'text',
+    placeholder: lang() === 'ru' ? 'Например: включи свет' : 'For example: lights on',
+    spellcheck: 'false',
+  });
+  const askRun = el('button', {
+    class: 'btn btn-primary btn-small', type: 'submit', text: lang() === 'ru' ? 'Выполнить' : 'Run',
   });
   const askOut = el('div', { class: 'card-hint', text: '' });
+  let asking = false;
+  async function sendAsk() {
+    const text = askInput.value.trim();
+    if (!text || asking) return;
+    asking = true;
+    askRun.disabled = true;
+    askOut.textContent = lang() === 'ru' ? 'зову…' : 'calling…';
+    try {
+      const data = await api.post('/api/ask', { text, speak: true });
+      askOut.textContent = data.queued
+        ? (lang() === 'ru' ? 'она услышала' : 'she heard it')
+        : (data.reason || '…');
+      askInput.value = '';
+      ctx.refreshStatus();
+    } catch (err) {
+      askOut.textContent = err.message;
+      errToast(err);
+    } finally {
+      asking = false;
+      askRun.disabled = false;
+      askInput.focus();
+    }
+  }
   const askCard = el('div', { class: 'card' },
-    el('h3', { text: lang() === 'ru' ? 'Сказать в мир' : 'Say into the world' }),
+    el('h3', { text: lang() === 'ru' ? 'Команда текстом' : 'Text command' }),
     el('p', { class: 'card-hint', text: lang() === 'ru'
-      ? 'Будто ты сказал это голосом: она проснётся, ответит и покажет пузырь.'
-      : 'As if you said it aloud: she wakes, answers and shows a bubble.' }),
-    askInput,
-    el('div', { class: 'row', style: { marginTop: '8px' } },
-      el('button', {
-        class: 'btn btn-primary btn-small', type: 'button', text: lang() === 'ru' ? 'Позвать' : 'Call',
-        onclick: async () => {
-          const text = askInput.value.trim();
-          if (!text) return;
-          askOut.textContent = lang() === 'ru' ? 'зову…' : 'calling…';
-          try {
-            const data = await api.post('/api/ask', { text, speak: true });
-            askOut.textContent = data.queued
-              ? (lang() === 'ru' ? 'она услышала' : 'she heard it')
-              : (data.reason || '…');
-            askInput.value = '';
-            ctx.refreshStatus();
-          } catch (err) {
-            askOut.textContent = err.message;
-            errToast(err);
-          }
-        },
-      }),
+      ? 'То же, что сказать голосом: Юми проснётся, выполнит команду и ответит вслух.'
+      : 'Same as saying it aloud: Yumi wakes, runs the command and answers out loud.' }),
+    el('form', { class: 'row', onsubmit: (ev) => { ev.preventDefault(); sendAsk(); } },
+      askInput, askRun,
       el('button', {
         class: 'btn btn-small btn-ghost', type: 'button', text: lang() === 'ru' ? 'Очистить' : 'Clear',
-        onclick: () => { askInput.value = ''; askOut.textContent = ''; },
+        onclick: () => { askInput.value = ''; askOut.textContent = ''; askInput.focus(); },
       })),
     askOut);
 
@@ -169,7 +177,7 @@ export function render(view, ctx) {
       })),
     voiceOut);
 
-  const side = el('div', { class: 'chat-side' }, liveCard, convCard, promptCard, askCard, voiceCard);
+  const side = el('div', { class: 'chat-side' }, askCard, liveCard, convCard, promptCard, voiceCard);
 
   const clearBtn = el('button', {
     class: 'btn btn-small btn-danger', type: 'button', text: lang() === 'ru' ? 'Стереть этот чат' : 'Clear this chat',

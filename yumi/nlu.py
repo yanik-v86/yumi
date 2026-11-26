@@ -61,6 +61,9 @@ def _intent_name(action):
     ident = str(action.get('id') or '').strip()
     if ident:
         return ident[:64]
+    if action.get('user_intent'):
+        # a "say" rule has no shell command to name it after
+        return 'user_intent:' + str(action.get('speak') or '')[:64]
     return 'custom:' + str(action.get('url') or action.get('command') or '')[:64]
 
 
@@ -230,7 +233,10 @@ def recognize(text, actions, use_intents=True, min_confidence=None):
     forms_list = [forms(t) for t in toks]
     hits = []
     for a in actions or []:
-        if not isinstance(a, dict) or not (a.get('command') or a.get('url')):
+        if not isinstance(a, dict) or not (a.get('command') or a.get('url')
+                                           or a.get('user_intent')):
+            # "user_intent" is the marker of a "say" rule: there is no command
+            # to run, but its phrases are matched by the very same scorer
             continue
         score = _score(a, toks, forms_list)
         if score is not None:

@@ -41,6 +41,10 @@ PAGES = [
               'ru': 'Проверка ушек, голоса и моделей'}},
     {'id': 'buttons', 'icon': 'grid', 'title': {'en': 'Buttons', 'ru': 'Кнопки'},
      'hint': {'en': 'Her ring and your own commands', 'ru': 'Кольцо и свои команды'}},
+    {'id': 'user-intents', 'icon': 'terminal',
+     'title': {'en': 'My phrases', 'ru': 'Мои фразы'},
+     'hint': {'en': 'Your own intents: edit, import, export and test',
+              'ru': 'Свои интенты: правка, импорт, экспорт и проверка'}},
     {'id': 'appearance', 'icon': 'palette', 'title': {'en': 'Look', 'ru': 'Внешний вид'},
      'hint': {'en': 'Colors, outfit, scale and screens', 'ru': 'Цвета, наряд, масштаб и экраны'}},
     {'id': 'settings', 'icon': 'gear', 'title': {'en': 'Settings', 'ru': 'Настройки'},
@@ -123,7 +127,9 @@ KEY_SECTION = {
     'conversation_gap_reset_min': 'dialogue', 'conversation_history_n': 'dialogue',
     'notes_voice': 'mind',
     'embed_model': 'mind', 'nlu': 'mind', 'nlu_confidence': 'mind',
-    'intents': 'mind', 'ollama_url': 'mind',
+    'user_intents': 'mind', 'intents': 'mind', 'ollama_url': 'mind',
+    'intents_log_level': 'mind', 'intents_log_include_text': 'mind',
+    'intents_log_max_chars': 'mind', 'intents_log_max_lines': 'mind',
     'polza_url': 'mind', 'polza_api_key': 'mind',
     'wake_ears': 'ears', 'wake_word': 'ears', 'wake_sensitivity': 'ears',
     'wake_confirm': 'ears', 'wake_model_size': 'ears', 'wake_ear': 'ears',
@@ -174,6 +180,7 @@ CHOICES = {
     'music_source': ['auto', 'jellyfin', 'local'],
     'outfit': ['auto', 'off'],
     'web_panel_host': ['127.0.0.1', '0.0.0.0'],
+    'intents_log_level': ['off', 'error', 'result', 'action', 'match', 'trace'],
 }
 # labels for choices (key:value); the front-end falls back to the raw value
 CHOICE_LABELS = {
@@ -207,6 +214,14 @@ CHOICE_LABELS = {
                'off': {'en': 'none', 'ru': 'нет'}},
     'web_panel_host': {'127.0.0.1': {'en': 'this machine only', 'ru': 'только этот компьютер'},
                        '0.0.0.0': {'en': 'the local network', 'ru': 'локальная сеть'}},
+    'intents_log_level': {
+        'off': {'en': 'off', 'ru': 'выкл'},
+        'error': {'en': 'errors', 'ru': 'ошибки'},
+        'result': {'en': 'results', 'ru': 'результаты'},
+        'action': {'en': 'actions', 'ru': 'действия'},
+        'match': {'en': 'matches', 'ru': 'совпадения'},
+        'trace': {'en': 'everything', 'ru': 'всё'},
+    },
 }
 
 # what each control is; everything else is inferred from the default
@@ -227,6 +242,8 @@ TYPES = {
     'speaker_verify': 'switch', 'speaker_join_policy': 'select',
     'speaker_threshold': 'range', 'speaker_min_ms': 'number',
     'nlu_confidence': 'range',
+    'intents_log_level': 'select', 'intents_log_include_text': 'switch',
+    'intents_log_max_chars': 'number', 'intents_log_max_lines': 'number',
     'prompt_system_ru': 'textarea', 'prompt_system_en': 'textarea',
     'prompt_sassy_ru': 'textarea', 'prompt_sassy_en': 'textarea',
     'prompt_recall_ru': 'textarea', 'prompt_recall_en': 'textarea',
@@ -254,6 +271,8 @@ RANGES = {
     'speaker_threshold': (0.3, 1.0, 0.05),
     'speaker_min_ms': (200, 5000, 100),
     'nlu_confidence': (0.5, 1.0, 0.05),
+    'intents_log_max_chars': (100, 8000, 100),
+    'intents_log_max_lines': (100, 20000, 100),
 }
 
 TITLES = {
@@ -316,6 +335,12 @@ TITLES = {
     'nlu': {'en': 'Voice commands', 'ru': 'Голосовые команды'},
     'nlu_confidence': {'en': 'Command confidence line',
                        'ru': 'Порог уверенности команды'},
+    'user_intents': {'en': 'My own intents', 'ru': 'Мои интенты'},
+    'intents_log_level': {'en': 'Action log level', 'ru': 'Уровень журнала действий'},
+    'intents_log_include_text': {'en': 'Keep text previews',
+                                 'ru': 'Записывать превью текста'},
+    'intents_log_max_chars': {'en': 'Preview length', 'ru': 'Длина превью'},
+    'intents_log_max_lines': {'en': 'Lines kept', 'ru': 'Хранить строк'},
     'intents': {'en': 'Intents mind', 'ru': 'Распознавание фраз'},
     'ollama_url': {'en': 'Ollama address', 'ru': 'Адрес Ollama'},
     'polza_url': {'en': 'Polza.ai address', 'ru': 'Адрес Polza.ai'},
@@ -492,6 +517,28 @@ HINTS = {
                        'ru': '127.0.0.1 оставляет панель на этом компьютере. 0.0.0.0 открывает её в локальную сеть — только с надёжным токеном и файрволом.'},
     'web_panel_session_hours': {'en': 'How long the browser stays signed in before the token is asked again.',
                                 'ru': 'Сколько браузер остаётся в системе, прежде чем снова спросить токен.'},
+    'user_intents': {'en': 'Your own rules from ~/.config/yumi/user-intents/<id>/intent.json. Each rule has its own folder: keep scripts and other files beside intent.json and the command runs in that folder. Rules are matched after the built-in skills and buttons, need no ONNX retraining and work without a restart. A command can answer with its output: turn on “Use the command output”, put {stdout} in the reply, then choose Voice separately and Bubble separately. Voice text and Bubble text give each channel its own template (literal without {stdout}); Bubble limit clips the shown text to 1000 characters by default. The Test button on a card runs a matched intent with speech; Match? only checks the phrase. Edit them on the “My phrases” page or in intent.json by hand.',
+                     'ru': 'Свои правила из ~/.config/yumi/user-intents/<id>/intent.json. У каждого правила своя папка: рядом с intent.json можно держать скрипты и другие файлы — команда запускается именно в этой папке. Правила проверяются после встроенных навыков и кнопок, не требуют дообучения ONNX и перезапуска. Команда может отвечать выводом: включи «Использовать вывод команды», поставь {stdout} в реплике и раздельно включи «Озвучивать отдельно» и «Пузыть отдельно». Голосовая реплика и Реплика в бабле дают каждому каналу свой шаблон (без {stdout} — дословно); Лимит бабла по умолчанию обрезает текст до 1000 символов. Кнопка «Проверить» на карточке запускает найденный интент с озвучкой; «Совпадение?» только проверяет фразу. Прави их на странице «Мои фразы» или прямо в intent.json.'},
+    'intents_log_level': {'en': 'Cumulative levels: errors → results → actions → matches → '
+                                'every step. Off writes nothing. Read and clear the journal '
+                                'on the “My phrases” page; there is no GTK viewer.',
+                          'ru': 'Уровни кумулятивные: ошибки → результаты → действия → '
+                                'совпадения → все шаги. «Выкл» ничего не пишет. Читать и '
+                                'очищать журнал можно на странице «Мои фразы»; в GTK '
+                                'просмотрщика нет.'},
+    'intents_log_include_text': {'en': 'Off: neither the heard phrase nor command output is '
+                                       'kept. On: short previews appear in the journal. '
+                                       'Commands and URLs are never written, at any level.',
+                                 'ru': 'Выкл: ни услышанная фраза, ни вывод команды не '
+                                       'сохраняются. Вкл: в журнале появляются короткие '
+                                       'превью. Команды и URL не пишутся никогда, ни при '
+                                       'каком уровне.'},
+    'intents_log_max_chars': {'en': 'How much of one preview to keep (100–8000 characters).',
+                              'ru': 'Сколько символов одного превью хранить (100–8000).'},
+    'intents_log_max_lines': {'en': 'How many JSONL lines to keep in user-intents.log '
+                                    '(100–20000); older lines are rotated away.',
+                              'ru': 'Сколько строк JSONL хранить в user-intents.log '
+                                    '(100–20000); старые строки стираются при ротации.'},
 }
 
 CONFIG_FILES = {
@@ -609,7 +656,7 @@ def coerce(key, value):
         if isinstance(value, str):
             return value.strip().lower() in ('1', 'true', 'on', 'yes')
         return bool(value)
-    if key == 'chatter_facts':
+    if key in ('chatter_facts', 'intents_log_level'):
         mode = str(value or '').strip().lower()
         if mode not in CHOICES[key]:
             raise ValueError(f'{key} must be one of {", ".join(CHOICES[key])}')

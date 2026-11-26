@@ -13,9 +13,11 @@ import urllib.parse
 import urllib.request
 from contextlib import redirect_stderr
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from yumi import config  # noqa: E402
+from yumi import config, user_intents  # noqa: E402
+from yumi.clock import Clock  # noqa: E402
 from yumi.ui.webpanel import PanelMixin  # noqa: E402
 from yumi.webpanel import auth, catalog, server  # noqa: E402
 
@@ -45,7 +47,10 @@ class Bridge:
         self.chat_items = []
         self.chat_journal = []
         self.chat_rev = 0
+        self.ask_calls = []
         self.said_facts = []
+        self.intents_log_reads = []
+        self.intents_log_clears = 0
 
     def file_allowed(self, path):
         try:
@@ -82,7 +87,17 @@ class Bridge:
                                     'model': {'ready': True, 'name': 'test', 'error': ''}},
                         'outfit': 'auto', 'shelf_count': 0, 'recent_count': 0,
                         'timer': {'seconds': 0, 'text': '', 'running': False,
-                                  'pending': False, 'paused': False, 'done': False}},
+                                  'pending': False, 'paused': False, 'done': False},
+                        'clock': {'enabled': True, 'now_wall': 1000.0,
+                                  'jobs_active': 2, 'jobs_persisted': 1,
+                                  'next_due_at': 1010.0, 'last_fired_at': 999.0,
+                                  'last_error': None},
+                        'user_intents': {'enabled': True, 'revision': 0, 'count': 0,
+                                         'path': '/tmp/user-intents',
+                                         'log': {'level': 'off',
+                                                 'path': '/tmp/user-intents.log',
+                                                 'last_event_at': 0.0, 'errors': 0,
+                                                 'lines': 0}}},
             'jobs': {'busy': False, 'current': None, 'queued': []},
             'panel': {'running': True},
             'features': {'ffmpeg': True},
@@ -117,6 +132,42 @@ class Bridge:
     def actions_save(self, actions):
         self.actions = actions
         return {'saved': len(actions), 'backup': ''}
+
+    # the same validating module the real PanelMixin calls, without GTK
+    def user_intents_get(self):
+        return user_intents.info()
+
+    def user_intents_put(self, payload):
+        if not isinstance(payload, dict) or 'revision' not in payload:
+            raise ValueError('revision is required')
+        current = user_intents.load()
+        if int(payload['revision']) != current['revision']:
+            raise user_intents.RevisionConflict('the file changed, reload first')
+        saved = user_intents.save(payload)
+        return {'version': saved['version'], 'revision': saved['revision'],
+                'mtime': user_intents.info()['mtime'], 'intents': saved['intents']}
+
+    def user_intents_import(self, text):
+        data = user_intents.import_json(text)
+        data['revision'] = user_intents.load()['revision']
+        saved = user_intents.save(data)
+        return {'version': saved['version'], 'revision': saved['revision'],
+                'intents': saved['intents']}
+
+    def user_intents_export(self):
+        data = user_intents.load()
+        return {'text': user_intents.export_json(data), 'revision': data['revision']}
+
+    def user_intents_test(self, text):
+        return user_intents.test_phrase(text)
+
+    def user_intents_run(self, text):
+        result = user_intents.test_phrase(text)
+        return {**result, 'ran': bool(result['matched'])}
+
+    def ask(self, text, speak=True):
+        self.ask_calls.append((text, speak))
+        return {'queued': True}
 
     def notes_list(self, limit=50):
         return list(reversed(self.note_items))[:limit]
@@ -156,8 +207,16 @@ class Bridge:
         self.note_items = []
         return {'deleted': gone}
 
+    def intents_log_get(self, limit=200, intent='', stage=''):
+        self.intents_log_reads.append((limit, intent, stage))
+        return {'items': [], 'info': {'level': 'off', 'lines': 0, 'errors': 0}}
+
+    def intents_log_clear(self):
+        self.intents_log_clears += 1
+        return {'cleared': True, 'info': {'level': 'off', 'lines': 0, 'errors': 0}}
+
     def logs(self, name, lines):
-        if name not in ('yumi', 'judge', 'ears', 'web'):
+        if name not in ('intents', 'yumi', 'judge', 'ears', 'web'):
             raise ValueError('unknown log')
         return {'name': name, 'path': '/tmp/yumi.log', 'text': 'line\n' * 3}
 
@@ -321,7 +380,11 @@ class Bridge:
 
 tmp = Path(tempfile.mkdtemp(prefix='yumi-webpanel-'))
 orig_state = config.STATE_DIR
+orig_intents = user_intents.INTENTS_FILE
+orig_intents_dir = user_intents.INTENTS_DIR
 config.STATE_DIR = tmp
+user_intents.INTENTS_DIR = tmp / 'user-intents'
+user_intents.INTENTS_FILE = tmp / 'user_intents.json'
 settings = dict(config.DEFAULT_SETTINGS)
 settings['web_panel'] = True
 settings['web_panel_host'] = '127.0.0.1'
@@ -364,14 +427,34 @@ try:
     assert set(config.DEFAULT_SETTINGS) <= keys, set(config.DEFAULT_SETTINGS) - keys
     assert {'web_panel', 'web_panel_host', 'web_panel_port', 'web_panel_open',
             'web_panel_session_hours'} <= keys
-    assert len(schema['pages']) == 15
+    assert len(schema['pages']) == 16
     assert {page['id'] for page in schema['pages']} == {
         'dashboard', 'chat', 'notes', 'facts', 'files', 'music', 'voice', 'doctor', 'buttons',
-        'appearance', 'settings', 'memory', 'configs', 'security', 'logs'}
+        'user-intents', 'appearance', 'settings', 'memory', 'configs', 'security', 'logs'}
     entries = {entry['key']: entry for entry in schema['settings']}
     assert entries['chatter_facts']['type'] == 'select'
     assert entries['chatter_facts']['choices'] == ['off', 'mixed', 'only']
     assert entries['chatter_facts_file']['section'] == 'behavior'
+    assert entries['user_intents']['section'] == 'mind'
+    assert entries['user_intents']['title']['ru'] and entries['user_intents']['title']['en']
+    assert entries['user_intents']['hint']['ru'] and entries['user_intents']['hint']['en']
+    assert entries['intents_log_level']['section'] == 'mind'
+    assert entries['intents_log_level']['choices'] == [
+        'off', 'error', 'result', 'action', 'match', 'trace']
+    assert entries['intents_log_include_text']['type'] == 'switch'
+    assert (entries['intents_log_max_chars']['min'],
+            entries['intents_log_max_chars']['max']) == (100, 8000)
+    assert (entries['intents_log_max_lines']['min'],
+            entries['intents_log_max_lines']['max']) == (100, 20000)
+    assert catalog.validate_settings_patch({'intents_log_level': 'TRACE'}) == {
+        'intents_log_level': 'trace'}
+    assert catalog.validate_settings_patch({'intents_log_max_lines': '500'}) == {
+        'intents_log_max_lines': 500}
+    try:
+        catalog.validate_settings_patch({'intents_log_level': 'verbose'})
+        raise AssertionError('bad journal level accepted')
+    except ValueError:
+        pass
     assert catalog.validate_settings_patch({'chatter_facts': 'ONLY'}) == {'chatter_facts': 'only'}
     try:
         catalog.validate_settings_patch({'chatter_facts': 'sometimes'})
@@ -483,10 +566,123 @@ try:
     assert code == 200 and data['runtime']['bubble'] == 'привет'
     assert data['runtime']['conversation_active'] is False
     assert data['runtime']['conversation']['active'] is False
+    assert data['runtime']['clock']['jobs_active'] == 2
+    assert data['runtime']['clock']['last_error'] is None
+    assert data['runtime']['user_intents']['log']['level'] == 'off'
+    assert data['runtime']['user_intents']['log']['lines'] == 0
+    # the real snapshot helper reads the same shape from Brain.clock
+    snap_panel = PanelMixin.__new__(PanelMixin)
+    snap_panel.brain = SimpleNamespace(clock=Clock(now_wall=lambda: 1000.0))
+    assert snap_panel._web_clock_snapshot()['jobs_active'] == 0
+    assert snap_panel._web_clock_snapshot()['enabled'] is True
     code, data, _ = call('GET', '/api/schema')
     assert code == 200 and data['version'] and data['pages']
     code, data, _ = call('GET', '/api/actions')
     assert code == 200 and data['icon_patterns']['folder']
+
+    # your own intents: CRUD, revision conflicts, a safe import and a dry-run test
+    code, data, _ = call('GET', '/api/user-intents')
+    assert code == 200 and data['version'] == 1 and data['revision'] == 0
+    assert data['intents'] == []
+    intent = {'id': 'lamp', 'name': 'Лампа', 'enabled': True,
+              'phrases': ['сделай свет'], 'keywords': [],
+              'action': {'type': 'say', 'value': 'Я бы включила, но лампы нет'},
+              'speak': 'Я бы включила, но лампы нет', 'priority': 0,
+              'requires_confirmation': False}
+    captured = {'id': 'news', 'name': 'Новости', 'enabled': True,
+                'phrases': ['новости'], 'keywords': [],
+                'action': {'type': 'command', 'value': 'news'},
+                'speak': 'Новости: {stdout}', 'capture': True, 'priority': 0,
+                'voice_answer': False, 'bubble_answer': True, 'bubble_limit': 150,
+                'voice_text': 'Голос: {stdout}', 'bubble_text': 'Бабла: {stdout}',
+                'requires_confirmation': False}
+    code, data, _ = call('PUT', '/api/user-intents',
+                         {'version': 1, 'revision': 0, 'intents': [intent, captured]})
+    assert code == 403, 'user intents without CSRF must fail'
+    code, data, _ = call('PUT', '/api/user-intents',
+                         {'version': 1, 'revision': 0, 'intents': [intent, captured]},
+                         csrf=csrf)
+    assert code == 200 and data['revision'] == 1 and data['intents'][0]['id'] == 'lamp'
+    assert data['intents'][1]['id'] == 'news' and data['intents'][1]['capture'] is True
+    assert data['intents'][0]['capture'] is False
+    assert data['intents'][0]['bubble_limit'] == 1000
+    store = user_intents.INTENTS_DIR
+    assert (store / 'lamp' / 'intent.json').is_file()
+    assert (store / 'news' / 'intent.json').is_file()
+    assert json.loads((store / 'index.json').read_text(encoding='utf-8'))['revision'] == 1
+    news = data['intents'][1]
+    assert news['voice_answer'] is False and news['bubble_answer'] is True
+    assert news['bubble_limit'] == 150
+    assert news['voice_text'] == 'Голос: {stdout}'
+    assert news['bubble_text'] == 'Бабла: {stdout}'
+    code, data, _ = call('POST', '/api/user-intents/test', {'text': 'сделай свет'}, csrf=csrf)
+    assert code == 200 and data['matched'] and data['intent']['id'] == 'lamp'
+    assert data['score'] == 1.0 and data['source'] == 'user-intents'
+    code, data, _ = call('POST', '/api/user-intents/test', {'text': 'новости'}, csrf=csrf)
+    assert code == 200 and data['matched'] and data['intent']['capture'] is True
+    code, data, _ = call('POST', '/api/user-intents/test', {'text': 'совсем другое'}, csrf=csrf)
+    assert code == 200 and data['matched'] is False
+
+    # the card's Test button runs the matched intent through the same bridge path
+    code, data, _ = call('POST', '/api/user-intents/run', {'text': 'новости'})
+    assert code == 403, 'running an intent without CSRF must fail'
+    code, data, _ = call('POST', '/api/user-intents/run', {'text': 'новости'}, csrf=csrf)
+    assert code == 200 and data['matched'] and data['ran'] is True
+    assert data['intent']['id'] == 'news' and data['intent']['capture'] is True
+    code, data, _ = call('POST', '/api/user-intents/run',
+                         {'text': 'совсем другое'}, csrf=csrf)
+    assert code == 200 and data['matched'] is False and data['ran'] is False
+
+    # the action journal: authenticated read, filtered, CSRF on clearing
+    code, data, _ = call('GET', '/api/user-intents/log?limit=25&intent=lamp&stage=match')
+    assert code == 200 and data['items'] == [] and data['info']['level'] == 'off'
+    assert bridge.intents_log_reads[-1] == (25, 'lamp', 'match')
+    code, data, _ = call('POST', '/api/user-intents/log/clear')
+    assert code == 403, 'clearing the journal without CSRF must fail'
+    code, data, _ = call('POST', '/api/user-intents/log/clear', csrf=csrf)
+    assert code == 200 and data['cleared'] is True and bridge.intents_log_clears == 1
+    audit = panel.audit_tail(20)
+    assert any(item.get('action') == 'intents-log-clear' for item in audit)
+    # a clear publishes one safe summary; the browser listens for intents_log
+    events = panel.bus.subscribe()
+    try:
+        code, data, _ = call('POST', '/api/user-intents/log/clear', csrf=csrf)
+        assert code == 200
+        seen = []
+        while not events.empty():
+            seen.append(events.get_nowait())
+        assert [e['event'] for e in seen] == ['intents_log'], seen
+        assert seen[0]['data']['lines'] == 0
+    finally:
+        panel.bus.unsubscribe(events)
+    code, data, _ = call('GET', '/api/logs?name=intents&lines=20')
+    assert code == 200 and data['name'] == 'intents'
+
+    code, data, _ = call('PUT', '/api/user-intents',
+                         {'version': 1, 'revision': 0, 'intents': []}, csrf=csrf)
+    assert code == 409, (code, data)
+
+    # export and import round-trip through the real HTTP face
+    code, body, headers = call('GET', '/api/user-intents/export', raw=True)
+    assert code == 200 and b'attachment' in headers.get('Content-Disposition', '').encode()
+    exported = body.decode('utf-8')
+    assert '"lamp"' in exported
+    # a bad import is rejected before the file is touched
+    index_file = user_intents.INTENTS_DIR / user_intents.INDEX_FILE
+    before = index_file.read_bytes()
+    code, data, _ = call('POST', '/api/user-intents/import', {'text': '{broken'}, csrf=csrf)
+    assert code == 400 and index_file.read_bytes() == before
+    # a good import through multipart, as the browser's file picker sends it
+    boundary = '----yumi-test-boundary'
+    payload = (f'--{boundary}\r\n'
+               f'Content-Disposition: form-data; name="file"; filename="user.json"\r\n'
+               f'Content-Type: application/json\r\n\r\n{exported}\r\n--{boundary}--\r\n').encode()
+    req = urllib.request.Request(base + '/api/user-intents/import', data=payload, method='POST',
+                                 headers={'X-Yumi-CSRF': csrf,
+                                          'Content-Type': f'multipart/form-data; boundary={boundary}'})
+    with opener.open(req, timeout=10) as res:
+        data = json.loads(res.read())
+    assert data['ok'] and data['revision'] == 2 and data['intents'][0]['id'] == 'lamp'
 
     # the fact book: no model, explicit sources, CSRF on every mutation
     code, data, _ = call('GET', '/api/facts?lang=ru')
@@ -550,6 +746,14 @@ try:
     assert code == 200 and data['state']['generation'] == 5
     code, data, _ = call('POST', '/api/voice/release', {}, csrf=csrf)
     assert code == 200 and data['state']['generation'] == 6
+
+    code, data, _ = call('POST', '/api/ask', {'text': '  включи свет  ', 'speak': True})
+    assert code == 403, 'ask without CSRF must fail'
+    code, data, _ = call('POST', '/api/ask', {'text': '  включи свет  ', 'speak': True}, csrf=csrf)
+    assert code == 200 and data['queued'] is True, (code, data)
+    assert bridge.ask_calls[-1] == ('включи свет', True)
+    code, data, _ = call('POST', '/api/ask', {'text': '   '}, csrf=csrf)
+    assert code == 400
 
     code, data, _ = call('GET', '/api/chat/history')
     assert code == 200 and data['messages'] == [] and data['rev'] == 0
@@ -749,4 +953,6 @@ try:
 finally:
     panel.stop()
     config.STATE_DIR = orig_state
+    user_intents.INTENTS_FILE = orig_intents
+    user_intents.INTENTS_DIR = orig_intents_dir
     shutil.rmtree(tmp, ignore_errors=True)

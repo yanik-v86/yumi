@@ -95,6 +95,18 @@ export const api = {
 
   nluConfirm: (ok) => api.post('/api/nlu/confirm', { ok: Boolean(ok) }),
 
+  userIntentsGet: () => api.get('/api/user-intents'),
+  userIntentsPut: (payload) => api.put('/api/user-intents', payload),
+  userIntentsImport: (text) => api.post('/api/user-intents/import', { text: String(text || '') }),
+  userIntentsExport: () => api.get('/api/user-intents/export'),
+  userIntentsTest: (text) => api.post('/api/user-intents/test', { text: String(text || '') }),
+
+  // Matches the phrase and runs the intent through Brain (bubble, voice, command).
+  userIntentsRun: (text) => api.post('/api/user-intents/run', { text: String(text || '') }),
+
+  intentsLogGet: (params = '') => api.get(`/api/user-intents/log${params ? `?${params}` : ''}`),
+  intentsLogClear: () => api.post('/api/user-intents/log/clear'),
+
   chatHistory: () => api.get('/api/chat/history'),
   chatOps: (since = 0) => api.get(`/api/chat/ops?since=${Number(since) || 0}`),
   chatClear: () => api.del('/api/chat/history'),
@@ -154,7 +166,7 @@ export const api = {
   },
 };
 
-export const EVENTS = ['hello', 'status', 'bubble', 'settings', 'files', 'jobs', 'actions', 'chat', 'notes', 'server', 'doctor'];
+export const EVENTS = ['hello', 'status', 'bubble', 'settings', 'files', 'jobs', 'actions', 'chat', 'notes', 'server', 'doctor', 'intents_log'];
 
 export function connectEvents(onEvent, onState) {
   let source = null;

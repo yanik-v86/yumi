@@ -14,6 +14,7 @@ const PAGES = {
   voice: './pages/voice.js',
   doctor: './pages/doctor.js',
   buttons: './pages/buttons.js',
+  'user-intents': './pages/user-intents.js',
   appearance: './pages/appearance.js',
   settings: './pages/settings.js',
   memory: './pages/memory.js',

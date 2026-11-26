@@ -381,7 +381,10 @@ input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
 .config-card b { font-size: 13px; }
 .config-card code { font-size: 9px; color: var(--dim); word-break: break-all; }
 .log-tabs { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 10px; }
-pre.terminal { background: #0d0a14; border: 2px solid var(--line-soft); padding: 14px; overflow: auto; max-height: calc(100vh - 290px); font-size: 11px; line-height: 1.5; color: #c8bdd7; white-space: pre-wrap; word-break: break-word; }
+pre.terminal, .log-terminal { background: #0d0a14; border: 2px solid var(--line-soft); padding: 14px; overflow: auto; max-height: calc(100vh - 290px); font-size: 11px; line-height: 1.5; color: #c8bdd7; word-break: break-word; }
+pre.terminal { white-space: pre-wrap; }
+.log-terminal { gap: 6px; }
+.log-terminal .card-hint { color: #c8bdd7; }
 .audit { font-size: 10px; }
 .audit td { padding: 4px 8px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
 .audit td:first-child { color: var(--dim); white-space: nowrap; }
@@ -419,7 +422,7 @@ pre.terminal { background: #0d0a14; border: 2px solid var(--line-soft); padding:
 .file-strip .empty { flex: 1 0 100%; }
 .chat-log .empty { margin: auto; }
 .log-tabs .tab { white-space: nowrap; }
-.terminal::selection { background: var(--accent); color: #17131f; }
+.terminal::selection, .log-terminal::selection { background: var(--accent); color: #17131f; }
 
 /* ---------------------------------------------------------------- responsive */
 @media (max-width: 1000px) {
