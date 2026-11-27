@@ -136,6 +136,8 @@ export const api = {
   intentsLogClear: () => api.post('/api/user-intents/log/clear'),
 
   chatHistory: () => api.get('/api/chat/history'),
+  chatModels: () => api.get('/api/chat/models'),
+  chatModelsRefresh: (provider) => api.post('/api/chat/models/refresh', { provider: provider || null }),
   chatOps: (since = 0) => api.get(`/api/chat/ops?since=${Number(since) || 0}`),
   chatClear: () => api.del('/api/chat/history'),
   chatUpdate: (id, text) => api.post('/api/chat/message/update', { id, text }),
@@ -194,7 +196,7 @@ export const api = {
   },
 };
 
-export const EVENTS = ['hello', 'status', 'bubble', 'settings', 'files', 'jobs', 'actions', 'chat', 'notes', 'server', 'doctor', 'intents_log'];
+export const EVENTS = ['hello', 'status', 'bubble', 'settings', 'files', 'jobs', 'actions', 'chat', 'chat_models', 'notes', 'server', 'doctor', 'intents_log'];
 
 export function connectEvents(onEvent, onState) {
   let source = null;

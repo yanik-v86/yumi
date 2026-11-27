@@ -425,6 +425,7 @@ class PanelMixin:
                 'clock': self._web_clock_snapshot(),
                 'monitors': int(getattr(b, 'monitors', 1) or 1),
                 'chat_models': list(b.chat_models or []),
+                'chat_models_info': self._web_chat_models_status(),
                 'mics': list(b.mics or []),
                 'unavailable': sorted(b.unavailable or []),
                 'palette': palette,
@@ -489,6 +490,25 @@ class PanelMixin:
             data['settings_full'] = webcatalog.redact(s)
         return data
 
+    def _web_chat_models_status(self):
+        """the last answer from the mind provider, cheap enough for every status tick"""
+        b = self.brain
+        return {'provider': str(getattr(b, 'chat_models_provider', '') or ''),
+                'models': list(getattr(b, 'chat_models', None) or []),
+                'error': str(getattr(b, 'chat_models_error', '') or '')}
+
+    def _web_chat_models_loaded(self, info, provider=None):
+        """keep the browser and the in-world menu on the same model list"""
+        info = info if isinstance(info, dict) else {}
+        prov = str(provider or info.get('provider') or
+                   self.settings.get('chat_provider') or 'ollama')
+        names = [str(n) for n in (info.get('models') or []) if n]
+        error = str(info.get('error') or '')
+        # a late answer from the previous provider must not overwrite the new list
+        if prov == str(self.settings.get('chat_provider') or 'ollama'):
+            self.brain.chat_models_loaded(names, prov, error)
+        return {'provider': prov, 'models': names, 'error': error}
+
     def _web_apply_settings(self, patch):
         old = {k: self.settings.get(k) for k in patch}
         self.settings.update(patch)
@@ -534,8 +554,12 @@ class PanelMixin:
         # nlu_confidence is read from settings on every phrase, so it applies at once
         # stt_hotwords is read by the ears daemon from settings.json on the next
         # /listen or /wake (refresh_tune there) — the panel needs no extra call
-        if 'chat_provider' in patch:
+        if any(k in patch for k in ('chat_provider', 'ollama_url', 'polza_url')):
+            # the old list belongs to the old endpoint; GTK refetches it in the
+            # background, the panel asks for it explicitly through /api/chat/models/refresh
             b.chat_models = []
+            b.chat_models_provider = ''
+            b.chat_models_error = ''
             b.requests.append(('chat_models',))
         if any(k.startswith('tts_') for k in patch):
             try:

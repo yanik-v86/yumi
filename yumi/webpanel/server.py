@@ -407,6 +407,8 @@ def _make_handler(panel):
                 ('GET', '/api/chat/history'): self._chat_history,
                 ('GET', '/api/chat/ops'): self._chat_ops,
                 ('POST', '/api/chat'): self._chat,
+                ('GET', '/api/chat/models'): self._chat_models_get,
+                ('POST', '/api/chat/models/refresh'): self._chat_models_refresh,
                 ('POST', '/api/chat/message/update'): self._chat_message_update,
                 ('POST', '/api/chat/message/remove'): self._chat_message_remove,
                 ('DELETE', '/api/chat/history'): self._chat_clear,
@@ -889,6 +891,19 @@ def _make_handler(panel):
             panel.audit(self._ip(), 'chat', text[:160])
             # the app already published the insert ops over SSE; the response
             # carries them too, for a tab whose event stream was interrupted
+            return self._json(200, {'ok': True, **result})
+
+        def _chat_models_get(self, _q):
+            return self._json(200, {'ok': True, **panel.bridge.chat_models_status()})
+
+        def _chat_models_refresh(self, _q):
+            body = self._body()
+            provider = str(body.get('provider') or '').strip() or None
+            if provider is not None and provider not in ('ollama', 'polza.ai'):
+                raise ValueError('unknown mind provider')
+            result = panel.bridge.chat_models_refresh(provider)
+            panel.audit(self._ip(), 'chat-models-refresh', result.get('provider') or '')
+            panel.publish('chat_models', result)
             return self._json(200, {'ok': True, **result})
 
         def _chat_history(self, _q):

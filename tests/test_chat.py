@@ -185,6 +185,17 @@ SEEN = {}
 
 
 class Polza(BaseHTTPRequestHandler):
+    def do_GET(self):
+        SEEN['models_path'] = self.path
+        SEEN['models_auth'] = self.headers.get('Authorization')
+        out = _json.dumps({'data': [{'id': 'z-ai/glm-4.5-air'},
+                                    {'id': 'deepseek/deepseek-v4-flash'}]}).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
     def do_POST(self):
         SEEN['path'] = self.path
         SEEN['auth'] = self.headers.get('Authorization')
@@ -208,7 +219,14 @@ threading.Thread(target=polza.serve_forever, daemon=True).start()
 s = {'chat_provider': 'polza.ai', 'polza_url': f'http://127.0.0.1:{polza.server_address[1]}/v1',
      'polza_api_key': 'secret', 'chat_model': 'deepseek/deepseek-v4-flash'}
 assert chat.alive(s)
-assert chat.models(s) == ['deepseek/deepseek-v4-flash']
+names = ['deepseek/deepseek-v4-flash', 'z-ai/glm-4.5-air']
+assert chat.models(s) == names, chat.models(s)          # real /models, sorted
+assert SEEN['models_path'] == '/v1/models', SEEN
+assert SEEN['models_auth'] == 'Bearer secret', SEEN
+assert chat.models_info(s) == {'provider': 'polza.ai', 'models': names, 'error': ''}
+assert chat.models_info({'chat_provider': 'polza.ai'})['error'] == 'no api key'
+assert chat.models_info({'chat_provider': 'polza.ai', 'polza_url': 'http://127.0.0.1:1/v1',
+                         'polza_api_key': 'x'})['error'] == 'the provider did not answer'
 reply = chat.ask(s, [{'role': 'user', 'content': 'привет'}])
 assert reply == 'Спокойной ночи!', reply            # a string, not a list of words
 assert SEEN['path'] == '/v1/chat/completions', SEEN

@@ -9,6 +9,8 @@ export function render(view, ctx) {
   let active = 'behavior';
   let query = '';
   let micsAsked = false;
+  let modelsAsked = false;
+  let modelsSig = '';
 
   view.append(
     el('h2', { class: 'pagehead', text: lang() === 'ru' ? 'Настройки' : 'Settings' }),
@@ -110,7 +112,68 @@ export function render(view, ctx) {
       el('span', { class: 'card-hint', text: tr(section.hint) }));
   }
 
+  function modelInfo() {
+    return ctx.chatModels || status.runtime?.chat_models_info
+      || { provider: '', models: [], error: '' };
+  }
+
+  function modelError(error) {
+    if (!error) return lang() === 'ru' ? 'Список пока не запрошен.' : 'The list has not been fetched yet.';
+    if (error === 'no api key') return lang() === 'ru' ? 'Нет ключа провайдера.' : 'No provider API key.';
+    if (error === 'the provider has no models') return lang() === 'ru' ? 'Провайдер не отдал моделей.' : 'The provider returned no models.';
+    if (error === 'the provider did not answer') return lang() === 'ru' ? 'Провайдер не ответил.' : 'The provider did not answer.';
+    return String(error);
+  }
+
+  function mindNote() {
+    const info = modelInfo();
+    const models = Array.isArray(info.models) ? info.models.filter(Boolean).map(String) : [];
+    const provider = info.provider === 'polza.ai' ? 'Polza.ai'
+      : info.provider === 'ollama' ? 'Ollama'
+        : (lang() === 'ru' ? 'не запрошен' : 'not fetched');
+    const box = el('div', { class: 'card-hint', style: { marginBottom: '12px' } },
+      el('div', { class: 'row' },
+        el('span', { text: lang() === 'ru' ? 'Провайдер моделей:' : 'Model provider:' }),
+        el('b', { text: provider }),
+        el('span', { class: 'spacer' }),
+        el('button', {
+          class: 'btn btn-small', type: 'button',
+          text: lang() === 'ru' ? 'Обновить модели' : 'Update models',
+          onclick: async () => {
+            await ctx.refreshChatModels();
+            status = ctx.status || status;
+            drawAll();
+          },
+        })));
+    if (models.length) {
+      const chips = el('div', { class: 'row', style: { marginTop: '8px', flexWrap: 'wrap' } });
+      for (const name of models.slice(0, 12)) {
+        const current = String(status.settings?.chat_model ?? '') === name;
+        chips.append(el('button', {
+          class: `btn btn-small ${current ? 'btn-primary' : 'btn-ghost'}`.trim(),
+          type: 'button', text: name, title: name,
+          onclick: async () => {
+            const result = await ctx.applySettings({ chat_model: name }, { quiet: false });
+            if (result) {
+              status = ctx.status || status;
+              drawAll();
+            }
+          },
+        }));
+      }
+      if (models.length > 12) {
+        chips.append(el('span', { class: 'card-hint', text: `+${models.length - 12}` }));
+      }
+      box.append(chips);
+    } else {
+      box.append(el('div', { class: 'card-hint', style: { marginTop: '8px' },
+        text: modelError(info.error) }));
+    }
+    return box;
+  }
+
   function linkNote(section) {
+    if (section.id === 'mind') return mindNote();
     if (section.id === 'behavior') {
       return el('div', { class: 'card-hint', style: { marginBottom: '12px' } },
         lang() === 'ru'
@@ -220,6 +283,13 @@ export function render(view, ctx) {
           .then(() => { status = ctx.status || status; drawAll(); })
           .catch(() => {});
       }
+      if (section.id === 'mind' && !modelsAsked && !modelInfo().models?.length) {
+        // the same list the in-world menu shows; fetch it once on this page
+        modelsAsked = true;
+        ctx.refreshChatModels()
+          .then(() => { status = ctx.status || status; drawAll(); })
+          .catch(() => {});
+      }
     }
     if (!shown) {
       content.append(emptyBox(lang() === 'ru'
@@ -236,7 +306,13 @@ export function render(view, ctx) {
 
   const offStatus = ctx.onStatus((next) => {
     status = next;
-    updateCounts();
+    // redraw only when the model list itself changed, not on every status tick
+    const sig = JSON.stringify([next?.runtime?.chat_models_info || null, ctx.chatModels || null]);
+    if (sig !== modelsSig) {
+      modelsSig = sig;
+      drawContent();
+      updateCounts();
+    }
   });
   const offEvent = ctx.onEvent('settings', () => {
     ctx.refreshStatus();

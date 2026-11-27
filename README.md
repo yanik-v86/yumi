@@ -554,7 +554,12 @@ of the room (a whisper by the screen is gone too), «Across the room» lets even
 one pass. The real range lives in the microphone itself: the input slider in the sound
 settings and the mic's directivity matter more than any gate. The answer model is picked
 in **Settings → Her mind → Answer model** (it cycles through the installed ones); where
-Ollama lives lives in `~/.config/yumi/settings.json` as `ollama_url`. Right there,
+Ollama lives lives in `~/.config/yumi/settings.json` as `ollama_url`. The mind provider
+is `ollama` or `polza.ai` (**Settings → Her mind → Mind provider**); changing it (or its
+address) refreshes the model list: Ollama answers `/api/tags`, Polza.ai answers `/models`
+with `polza_api_key`. In the web panel, **Settings → Her mind** shows those models as
+buttons under the field plus an «Update models» button; clicking a model saves it as the
+answer model. Neither the key nor the address is sent back to the panel. Right there,
 **Settings → Her mind → Sassy 18+** turns her into a foul-mouthed street-smart brat
 (off by default): she swears, roasts dumb questions and still helps with the real ones.
 The mode's lines go into her diary tagged, and so do the jokes: ask for four jokes in a

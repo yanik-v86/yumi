@@ -94,7 +94,7 @@ WebBridge (yumi.ui.bridge)  ── GLib.idle_add ──▶  App / Brain / Memory
 | `buttons` | Кнопки | кольцо, порядок, выключенные кнопки, свои команды, добавление и редактирование; карточка ожидающего разрешения Разово/Всегда/Запретить |
 | `user-intents` | Мои фразы | CRUD своих интентов в `user-intents/<id>/intent.json`, импорт/экспорт JSON; «Проверить» на карточке запускает найденный интент, «Совпадение?» только проверяет; для `command` есть `capture` и `{stdout}`, раздельные «Озвучивать отдельно» / «Пузыть отдельно», свои шаблоны и «Лимит бабла» (1000 по умолчанию); тумблер `user_intents` живёт в Настройках → Мозги; ниже — блок журнала действий: уровень, opt-in на превью, лимиты, фильтры по правилу/этапу, обновление и очистка, автообновление по SSE `intents_log` |
 | `appearance` | Внешний вид | текущая палитра, пипетка, пересборка цветов, наряд, масштаб, другой экран, JSON палитры |
-| `settings` | Настройки | все ключи `settings.json`, сгруппированные по секциям, поиск, сброс, живое применение |
+| `settings` | Настройки | все ключи `settings.json`, сгруппированные по секциям, поиск, сброс, живое применение; в разделе «Её мозги» — список моделей текущего провайдера кнопками, «Обновить модели» и автообновление после смены провайдера/адреса |
 | `memory` | Память | поиск по дневнику, лимит, строки, удаление 18+ и всей памяти |
 | `configs` | Конфиги | список JSON-файлов, просмотр и редактирование с бэкапами; токен только для чтения |
 | `security` | Безопасность | адрес, токен, сессии, ротация ссылки, настройки доступа, список и сброс сохранённых разрешений, журнал |
@@ -164,6 +164,8 @@ ctx.navigate(id)
 | POST | `/api/doctor` | `{sections?, text?}` — полный отчёт самопроверки; публикует SSE `doctor` |
 | GET | `/api/models` | кэшированная проверка моделей (без хэширования) |
 | POST | `/api/models/verify`, `/api/models/record` | `{names?}` — явная проверка / запись SHA-256 |
+| GET | `/api/chat/models` | последний список моделей мозгов: `{provider, models, error}` (без сети) |
+| POST | `/api/chat/models/refresh` | `{provider?}` — запросить модели у Ollama (`/api/tags`) или Polza.ai (`/models`); обновляет список в Юми и публикует SSE `chat_models`; ключ не отдаётся |
 | GET | `/api/permissions` | сохранённые правила allow/deny |
 | POST | `/api/permissions/answer` | `{decision: once|always|deny}` — ответить на ожидающее разрешение; `always` только кликом |
 | POST | `/api/permissions/clear` | стереть все сохранённые правила |
@@ -208,7 +210,7 @@ ctx.navigate(id)
 | POST | `/api/security/link` | показать ссылку с токеном (только POST + CSRF) |
 | GET | `/api/audit` | хвост журнала панели |
 | GET | `/api/logs?name=&lines=` | логи; `name=intents` — приватный JSONL журнал своих фраз |
-| GET | `/api/events` | SSE: hello/status/bubble/settings/files/jobs/actions/chat/notes/server/doctor/intents_log |
+| GET | `/api/events` | SSE: hello/status/bubble/settings/files/jobs/actions/chat/chat_models/notes/server/doctor/intents_log |
 | GET | `/api/facts?lang=ru|en` | список фактов с источниками и сводка по книге (`builtin`, `custom`, `total`, `error`) |
 | POST | `/api/facts/check` | `{path}` — проверить свой JSON, не меняя настроек |
 | POST | `/api/facts/say` | `{id?}` — сказать факт (или случайный) сразу, минуя лимит болтовни; во сне отказ |

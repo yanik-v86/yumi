@@ -185,6 +185,17 @@ class WebBridge:
         result['models'] = models.verify_cached(force=True)['models']
         return result
 
+    # ---- available brain (chat) models — different from model file checksums
+    def chat_models_status(self):
+        """the last list Yumi fetched, from her own state; no network here"""
+        return self._on(self.app._web_chat_models_status)
+
+    def chat_models_refresh(self, provider=None):
+        """ask Ollama / Polza.ai for their models and share the answer with GTK"""
+        result = chat.models_info(self.app.settings, provider=provider)
+        self._on(lambda: self.app._web_chat_models_loaded(result, provider))
+        return result
+
     # ---- voice state
     def voice_state(self):
         return self._on(lambda: self.app.voice_state.snapshot())

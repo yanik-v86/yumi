@@ -26,6 +26,8 @@ const PAGES = {
 const state = {
   schema: null,
   status: null,
+  chatModels: { provider: '', models: [], error: '' },
+  chatModelSchema: null,
   lang: 'ru',
   page: '',
   cleanup: null,
@@ -160,6 +162,38 @@ function syncMicChoices(mics, current) {
   if (current) entry.choice_labels[String(current)] = entry.choice_labels[String(current)] || current;
 }
 
+// The answer model is a plain text field until the provider reports its models;
+// then it becomes a select. Keep the pristine entry so a failed refresh restores it.
+function syncChatModelChoices(models, current) {
+  const entry = (state.schema?.settings || []).find((e) => e.key === 'chat_model');
+  if (!entry) return;
+  if (!state.chatModelSchema) {
+    state.chatModelSchema = {
+      type: entry.type, choices: entry.choices, choice_labels: entry.choice_labels,
+    };
+  }
+  const names = [...new Set((Array.isArray(models) ? models : []).filter(Boolean).map(String))];
+  if (current && !names.includes(String(current))) names.unshift(String(current));
+  if (!names.length) {
+    Object.assign(entry, state.chatModelSchema);
+    return;
+  }
+  entry.type = 'select';
+  entry.choices = names;
+  entry.choice_labels = Object.fromEntries(names.map((name) => [name, name]));
+}
+
+function setChatModelsInfo(info, current) {
+  state.chatModels = {
+    provider: String(info?.provider || ''),
+    models: Array.isArray(info?.models) ? info.models.filter(Boolean).map(String) : [],
+    error: String(info?.error || ''),
+  };
+  syncChatModelChoices(state.chatModels.models, current ?? state.status?.settings?.chat_model);
+  notifyStatus();
+  return state.chatModels;
+}
+
 // a pending permission must be visible from every page, not just Buttons
 let permBannerKey = '';
 function updatePermBanner() {
@@ -209,6 +243,15 @@ function setStatus(next, { light = false } = {}) {
   }
   // A light snapshot has no settings_full; the merge above keeps the old one.
   syncMicChoices(state.status.runtime?.mics, state.status.settings?.stt_mic);
+  const mind = next.runtime?.chat_models_info;
+  if (mind) {
+    state.chatModels = {
+      provider: String(mind.provider || ''),
+      models: Array.isArray(mind.models) ? mind.models.filter(Boolean).map(String) : [],
+      error: String(mind.error || ''),
+    };
+  }
+  syncChatModelChoices(state.chatModels.models, state.status.settings?.chat_model);
   applyLanguage(state.status.settings?.ui_lang);
   const tm = state.status.runtime?.timer;
   if (tm) {
@@ -242,6 +285,23 @@ async function refreshMics() {
   return data.mics || [];
 }
 
+// Ask the current mind provider for its models (or another one, without switching).
+async function refreshChatModels(provider) {
+  try {
+    const data = await api.chatModelsRefresh(provider);
+    state.status = state.status || {};
+    state.status.runtime = {
+      ...(state.status.runtime || {}),
+      chat_models: data.models || [],
+      chat_models_info: data,
+    };
+    return setChatModelsInfo(data);
+  } catch (err) {
+    errToast(err);
+    return null;
+  }
+}
+
 async function applySettings(patch, { quiet = true } = {}) {
   try {
     const data = await api.patchSettings(patch);
@@ -252,6 +312,11 @@ async function applySettings(patch, { quiet = true } = {}) {
         state.status.settings_full = { ...state.status.settings_full, ...data.settings };
       }
       applyLanguage(data.settings.ui_lang);
+    }
+    // a new provider (or endpoint) means a new list of answer models
+    if (['chat_provider', 'ollama_url', 'polza_url'].some(
+      (key) => Object.prototype.hasOwnProperty.call(patch, key))) {
+      await refreshChatModels();
     }
     notifyStatus();
     updateChips();
@@ -283,9 +348,11 @@ async function resetSetting(key) {
 const ctx = {
   get schema() { return state.schema; },
   get status() { return state.status; },
+  get chatModels() { return state.chatModels; },
   get lang() { return state.lang; },
   refreshStatus,
   refreshMics,
+  refreshChatModels,
   applySettings,
   resetSetting,
   navigate,
@@ -634,6 +701,11 @@ function startLive() {
       }
       emitEvent('settings', payload?.data || {});
       notifyStatus();
+      return;
+    }
+    if (name === 'chat_models') {
+      if (payload?.data) setChatModelsInfo(payload.data);
+      emitEvent('chat_models', payload?.data || {});
       return;
     }
     if (name === 'bubble') {

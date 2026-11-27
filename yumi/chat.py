@@ -37,8 +37,8 @@ def _provider(settings):
     return str(settings.get('chat_provider') or 'ollama')
 
 
-def _url(settings):
-    if _provider(settings) == 'polza.ai':
+def _url(settings, provider=None):
+    if (provider or _provider(settings)) == 'polza.ai':
         return str(settings.get('polza_url') or 'https://polza.ai/api/v1').rstrip('/')
     return str(settings.get('ollama_url') or DEFAULT_URL).rstrip('/')
 
@@ -60,21 +60,55 @@ def alive(settings, timeout=0.8):
         return False
 
 
-def _get(url, timeout):
-    with urllib.request.urlopen(url, timeout=timeout) as r:
+def _get(url, timeout, headers=None):
+    req = urllib.request.Request(url, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode())
 
 
-def models(settings):
-    """installed model names, sorted; [] when the provider is not reachable"""
+def models_info(settings, provider=None, timeout=4):
+    """{'provider', 'models', 'error'} from the mind provider, never raises.
+
+    Ollama keeps its models in /api/tags; Polza.ai speaks the OpenAI
+    /models dialect and needs the key. Errors are deliberately generic:
+    neither the URL nor the key ever leaves this module.
+    """
+    prov = str(provider or _provider(settings))
+    out = {'provider': prov, 'models': [], 'error': ''}
     try:
-        if _provider(settings) == 'polza.ai':
-            return [POLZA_MODEL]
-        data = _get(_url(settings) + '/api/tags', timeout=4)
-    except (OSError, ValueError):
-        return []
-    out = {str(m.get('name')) for m in data.get('models') or [] if m.get('name')}
-    return sorted(out)
+        if prov == 'polza.ai':
+            key = str(settings.get('polza_api_key') or '').strip()
+            if not key:
+                out['error'] = 'no api key'
+                return out
+            data = _get(_url(settings, prov) + '/models', timeout,
+                        {'Authorization': 'Bearer ' + key})
+            field = 'id'
+            rows = data.get('data') if isinstance(data, dict) else None
+        else:
+            data = _get(_url(settings, prov) + '/api/tags', timeout)
+            field = 'name'
+            rows = data.get('models') if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            out['error'] = 'the provider did not answer'
+            return out
+        names = {str(m.get(field)) for m in rows
+                 if isinstance(m, dict) and m.get(field)}
+    except (OSError, ValueError, TypeError):
+        out['error'] = 'the provider did not answer'
+        return out
+    out['models'] = sorted(names)
+    if not out['models']:
+        out['error'] = 'the provider has no models'
+    return out
+
+
+def models(settings, provider=None, timeout=4):
+    """model names the provider offers, sorted; the in-world menu uses this"""
+    info = models_info(settings, provider, timeout)
+    if not info['models'] and info['provider'] == 'polza.ai':
+        return [POLZA_MODEL]   # no key or no answer: keep her usual answer model
+    return info['models']
 
 
 MOODS = (

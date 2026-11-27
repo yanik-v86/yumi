@@ -295,7 +295,9 @@ class Brain(Extras):
         self.last_intent = ''           # the last voice command's id, for the browser panel
         self.last_confidence = 0.0      # and how sure the match was
         self.last_user_intent_run_id = ''  # the last own-intent run, for the panel journal
-        self.chat_models = []           # installed Ollama models, for the settings row
+        self.chat_models = []           # models the current mind provider offers
+        self.chat_models_provider = ''  # which provider answered last ('ollama' / 'polza.ai')
+        self.chat_models_error = ''     # why the list is empty, for the panel
         self.mics = []                  # microphones her ears can hear, for the settings row
         self.radial = False             # the ring of round buttons around her
         self.radial_t = Spring(0)
@@ -2647,9 +2649,14 @@ class Brain(Extras):
         else:
             self.say('hourly', time=t)
 
-    def chat_models_loaded(self, names):
-        """the installed Ollama models, for the settings row; empty when Ollama is away"""
-        self.chat_models = [n for n in names or [] if n]
+    def chat_models_loaded(self, names, provider=None, error=''):
+        """models from the mind provider, for the menu and the browser panel"""
+        # a fetch that was still in flight when the provider changed is stale
+        if provider and str(provider) != str(self.settings.get('chat_provider') or 'ollama'):
+            return
+        self.chat_models = [str(n) for n in names or [] if n]
+        self.chat_models_provider = str(provider or '')
+        self.chat_models_error = str(error or '')
         if self.chat_models:
             self.unavailable.discard('chat_model')
         else:

@@ -1038,10 +1038,11 @@ class SensesMixin:
         threading.Thread(target=work, daemon=True).start()
 
     def fetch_chat_models(self):
-        """the installed Ollama models, for Settings → Her mind → Answer model"""
+        """the current provider's models, for Settings → Her mind → Answer model"""
         def work():
-            names = chat.models(self.settings)
-            GLib.idle_add(lambda: self.ev(lambda b: b.chat_models_loaded(names)) and False)
+            info = chat.models_info(self.settings)
+            GLib.idle_add(lambda: self.ev(lambda b: b.chat_models_loaded(
+                info['models'], info['provider'], info['error'])) and False)
         threading.Thread(target=work, daemon=True).start()
 
     def fetch_mics(self):

@@ -51,6 +51,8 @@ class Bridge:
         self.said_facts = []
         self.intents_log_reads = []
         self.intents_log_clears = 0
+        self.chat_models_reads = 0
+        self.chat_models_refreshes = []
 
     def file_allowed(self, path):
         try:
@@ -68,7 +70,9 @@ class Bridge:
                         'pinned': False, 'thinking': False, 'listening': False,
                         'busy': False, 'progress': False, 'bubble': 'привет',
                         'face': 'idle', 'monitor': None, 'monitors': 1,
-                        'chat_models': [], 'mics': [], 'unavailable': [],
+                        'chat_models': ['one', 'two'], 'mics': [], 'unavailable': [],
+                        'chat_models_info': {'provider': 'ollama',
+                                             'models': ['one', 'two'], 'error': ''},
                         'palette': {}, 'ui_colors': {'accent': '#c9a7e0'},
                         'music': {'now_playing': None, 'volume': 50, 'resumable': False},
                         'wake_on': True, 'tap_ears': False, 'downloads': False,
@@ -121,6 +125,16 @@ class Bridge:
         self.applied.append(patch)
         self.settings.update(patch)
         return {'saved': patch, 'before': {}, 'restart': 'scale' in patch}
+
+    def chat_models_status(self):
+        self.chat_models_reads += 1
+        return {'provider': self.settings.get('chat_provider'),
+                'models': ['one', 'two'], 'error': ''}
+
+    def chat_models_refresh(self, provider=None):
+        self.chat_models_refreshes.append(provider)
+        return {'provider': provider or self.settings.get('chat_provider'),
+                'models': ['one', 'two'], 'error': ''}
 
     def actions_get(self):
         return {'actions': self.actions, 'ring': [
@@ -781,6 +795,23 @@ try:
     assert code == 200 and data['queued'] is True, (code, data)
     assert bridge.ask_calls[-1] == ('включи свет', True)
     code, data, _ = call('POST', '/api/ask', {'text': '   '}, csrf=csrf)
+    assert code == 400
+
+    # the brain model list is separate from the /api/models file checksums
+    code, data, _ = call('GET', '/api/chat/models')
+    assert code == 200 and data['models'] == ['one', 'two'], (code, data)
+    assert bridge.chat_models_reads >= 1
+    code, data, _ = call('POST', '/api/chat/models/refresh', {})
+    assert code == 403, 'a model refresh without CSRF must fail'
+    code, data, _ = call('POST', '/api/chat/models/refresh', {}, csrf=csrf)
+    assert code == 200 and data['models'] == ['one', 'two'], (code, data)
+    assert bridge.chat_models_refreshes[-1] is None
+    code, data, _ = call('POST', '/api/chat/models/refresh',
+                         {'provider': 'polza.ai'}, csrf=csrf)
+    assert code == 200 and data['provider'] == 'polza.ai', (code, data)
+    assert bridge.chat_models_refreshes[-1] == 'polza.ai'
+    code, data, _ = call('POST', '/api/chat/models/refresh',
+                         {'provider': 'nope'}, csrf=csrf)
     assert code == 400
 
     code, data, _ = call('GET', '/api/chat/history')
