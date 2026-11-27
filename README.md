@@ -576,6 +576,9 @@ Switch the mode off and every line of it, jokes included, is wiped from the diar
 The system prompt and other prompts (jokes, note summaries, memory, music name normalization)
 can be edited in the web panel: **Settings → Prompts** (or in `~/.config/yumi/settings.json`,
 keys `prompt_*`). An empty value restores the built-in default.
+When a Russian-spoken name is not in the library («рамштайн сан»), she asks her mind for the
+cover spelling and searches again («Rammstein Sonne»); if the chosen provider is silent, a
+local model supplies the name. The examples are appended to the prompt automatically.
 **Settings → Her ears → Ears diary** — while it is on, she writes everything she hears into
 `/tmp/yumi`: the sound into `ears-*.wav` files (no bigger than 10 MB and ten minutes each,
 only the five freshest stay on the shelf) and the heard phrases into `recogn.txt`, one

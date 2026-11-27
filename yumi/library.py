@@ -160,11 +160,30 @@ class Jellyfin:
                         'source': 'jellyfin'})
         return out
 
+    def _search_items(self, query, limit):
+        """Jellyfin's SearchTerm is a substring, not a phrase: «Rammstein Sonne»
+        finds nothing although both the artist and the song are in the library.
+        Ask for each word, then merge the answers so the local ranking can put
+        the tracks that carry every word first."""
+        words = _tokens(query)
+        if not words:
+            return []
+        if len(words) == 1:
+            return self._items({'SearchTerm': words[0]}, limit)
+        found, seen = [], set()
+        for word in words[:4]:
+            for t in self._items({'SearchTerm': word}, 200):
+                key = t.get('id') or t.get('url')
+                if key not in seen:
+                    seen.add(key)
+                    found.append(t)
+        return found
+
     def search(self, query, limit=5):
         """the songs whose names carry the words you said"""
         if not self.auth():
             return []
-        return self._items({'SearchTerm': query}, limit)
+        return _ranked_tracks(self._search_items(query, limit), query, limit)
 
     def by_artist(self, query, limit=25):
         """the songs of the singer you named: the found tracks are filtered by
@@ -172,7 +191,7 @@ class Jellyfin:
         when nobody owns the name, the raw answers go"""
         if not self.auth():
             return []
-        found = self._items({'SearchTerm': query}, 200)
+        found = self._search_items(query, 200)
         words = _tokens(query)
         def mine(t):
             hay = _tokens(f'{t["artist"]} {t["album"]}')
@@ -184,7 +203,7 @@ class Jellyfin:
         """the songs of the album you named, the same filter by the album"""
         if not self.auth():
             return []
-        found = self._items({'SearchTerm': query}, 200)
+        found = self._search_items(query, 200)
         words = _tokens(query)
         def mine(t):
             hay = _tokens(t['album'])

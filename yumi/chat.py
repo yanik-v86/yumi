@@ -323,11 +323,33 @@ def _one_shot(settings, user, tokens, lang='en', timeout=90, temp=None, system=N
                    temperature=temp)
 
 
+# Spoken names are often not transliterations at all («рамштайн сан» is
+# Rammstein Sonne, not «Ramshtain San»).  The template stays editable, but these
+# examples travel with every request — otherwise small minds just copy the
+# sounds back and the search never finds the cover spelling.
+MUSIC_NAME_HINTS = (
+    '\nGive the real original name in its own language, not a transliteration. '
+    'Examples: «тупак» → 2Pac; «рамштайн сан» → Rammstein Sonne. '
+    'Answer with the name only, one line, no explanation.'
+)
+# Reasoning models ("deepseek-v4-flash" and friends) spend their first tokens
+# on thinking; with 32 they return an empty message and the whole search fails.
+MUSIC_NAME_TOKENS = 400
+
+
+def _music_name_fallback(settings, active):
+    """one other enabled mind for the tiny name question, local Ollama first"""
+    recs = [r for r in llm.providers(settings)
+            if r.get('enabled', True) and r['id'] != active]
+    recs.sort(key=lambda r: (r['id'] != 'local', r['kind'] != 'ollama'))
+    return recs[0] if recs else None
+
+
 def music_name(settings, kind, query, timeout=15):
     """the name you said, spelled the way the covers spell it: the mind is asked
-    once, quietly («тупак» is 2Pac, «рамштайн» is Rammstein — the tags are
-    latin, the ears heard Russian) — the name alone, or '' when the mind is
-    away, in no mood, or repeated what was already tried"""
+    quietly («тупак» is 2Pac, «рамштайн сан» is Rammstein Sonne — the tags are
+    latin, the ears heard Russian), a few times when the provider is silent —
+    the name alone, or '' when the mind is away or repeated what was tried"""
     query = ' '.join(str(query or '').split())
     if not query:
         return ''
@@ -339,13 +361,42 @@ def music_name(settings, kind, query, timeout=15):
           'only, in one line, nothing else.')
     tpl = _prompt(settings, 'prompt_music_name', fb)
     try:
-        asked = tpl.format(kind=kind_word, query=query)
+        asked = tpl.format(kind=kind_word, query=query) + MUSIC_NAME_HINTS
     except (KeyError, IndexError, ValueError):
-        asked = fb.format(kind=kind_word, query=query)
-    got = _one_shot(settings, asked, 32, timeout=timeout, temp=0.1)
+        asked = fb.format(kind=kind_word, query=query) + MUSIC_NAME_HINTS
+    got = ''
+    deadline = time.monotonic() + timeout
+    for _ in range(2):
+        left = deadline - time.monotonic()
+        if left < 2:
+            break
+        # one cloud door often stalls on a TLS handshake: a short retry finds
+        # the next one without making her wait for two full timeouts
+        got = _one_shot(settings, asked, MUSIC_NAME_TOKENS,
+                        timeout=min(5, left), temp=0.1)
+        if got:
+            break
+    if not got:
+        # the chosen mind may be unreachable altogether; a local model with the
+        # same examples spells the name better than giving up on the search
+        rec = _music_name_fallback(settings, _provider(settings))
+        left = deadline - time.monotonic()
+        model = str((rec or {}).get('default_model') or '')
+        if rec and model and left >= 2:
+            messages = [
+                {'role': 'system',
+                 'content': system_prompt('en', bool(settings.get('sassy')), settings)},
+                {'role': 'user', 'content': asked},
+            ]
+            got = llm.ask(settings, messages, provider=rec['id'], model=model,
+                          timeout=min(6, left), max_tokens=MUSIC_NAME_TOKENS,
+                          temperature=0.1)
     if not got:
         return ''
     got = got.splitlines()[0].strip(' «»"\'`*—- ').strip()
+    got = re.sub(r'\s+[-–—]\s+', ' ', got)     # «Rammstein – Sonne» is one name for the search
+    got = re.sub(r'^(?:answer|name|original(?:\s+name)?)\s*[:–—-]\s*', '', got, flags=re.I)
+    got = got.strip(' «»"\'`*—- ').strip()
     if not got or len(got) > 80 or got.lower() == query.lower():
         return ''
     return got
