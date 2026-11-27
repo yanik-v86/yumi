@@ -64,6 +64,34 @@ def test_read_tape_passes_the_hint_to_whisper():
     assert seen == [('ru', 5, 'расскажи анекдот')]
 
 
+def test_read_tape_uses_gigaam_before_whisper():
+    ears = stt.Ears()
+    class FakeGiga:
+        def transcribe_pcm(self, pcm):
+            return {'e2e': 'Расскажи анекдот.', 'raw': 'расскажи анекдот'}
+    ears.gigaam = lambda: FakeGiga()
+
+    def no_whisper(*args, **kwargs):
+        raise AssertionError('whisper must not read a confident gigaam tape')
+    ears.transcribe = no_whisper
+    text, engine, variants = ears.read_tape(b'\0\0' * 32000, 'ru', engine='gigaam')
+    assert (text, engine) == ('расскажи анекдот', 'gigaam')
+    assert variants == [('gigaam', 'расскажи анекдот')]
+    # the graph is Russian-only; other languages go to whisper without a reading
+    assert stt.transcribe_gigaam_model(FakeGiga(), b'\0\0' * 32000, 'en') == ''
+
+
+def test_gigaam_silence_falls_back_to_whisper_then_vosk():
+    ears = stt.Ears()
+    ears.gigaam = lambda: type('FakeGiga', (), {
+        'transcribe_pcm': lambda self, pcm: {'e2e': '', 'raw': ''}})()
+    ears.transcribe = lambda pcm, lang, size='small', beam=5, hotwords=None: ''
+    ears.vosk_read = lambda pcm, lang: 'включи музыку'
+    text, engine, variants = ears.read_tape(b'\0\0' * 32000, 'ru', engine='gigaam')
+    assert (text, engine) == ('включи музыку', 'vosk')
+    assert variants == [('gigaam', ''), ('whisper', ''), ('vosk', 'включи музыку')]
+
+
 def test_hint_text_is_short_and_clean():
     assert stt.hotwords_text('я говорю расскажи анекдот', 'терминал') == \
         'я говорю расскажи анекдот, терминал'

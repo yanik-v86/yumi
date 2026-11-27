@@ -25,8 +25,8 @@
    модель `yumi.onnx`) или `vosk` (как раньше). Плюс кнопка «проверить имя»
    в панели: сказать «Юми», получить «услышала / тишина» и понятную причину.
 2. **Судья / распознаватель фраз** — кто читает фразу после имени:
-   `whisper` или `nemotron 0.6b`. Плюс кнопка «проверить судью»: сказать
-   фразу, увидеть, что именно прочитал выбранный движок.
+   `whisper`, `nemotron 0.6b` или `gigaam` (ONNX, только русский). Плюс кнопка
+   «проверить судью»: сказать фразу, увидеть, что именно прочитал выбранный движок.
 3. **Голос озвучки** — русский и английский голоса Silero, модель (`v5_6_ru`
    / `v4_ru`), высота (`pitch`) и существующая громкость. Плюс кнопка
    «послушать» с текущими параметрами, без перезапуска приложения.
@@ -97,7 +97,7 @@ TTS-профиль жил только в `~/.config/yumi/tts.json`, а пров
 ```
 settings.json
   wake_ear: auto | oww | vosk       -> ui/senses, ui/brain -> ears.wake(oww_ear=...)
-  stt_engine: whisper | nemotron    -> ears.listen(engine=...) / wake -> STT
+  stt_engine: whisper | nemotron | gigaam -> ears.listen(engine=...) / wake -> STT
   voice_kind: blips | tts           -> senses.speak -> tts.speak
   voice_vol: 0..100                 -> громкость
   tts_ru_speaker, tts_en_speaker,
@@ -108,7 +108,7 @@ settings.json
 
 yumi/tts.py                          -> клиент демона, профиль, кэш WAV, перезапуск
 yumi/ears.py                         -> клиент STT-демона (wake/listen/mute/tap)
-yumi/stt_daemon.py                   -> vosk + whisper + nemotron + oww_ear.py
+yumi/stt_daemon.py                   -> vosk + whisper + nemotron + gigaam + oww_ear.py
 yumi/oww_ear.py                      -> отдельный процесс openWakeWord
 yumi/engines.py                      -> дешёвое наличие движков и списки голосов
 ```
@@ -120,8 +120,9 @@ yumi/engines.py                      -> дешёвое наличие движк
   120-секундными окнами, поэтому **любая проверка из панели должна сначала
   поставить цикл на паузу**, иначе уши ответят «занято».
 - `stt_engine` уже применяется на лету для `listen` и для чтения фразы после
-  имени. Nemotron опционален: если модели нет, `transcribe_said` откатывается
-  на whisper/vosk.
+  имени. Nemotron и GigaAM опциональны: если модели нет, `transcribe_said`
+  откатывается на whisper/vosk. GigaAM читает только русский и не использует
+  `stt_beam`/`stt_hotwords`.
 - `tts_daemon.py` читает `tts.json` только при запуске: смена голоса требует
   перезапуска демона. `yumi/tts.py::close()` ставит `_shutting_down=True`
   навсегда — для перезапуска нужен отдельный путь, сбрасывающий флаг.
@@ -138,7 +139,7 @@ yumi/engines.py                      -> дешёвое наличие движк
 | 1 | Ключи TTS в настройках | `yumi/config.py` | 4 ключа в `DEFAULT_SETTINGS`, подписи ru/en, `tts.json` подтягивается при загрузке |
 | 2 | Каталог панели | `yumi/webpanel/catalog.py` | ключи в `KEY_SECTION`, `CHOICES`, `TYPES`, `RANGES`, `TITLES`, `HINTS`; схема их отдаёт |
 | 3 | Профиль TTS | `yumi/tts.py` | `PROFILE_KEYS`, `profile_from_settings`, `current_profile`, `sync_profile`, `restart` без вечного `_shutting_down` |
-| 4 | Движки | `yumi/engines.py` | `status(settings)` без импорта GTK/venv; пути oww/vosk/whisper/nemotron/tts |
+| 4 | Движки | `yumi/engines.py` | `status(settings)` без импорта GTK/venv; пути oww/vosk/whisper/nemotron/gigaam/tts |
 | 5 | Мост | `yumi/ui/bridge.py`, `yumi/ui/senses.py` | `voice_engines`, `voice_test_wake`, `voice_test`, `voice_listen(engine=)`, `wake_pause/resume` |
 | 6 | HTTP | `yumi/webpanel/server.py` | 3 новых роута, `engine` в `/api/voice/listen`, аудит вызовов |
 | 7 | Панель | `yumi/webui/static/js/pages/voice.js` | три карточки, статусы, кнопки проверки, ошибки в тостах |
@@ -198,7 +199,7 @@ done
 2. «Активация»: выбрать `openWakeWord`, нажать «Проверить имя», сказать
    «Юми». Ожидание: «услышала: Юми». Повторить с `vosk`.
 3. «Судья»: выбрать `whisper`, нажать «Проверить судью», сказать фразу.
-   Повторить с `nemotron` (если модель установлена).
+   Повторить с `nemotron` и `gigaam` (если модели установлены).
 4. «Голос»: выбрать русский голос и высоту, нажать «Послушать голос».
    Голос должен звучать без перезапуска Юми.
 5. GTK: «Настройки → Звук» показывает те же TTS-строки.
@@ -216,9 +217,10 @@ done
 - **Ручной `tts.json`.** Пользователь мог править файл вручную; при загрузке
   Юми значения из файла подтягиваются в настройки, чтобы не перезаписать их
   дефолтами.
-- **Nemotron отсутствует.** Выбор `nemotron` без модели не должен ломать
+- **Nemotron/GigaAM отсутствуют.** Выбор движка без модели не должен ломать
   судью: `stt_daemon.transcribe_said` уже откатывается на whisper/vosk. В
-  панели это показывается как «нет модели, будет запасное ухо».
+  панели это показывается как «нет модели, будет запасное ухо». GigaAM требует
+  `tools/gigaam_setup.sh` и русской речи.
 - **Смена голоса = перезапуск демона.** Не дёргать перезапуск на каждое
   сохранение настроек: `sync_profile` сравнивает профиль и перезапускает
   только при реальном изменении.

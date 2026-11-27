@@ -202,7 +202,7 @@ ctx.navigate(id)
 | GET | `/api/music` | текущий трек, громкость и `resumable` (есть что продолжить после «стоп») |
 | GET | `/api/music/search` | `?kind=&q=` |
 | POST | `/api/music/play`, `/api/music/control` | play/pause/next/stop/resume/volume |
-| GET | `/api/voice/engines` | наличие oww/vosk/whisper/nemotron/TTS, список голосов и моделей |
+| GET | `/api/voice/engines` | наличие oww/vosk/whisper/nemotron/gigaam/TTS, список голосов и моделей |
 | GET | `/api/voice/mics` | свежий список микрофонов звуковой системы (заодно обновляет меню ушек) |
 | GET | `/api/voice/state` | одно состояние микрофона: state/owner/generation/reason/wake_enabled/transitions |
 | POST | `/api/voice/pause`, `/api/voice/resume`, `/api/voice/release` | забрать микрофон у wake-цикла, вернуть его, полностью отпустить |
@@ -501,7 +501,7 @@ JSON, безопасную ссылку и чередование фактов �
 оболочку и текущую страницу, PATCH настроек, чат, память и выдача ссылки работают.
 
 Страница «Ушки и голос» получила три карточки выбора и живые проверки: активация
-(openWakeWord/vosk), судья фраз (whisper/nemotron) и голос Silero с прослушиванием.
+(openWakeWord/vosk), судья фраз (whisper/nemotron/gigaam) и голос Silero с прослушиванием.
 Подробности и оставшаяся живая приёмка — в `docs/handoff-voice-controls.md`.
 
 Добавлены страница «Факты», настройки `chatter_facts` / `chatter_facts_file` и

@@ -570,7 +570,7 @@ class Brain(Extras):
                 'voice_en_ru': [True, False],
                 'tts_ru_model': ['v5_6_ru', 'v4_ru'],
                 'tts_pitch': [1.0, 1.12, 1.25, 1.4],
-                'stt_engine': ['whisper', 'nemotron'],
+                'stt_engine': ['whisper', 'nemotron', 'gigaam'],
                 'stt_size': ['small', 'big'],
                 'stt_mic': [None] + [m['name'] for m in self.mics],
                 'stt_echo': [True, False],
@@ -1854,6 +1854,7 @@ class Brain(Extras):
         if ru:
             ear = 'точная' if s.get('stt_size') == 'big' else 'лёгкая'
             reader = ('немотрон 0.6b' if s.get('stt_engine') == 'nemotron'
+                      else 'GigaAM-v4 (русский)' if s.get('stt_engine') == 'gigaam'
                       else 'whisper ' + ear)
             wsize = 'точная' if s.get('wake_model_size') == 'big' else 'лёгкая'
             mic = ('микрофон ' + (s.get('stt_mic') or 'авто')) if s.get('stt_mic') else 'микрофон авто'
@@ -1867,7 +1868,9 @@ class Brain(Extras):
                     f'{mind}. Команды по переформулировкам '
                     f'{"понимаю" if intents else "выключены"}. {voice}.')
         ear = 'sharp' if s.get('stt_size') == 'big' else 'lite'
-        reader = ('nemotron 0.6b' if s.get('stt_engine') == 'nemotron' else 'whisper ' + ear)
+        reader = ('nemotron 0.6b' if s.get('stt_engine') == 'nemotron'
+                  else 'GigaAM-v4 (Russian)' if s.get('stt_engine') == 'gigaam'
+                  else 'whisper ' + ear)
         wsize = 'sharp' if s.get('wake_model_size') == 'big' else 'lite'
         mic = 'mic auto' if not s.get('stt_mic') else 'mic ' + (s.get('stt_mic') or '')
         wake = ('I listen for the name Yumi' if s.get('wake_ears', True) else 'I do not listen for my name')

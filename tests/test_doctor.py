@@ -26,7 +26,8 @@ saved = {
 try:
     engines.status = lambda s: {
         'activation': {'oww': {'available': True}, 'vosk': {'available': False}},
-        'judge': {'whisper': {'available': True}, 'nemotron': {'available': False}},
+        'judge': {'whisper': {'available': True}, 'nemotron': {'available': False},
+                  'gigaam': {'available': False}},
         'tts': {'available': True},
     }
     ears.mics = lambda: [{'name': 'plughw:1,0', 'label': 'Headset'}]

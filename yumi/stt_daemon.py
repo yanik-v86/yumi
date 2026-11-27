@@ -75,7 +75,9 @@ MODELS = {                              # lang: size: (zip on alphacephei.com, f
 }
 WHISPER_SIZE = {'small': 'small',       # faster-whisper's own names for the sizes
                 'big': 'large-v3'}
-VERSION = 31                            # bumped when the protocol changes: stale twins are restarted
+VERSION = 32                            # bumped when the protocol changes: stale twins are restarted
+                                        # (32: stt_engine may name gigaam, the exported GigaAM-v4
+                                        #     ONNX reader; whisper and vosk stay as the fallbacks)
                                         # (31: /wake and /listen may carry a speaker field; the
                                         #     local /speaker/* routes manage voice profiles)
                                         # (30: a medium-confidence OpenWakeWord name is confirmed by
@@ -1612,6 +1614,18 @@ def transcribe_nemo_model(rec, pcm, lang):
     return ' '.join(str(text).split())
 
 
+def transcribe_gigaam_model(model, pcm, lang):
+    """s16 mono RATE through the exported GigaAM-v4 RNN-T graph ('' for silence,
+    or for any language but Russian). The raw head speaks the commands' language:
+    lowercase, no punctuation; the e2e head is only a fallback when it is empty.
+    No beam, hotword or size dial applies to this graph."""
+    if lang and str(lang).split('-')[0].lower() != 'ru':
+        return ''
+    readings = model.transcribe_pcm(pcm)
+    text = str(readings.get('raw') or readings.get('e2e') or '')
+    return ' '.join(text.split())
+
+
 class Ears:
     """downloads the models one by one and answers one listen at a time"""
 
@@ -1621,6 +1635,7 @@ class Ears:
         self.nemo = None                # the streaming Nemotron ear, loaded on the first need
         self.nemo_beam = 0              # the beam this recognizer was built with; a changed
                                         # panel dial rebuilds it on the next phrase
+        self.giga = None                # the exported GigaAM-v4 ONNX ear, loaded once when chosen
         self.error = None
         self.busy = False
         self.abort = False
@@ -1714,6 +1729,27 @@ class Ears:
             log(f'nemotron: the 0.6b ear is ready (beam {beam})')
         return self.nemo
 
+    def gigaam(self):
+        """the exported GigaAM-v4 reader, or None: stt_engine may name it, and
+        tools/gigaam_setup.sh puts ~900 MB of ONNX graphs in $YUMI_STT_HOME.
+        Russian only, no torch in this venv; whisper keeps the fallback duty."""
+        try:
+            from yumi import gigaam_onnx
+        except ImportError:
+            return None
+        if not gigaam_onnx.available():
+            return None
+        with self.lock:
+            if self.giga is None:
+                try:
+                    self.giga = gigaam_onnx.load(threads=2)
+                    log('gigaam: the exported rnnt ear is ready')
+                except Exception as e:      # noqa: BLE001 - a failed ear is no tragedy
+                    log('gigaam will not load, whisper reads instead: ' + str(e)[-120:])
+                    self.giga = None
+                    return None
+        return self.giga
+
     def transcribe(self, pcm, lang, size='small', beam=5, hotwords=None):
         """bytes of s16 mono RATE through faster-whisper: the words it hears ('' for
         silence). vad_filter keeps the quiet out (whisper dreams on silence), and the
@@ -1751,9 +1787,9 @@ class Ears:
                   hotwords=None):
         """the phrase's bytes (s16 mono RATE) and who read them:
         (text, ear, variants). The ear the settings name reads first — Nemotron
-        0.6b when it is chosen, whisper otherwise. Whisper is the fallback, never
-        the worker: when Nemotron is silent, away or failed, whisper takes the
-        same tape. The small ear reads the tape anew only when both are silent.
+        0.6b or GigaAM-v4 when chosen, whisper otherwise. Whisper is the fallback,
+        never the worker: when that ear is silent, away or failed, whisper takes
+        the same tape. The small ear reads the tape anew only when both are silent.
         variants lists only engines that actually participated, in order."""
         text, ear = '', ''
         variants = []
@@ -1768,6 +1804,17 @@ class Ears:
                 except Exception as e:  # noqa: BLE001 - it is best effort
                     variants.append(('nemotron', ''))
                     log('nemotron failed, whisper answers instead: ' + str(e)[-120:])
+        elif engine == 'gigaam':
+            gmodel = self.gigaam()
+            if gmodel:                  # the exported reader; a failure falls through
+                try:
+                    gtext = transcribe_gigaam_model(gmodel, said, lang)
+                    variants.append(('gigaam', gtext))
+                    if gtext:
+                        text, ear = gtext, 'gigaam'
+                except Exception as e:  # noqa: BLE001 - it is best effort
+                    variants.append(('gigaam', ''))
+                    log('gigaam failed, whisper answers instead: ' + str(e)[-120:])
         else:                           # the whisper ear (the settings name it) reads
             try:
                 wtext = self.transcribe(said, lang, size, beam, hotwords)   # whisper reads
@@ -1779,7 +1826,7 @@ class Ears:
                 log('whisper failed, the small ear answers instead: ' + str(e)[-120:])
         if not text and engine != 'whisper':
             # whisper is the fallback: the same tape, a different reader — a name
-            # or a command Nemotron swallowed must not die on an empty reading
+            # or a command the chosen ear swallowed must not die on an empty reading
             try:
                 wtext = self.transcribe(said, lang, size, beam, hotwords)
                 variants.append(('whisper', wtext))
@@ -2919,6 +2966,7 @@ class Handler(BaseHTTPRequestHandler):
                                'recorder': recorder_cmd()[0],
                                'aec': bool(_echo['on']), 'tap': self.ears.tap.status(),
                                'mute': muted(), 'nemo': (NEMO_DIR / 'encoder.int8.onnx').exists(),
+                               'gigaam': (HOME / 'gigaam' / 'full' / 'rnnt_encoder.onnx').exists(),
                                'downloading': self.ears.dl})
         if u.path == '/tap':
             # the ears' diary: /tap?on=1&lang=ru&size=small&mic=... starts it, on=0 stops,

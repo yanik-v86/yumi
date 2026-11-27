@@ -203,11 +203,13 @@ export function render(view, ctx) {
     const seconds = el('input', { type: 'number', min: 2, max: 30, value: 8, style: { maxWidth: '80px' } });
     fill(judgeBox, CARD_KEYS.judge,
       say('2. Судья: кто читает фразу', '2. Judge: who reads the phrase'),
-      say('Nemotron 0.6b читает первым; whisper — фоллбэк, если модели нет или она молчит.',
-          'Nemotron 0.6b reads first; whisper is the fallback when the model is away or silent.'));
+      say('Выбранное ухо читает первым; whisper перечитывает ленту, если оно молчит или его нет.',
+          'The chosen ear reads first; whisper rereads the tape when it is silent or away.'));
     judgeBox.append(engineLine('Whisper', judge.whisper));
     judgeBox.append(engineLine('Nemotron 0.6b', judge.nemotron,
       judge.nemotron?.available ? '' : say('нет модели — whisper прочитает запасным', 'no model — whisper reads as the fallback')));
+    judgeBox.append(engineLine('GigaAM-v4 (RU)', judge.gigaam,
+      judge.gigaam?.available ? '' : say('нет ONNX — whisper прочитает запасным', 'no ONNX — whisper reads as the fallback')));
     judgeBox.append(testRow(
       say('Проверить судью', 'Test the judge'),
       async () => {
@@ -625,7 +627,8 @@ export function render(view, ctx) {
       typeof mic === 'string' ? mic : `${mic.name}:${mic.label || ''}`)).join('|'));
     const voice = status.runtime?.voice || {};
     parts.push(voice.activation?.oww?.available, voice.activation?.vosk?.available,
-      voice.judge?.nemotron?.available, voice.tts?.available);
+      voice.judge?.nemotron?.available, voice.judge?.gigaam?.available,
+      voice.tts?.available);
     const spk = status.runtime?.speaker || {};
     parts.push(JSON.stringify({
       enabled: spk.enabled, policy: spk.policy, last: spk.last_event,

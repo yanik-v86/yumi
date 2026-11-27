@@ -297,7 +297,8 @@ class Bridge:
 
     def voice_engines(self):
         return {'activation': {'oww': {'available': False}, 'vosk': {'available': True}},
-                'judge': {'whisper': {'available': True}, 'nemotron': {'available': False}},
+                'judge': {'whisper': {'available': True}, 'nemotron': {'available': False},
+                          'gigaam': {'available': False}},
                 'tts': {'available': False}}
 
     def voice_mics(self):
@@ -540,6 +541,8 @@ try:
     assert entries['wake_sensitivity']['type'] == 'select'
     assert entries['ui_lang']['type'] == 'select'
     assert entries['stt_echo']['type'] == 'switch'
+    assert entries['stt_engine']['choices'] == ['whisper', 'nemotron', 'gigaam']
+    assert entries['stt_engine']['hint']['ru'] and entries['stt_engine']['hint']['en']
     assert entries['stt_beam']['type'] == 'number'
     assert entries['stt_hotwords']['type'] == 'text'
     assert (entries['stt_beam']['min'], entries['stt_beam']['max'],
@@ -989,11 +992,15 @@ try:
     code, data, _ = call('POST', '/api/voice/listen',
                          {'seconds': 5, 'engine': 'nemotron'}, csrf=csrf)
     assert code == 200 and data['engine'] == 'nemotron'
+    code, data, _ = call('POST', '/api/voice/listen',
+                         {'seconds': 5, 'engine': 'gigaam'}, csrf=csrf)
+    assert code == 200 and data['engine'] == 'gigaam'
     code, data, _ = call('POST', '/api/voice/test',
                          {'text': 'Привет', 'lang': 'ru'}, csrf=csrf)
     assert code == 200 and data['lang'] == 'ru'
-    assert bridge.voice_calls[-3:] == [('wake', 5.0, 'vosk'), ('listen', 5.0, 'nemotron'),
-                                      ('tts', 'Привет', 'ru')], bridge.voice_calls
+    assert bridge.voice_calls[-4:] == [('wake', 5.0, 'vosk'), ('listen', 5.0, 'nemotron'),
+                                       ('listen', 5.0, 'gigaam'),
+                                       ('tts', 'Привет', 'ru')], bridge.voice_calls
     code, data, _ = call('GET', '/api/voice/mics')
     assert code == 200 and data['mics'] == [{'name': 'plughw:1,0', 'label': 'Headset'}], data
 

@@ -614,7 +614,26 @@ it reads the same tape a second time. It can go entirely:
 faster-whisper once the settings name the nemotron ear (vosk then stands alone if the ear ever
 fails). The wake-word judge uses it too.
 
-Both ears search with a width set by `stt_beam` (5 by default, **Settings → Her ears →
+A third reader is **GigaAM-v4** (RNN-T, 238M params), a Russian/English model that stays much
+steadier when music or noise covers the voice: in `tools/gigaam_bench.py` on synthetic noisy
+speech its WER was ~0.66 vs ~1.22 for whisper small and ~1.06 for vosk, at ~0.1–0.2 s rather
+than 4 s. It is exported to ONNX once, from a pinned revision (`9fe3ebf`), and Yumi's venv
+never sees torch:
+
+```sh
+./tools/gigaam_setup.sh    # onnxruntime + sentencepiece and ~0.9 GB in stt/gigaam/full
+```
+
+The script can also install everything from scratch: it creates a throwaway CPU-torch venv,
+downloads the model from Hugging Face and exports ONNX — see `docs/gigaam-setup.md`.
+`YUMI_GIGA_EXPORT_PY` points at a Python with torch/transformers (the Recog venv next to the
+project by default). Then `"stt_engine": "gigaam"` is available in **Settings → Her ears →
+Ear for phrases** as well. GigaAM reads Russian only; `stt_beam`, `stt_hotwords` and
+`stt_size` do not apply. If the export is missing or silent, whisper rereads the same tape,
+then vosk. To repeat the A/B on your own recordings, run
+`~/.local/share/yumi/stt/bin/python tools/gigaam_bench.py --data <dir with wav + manifest.tsv>`.
+
+Whisper and Nemotron search with a width set by `stt_beam` (5 by default, **Settings → Her ears →
 Reading width**): whisper's `beam_size` and Nemotron's `max_active_paths`. Greedy decoding is
 fast but may turn a rare word into «бапушки» instead of «Пушкин». Vosk's stop ear still reads
 every phrase, but **only for local commands** — music, notes, stop words and the acquaintance
@@ -642,9 +661,9 @@ a phrase short at a pause between words.
 
 The phrase after the name is read from the tape, not from Vosk's passing stream: how many
 seconds to take is `wake_read_s` (4 s by default, **Settings → Her ears → Phrase window after
-the name**). A command is short, so a longer window adds latency, not words. When neither
-Nemotron nor whisper read anything and the lite ear only caught the background, Yumi asks you
-to repeat instead of carrying out a random command.
+the name**). A command is short, so a longer window adds latency, not words. When the chosen
+ear (Nemotron, GigaAM or whisper) and its fallback read nothing and the lite ear only caught the
+background, Yumi asks you to repeat instead of carrying out a random command.
 
 The name «Yumi» is caught by the trained OpenWakeWord ear. A loud name (from
 `oww_confirm_below`, 0.8) wakes her at once; a quiet one (0.5–0.8) is first checked against
@@ -672,8 +691,8 @@ The browser panel's **Ears & voice** page puts the two choices beside each other
 them without leaving the browser: **1. Activation** picks the ear that hears «Yumi» —
 openWakeWord (the trained `yumi.onnx` model) or vosk — and **Test the name** holds the
 microphone for a few seconds and answers «heard / silence». **2. Judge** picks who reads the
-phrase after the name — Whisper or Nemotron — and **Test the judge** shows the text that
-engine actually read. A missing openWakeWord model or Nemotron model is shown as «missing»
+phrase after the name — Whisper, Nemotron or GigaAM-v4 — and **Test the judge** shows the text
+that engine actually read. A missing openWakeWord, Nemotron or GigaAM model is shown as «missing»
 with the reason, so a broken setup is not mistaken for a quiet microphone. The name-accuracy
 knobs sit beside them: the tape check for a quiet name, its line, the stretch length, the
 frames before the name is believed and the quiet after a rejected candidate.

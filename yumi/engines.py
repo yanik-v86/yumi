@@ -22,6 +22,8 @@ OWW_MODEL = Path(os.environ.get('YUMI_OWW_MODEL') or HOME / 'oww/models/yumi.onn
 TTS_PY = Path(os.environ.get('YUMI_TTS_PY') or HOME / 'tts/bin/python')
 NEMO_DIR = STT_HOME / ('sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11')
 NEMO_MODEL = NEMO_DIR / 'encoder.int8.onnx'
+GIGA_DIR = STT_HOME / 'gigaam' / 'full'
+GIGA_MODEL = GIGA_DIR / 'rnnt_encoder.onnx'
 TTS_CONF = Path(config.CONFIG_DIR) / 'tts.json'
 
 RU_SPEAKERS = ['kseniya', 'baya', 'xenia', 'aidar', 'eugene']
@@ -34,6 +36,13 @@ def _size(path):
         return path.stat().st_size
     except OSError:
         return 0
+
+
+def _giga_ready():
+    """all four export files are here: two ONNX graphs and two tokenizers"""
+    return (GIGA_MODEL.exists() and (GIGA_DIR / 'rnnt_advance.onnx').exists()
+            and any(GIGA_DIR.glob('*_e2e_tokenizer.model'))
+            and any(GIGA_DIR.glob('*_raw_tokenizer.model')))
 
 
 def tts_profile():
@@ -81,6 +90,11 @@ def status(settings):
                 'available': NEMO_MODEL.exists(),
                 'model': str(NEMO_MODEL),
                 'model_bytes': _size(NEMO_MODEL),
+            },
+            'gigaam': {
+                'available': _giga_ready(),
+                'model': str(GIGA_MODEL),
+                'model_bytes': sum(_size(p) for p in GIGA_DIR.glob('*.onnx')),
             },
         },
         'tts': {

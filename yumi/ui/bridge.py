@@ -508,11 +508,13 @@ class WebBridge:
         """one phrase through the chosen judge; the background wake loop is paused
         first, or the daemon would answer «busy» (one microphone, one ear)"""
         engine = str(engine or self.app.settings.get('stt_engine') or 'whisper')
-        if engine not in ('whisper', 'nemotron'):
+        if engine not in ('whisper', 'nemotron', 'gigaam'):
             raise ValueError(f'unknown judge: {engine}')
         info = engines.status(self.app.settings)
         if engine == 'nemotron' and not info['judge']['nemotron']['available']:
             raise ValueError('nemotron is not installed (tools/nemotron_setup.sh)')
+        if engine == 'gigaam' and not info['judge']['gigaam']['available']:
+            raise ValueError('gigaam is not installed (tools/gigaam_setup.sh)')
 
         def work():
             return ears.listen(lang=self.app.settings.get('speech_lang', 'en'),

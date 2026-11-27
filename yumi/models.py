@@ -33,6 +33,7 @@ def specs():
         'vosk_en_big': stt / 'vosk-model-en-us-0.22',
         'whisper': stt / 'whisper',
         'nemotron': Path(engines.NEMO_MODEL),
+        'gigaam': Path(engines.GIGA_DIR),
     }
 
 
