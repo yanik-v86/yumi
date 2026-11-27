@@ -40,6 +40,7 @@ import atexit
 import hashlib
 import json
 import os
+import queue
 import re
 import select
 import shutil
@@ -1213,21 +1214,26 @@ def speaker_voice(pcm, text='', join=False, wake=False, hints=()):
     field = _speaker_field(found['status'], found['id'], found['score'], True, ms)
 
     may_join = False
-    if wake and found['status'] == 'unknown':
+    if (wake or join) and found['status'] == 'unknown':
         # A near-miss is the same person saying a different phrase: 3D-Speaker
         # gives 0.35-0.95 for one voice depending on the words.  Add the reading
         # to the closest profile instead of creating a new «Голос 2» — a generic
         # label can never be spoken as a name, so the user would hear «мы ещё не
-        # знакомы» right after her own wake word.  Only a genuinely new voice
-        # (below SOFT_MATCH_SCORE) gets a fresh profile.
+        # знакомы» right after her own wake word.  A follow-up has no name in it,
+        # so it cannot join a profile, but it must still recognise the voice that
+        # opened the dialogue: otherwise the second phrase of a conversation is
+        # thrown away and she stops answering until her name is said again.
+        # Only a genuinely new voice (below SOFT_MATCH_SCORE) gets a fresh
+        # profile, and only on a wake or an addressed join.
         near_id, near_score = profiles.closest(vec)
         if near_id and near_score >= profiles.SOFT_MATCH_SCORE:
             pid = profiles.add_sample(near_id, vec)
             if pid:
                 field = _speaker_field('known', pid, near_score, True, ms)
-        else:
+        elif wake:
             may_join = True
-    elif join and found['status'] == 'unknown' and tune['join_policy'] != 'off':
+    if (join and found['status'] == 'unknown' and field['status'] != 'known'
+            and tune['join_policy'] != 'off'):
         may_join = route(text, hints) != 'ignore' and addressee(text) == 'yumi'
         if may_join and tune['join_policy'] == 'strict':
             fingerprint = hashlib.sha256(
@@ -1566,15 +1572,18 @@ def transcribe_model(model, pcm, lang, hotwords=None, beam=1):
     its answer is wanted fast, and a name is not a tangled phrase)"""
     import numpy as np
     audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-    try:
-        segments, _info = model.transcribe(
-            audio, language=lang or None, beam_size=beam, vad_filter=True,
-            condition_on_previous_text=False, hotwords=hotwords)
-    except TypeError:           # an older faster-whisper knows no hotwords
-        segments, _info = model.transcribe(
-            audio, language=lang or None, beam_size=beam, vad_filter=True,
-            condition_on_previous_text=False)
-    return ' '.join(s.text for s in segments).strip()
+    # the spare wake ear reads in its own thread; one model at a time, or its
+    # reading and the phrase's reading walk over each other
+    with _judge:
+        try:
+            segments, _info = model.transcribe(
+                audio, language=lang or None, beam_size=beam, vad_filter=True,
+                condition_on_previous_text=False, hotwords=hotwords)
+        except TypeError:       # an older faster-whisper knows no hotwords
+            segments, _info = model.transcribe(
+                audio, language=lang or None, beam_size=beam, vad_filter=True,
+                condition_on_previous_text=False)
+        return ' '.join(s.text for s in segments).strip()
 
 
 def transcribe_nemo_model(rec, pcm, lang):
@@ -1963,7 +1972,10 @@ class Ears:
                                        and name in ('pw-record', 'parecord')) else None
         sweep_proc = None
         sweep_ring = bytearray() if sweep_mic else None
-        sweep_last = 0.0
+        sweep_q = queue.Queue() if sweep_mic else None
+        sweep_stop = threading.Event()
+        sweep_thread = None
+        spare_model = None              # handed to the worker before the wake takes self.lock
 
         def judge_note(what):
             """one line into the wake's diary (judge.log): what the ear heard and why
@@ -2074,6 +2086,38 @@ class Ears:
             judge_note(f'QUICK {cmd} {text!r}')
             return {'woke': False, 'cmd': cmd, 'text': text}
 
+        def sweep_worker():
+            """the spare read lives in its own thread. The wake loop must
+            keep feeding Vosk: whisper can think for seconds, and a «стоп»
+            spoken in that pause would otherwise be lost before anyone
+            heard it. Only the last seconds of raw sound are snapshotted."""
+            while not sweep_stop.wait(WAKE_SWEEP_S):
+                if sweep_ring is None or sweep_q is None:
+                    return
+                try:
+                    tape = bytes(sweep_ring[-int(WAKE_SWEEP_TAPE * RATE * 2):])
+                    if len(tape) < RATE:    # a breath, not a name and a command
+                        continue
+                    # the model is already in hand: asking self.whisper() here
+                    # would wait for self.lock, which the wake itself holds
+                    text = transcribe_model(
+                        spare_model, tape, lang,
+                        hotwords_text(TUNE.get('stt_hotwords', '')), min(beam, 5))
+                except Exception as e:      # noqa: BLE001 - best effort ear
+                    log(f'spare wake ear failed: {e}'[-160:])
+                    continue
+                if not sweep_stop.is_set():
+                    sweep_q.put((text, 'whisper', [('whisper', text)]))
+
+        if sweep_mic:
+            # the spare thread cannot ask self.whisper() while this wake holds
+            # self.lock: take the model now and hand the object to the worker
+            try:
+                spare_model = self.whisper(lang, size)
+            except Exception as e:          # noqa: BLE001 - no model, no spare ear
+                log(f'spare wake ear model failed: {e}'[-160:])
+                sweep_mic, sweep_ring, sweep_q = None, None, None
+
         with self.lock:                     # one microphone at a time
             if self.busy:
                 return {'woke': False, 'text': None}
@@ -2094,7 +2138,7 @@ class Ears:
                     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 except OSError as e:
                     raise RuntimeError(f'the microphone would not start: {e}') from e
-                if sweep_mic:
+                if sweep_mic and spare_model is not None:
                     # a second reader on the plain source: PipeWire gives it to
                     # both at once, and the spare ear hears what rnnoise threw away
                     _, sweep_cmd = recorder_cmd(sweep_mic)
@@ -2104,9 +2148,16 @@ class Ears:
                                 sweep_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                             os.set_blocking(sweep_proc.stdout.fileno(), False)
                             judge_note(f'spare wake ear on {sweep_mic}')
+                            # its reading runs beside the loop: the stop ear must
+                            # keep getting sound while whisper thinks, or a shout
+                            # of «стоп» falls on deaf ears
+                            sweep_thread = threading.Thread(
+                                target=sweep_worker, name='yumi-spare-wake-ear',
+                                daemon=True)
+                            sweep_thread.start()
                         except OSError as e:
                             log(f'spare wake ear would not start: {e}'[-160:])
-                            sweep_mic, sweep_ring = None, None
+                            sweep_mic, sweep_ring, sweep_q = None, None, None
                 if oww_ear in ('auto', 'oww'):
                     ear_oww = oww_ear_start()
                     if oww_ear == 'oww' and ear_oww is None:
@@ -2278,28 +2329,25 @@ class Ears:
                     return True
 
                 def spare_ear(now):
-                    """the spare phrase ear: read a short slice of the raw mic
-                    while the trained ear is silent. A name at the head of what
-                    was read and a wish routed to her wake her at once (the
-                    phrase is already complete, so there is no tail to wait for)."""
-                    nonlocal sweep_last, woken, fallback_wake, wake_t, wake_score
+                    """collect what the spare ear read from the raw mic. A stop
+                    shout wins over everything, just as it does for Vosk — rnnoise
+                    may eat the name and Vosk the command, but the raw tape still
+                    holds «Юми, стоп». Otherwise a name at the head plus a wish
+                    meant for her wakes her at once (the phrase is already read)."""
+                    nonlocal woken, fallback_wake, wake_t, wake_score
                     nonlocal heard_after, utt
-                    if not sweep_ring or woken or muted() or self.abort:
-                        return None
-                    if now - sweep_last < WAKE_SWEEP_S:
-                        return None
-                    sweep_last = now
-                    tape = bytes(sweep_ring[-int(WAKE_SWEEP_TAPE * RATE * 2):])
-                    if len(tape) < RATE:        # a breath, not a name and a command
+                    if not sweep_q or muted() or self.abort:
                         return None
                     try:
-                        text, ear, variants = self.read_tape(
-                            tape, lang, size, engine, min(beam, 5),
-                            hotwords_text(TUNE.get('stt_hotwords', '')))
-                    except Exception as e:      # noqa: BLE001 - a spare ear must stay best effort
-                        log(f'spare wake ear failed: {e}'[-160:])
+                        text, ear, variants = sweep_q.get_nowait()
+                    except queue.Empty:
                         return None
                     if not text:
+                        return None
+                    if stop_shout(text, spellings):
+                        judge_note(f'STT sweep STOP ({text!r}) by={ear}')
+                        return stop_result(text, 'LISTENING' if woken else 'SLEEP')
+                    if woken:
                         return None
                     tail = stt_wake_tail(text, spellings, hints)
                     judge_note(f'STT sweep ({text!r}) tail={tail!r} by={ear}')
@@ -2636,6 +2684,7 @@ class Ears:
                             proc.stderr.close()
                         except OSError:
                             pass
+                sweep_stop.set()                # the spare ear's thread ends with the wake
                 if sweep_proc is not None:      # the spare reader dies with the wake
                     try:
                         sweep_proc.terminate()
@@ -2950,6 +2999,7 @@ class Handler(BaseHTTPRequestHandler):
                                      hints=hints, beam=beam)
             except Exception as e:          # noqa: BLE001 - any failure is reported over HTTP
                 self.ears.error = str(e)
+                log(f'wake failed: {e}'[-300:])   # and into the daemon's diary, not just HTTP
                 return self._json({'error': str(e)}, 500)
             answer = {'ok': True, 'woke': res['woke'], 'text': res.get('text'),
                       'alt': res.get('alt'),

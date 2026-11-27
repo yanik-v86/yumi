@@ -56,6 +56,13 @@ assert stt.stt_wake_tail('Короче, говорим про юми, она н�
 assert stt.stt_wake_tail('Юми, просто болтовня ни о чем', spellings) is None
 assert stt.stt_wake_tail('Музыка играет, юми не слышно', spellings) is None
 
+# ---- a stop shout read from the raw mic must stop her, not wake her ----
+for stop in ('Юми стоп', 'юми, стоп', 'Ёми стоп!', 'Юми остановись'):
+    assert stt.stop_shout(stop, spellings), stop
+# a lyric with «стоп» in it is not a shout: it needs the name at the head
+assert not stt.stop_shout('Блин, стоп!', spellings)
+assert not stt.stop_shout('Напишите, что вы хотите, стоп', spellings)
+
 # ---- the dial is visible in both the app and the browser panel ----
 assert config.DEFAULT_SETTINGS['wake_stt_sweep'] is True
 assert catalog.KEY_SECTION['wake_stt_sweep'] == 'ears'
@@ -70,5 +77,21 @@ assert 'spare_ear(' in wake_src
 assert 'stt_wake_tail(' in wake_src
 assert 'raw_source(' in wake_src
 assert 'reason=\'stt_sweep\'' in wake_src
+# the reading runs beside the loop: a synchronous read here starves Vosk and
+# the stop word is lost — that was the regression this test guards against
+worker = wake_src.split('def sweep_worker(', 1)[1].split(
+    'if sweep_mic:\n            # the spare thread', 1)[0]
+assert 'threading.Thread' in wake_src
+assert wake_src.index('def sweep_worker(') < wake_src.index('sweep_thread.start()'), \
+    'the worker must be defined before the thread starts'
+assert 'sweep_q.put(' in worker
+# the worker must not reach for self.whisper(): self.lock belongs to the wake
+assert 'self.whisper(lang' not in worker
+assert 'transcribe_model(' in worker
+assert wake_src.index('spare_model = self.whisper(') < wake_src.index('with self.lock:')
+spare = wake_src.split('def spare_ear(', 1)[1].split('while time.monotonic()', 1)[0]
+assert 'read_tape(' not in spare
+assert 'stop_shout(' in spare
+assert "stop_result(text, 'LISTENING' if woken else 'SLEEP')" in spare
 
 print('stt sweep: ok')

@@ -115,6 +115,35 @@ def test_wake_near_miss_joins_existing_profile(monkeypatch, tmp_path):
     assert s.profiles[0]['label'] == 'Николай'
 
 
+def test_followup_near_miss_stays_in_dialogue(monkeypatch, tmp_path):
+    """The second phrase of a dialogue has no name: a near-miss must still be
+    the same participant, not «speaker gate: not for me» and silence."""
+    from yumi import stt_daemon
+
+    monkeypatch.setenv('YUMI_SPEAKER_FILE', str(tmp_path / 'speakers.json'))
+    cfg = tmp_path / 'cfg' / 'yumi'
+    cfg.mkdir(parents=True)
+    (cfg / 'settings.json').write_text(json.dumps({
+        'speaker_verify': True, 'speaker_threshold': 0.65,
+        'speaker_min_ms': 1200, 'speaker_join_policy': 'strict'}))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'cfg'))
+
+    base = unit([1.0, 0.0, 0.0])
+    near = unit([0.6, 0.8, 0.0])       # cos = 0.60: below 0.65, above SOFT_MATCH
+    monkeypatch.setattr(speaker_sherpa, 'quality', lambda pcm, min_ms=1200: True)
+    monkeypatch.setattr(speaker_sherpa, 'embedding',
+                        lambda pcm, min_ms=1200: near)
+
+    pid = speaker.enroll(base, 'Николай', source='manual')
+    field = stt_daemon.speaker_voice(tone(2.0), 'расскажи мне анекдот', join=True)
+    assert field['status'] == 'known'
+    assert field['id'] == pid
+    assert field['joined_id'] is None  # he was already in the dialogue
+    assert field['score'] == pytest.approx(0.6, abs=0.01)
+    assert len(speaker.store().profiles) == 1
+    assert len(speaker.store().profiles[0]['embeddings']) == 2  # sample kept
+
+
 def test_wake_new_voice_still_gets_own_profile(monkeypatch, tmp_path):
     """Below SOFT_MATCH a genuinely different voice must not join the profile."""
     from yumi import stt_daemon

@@ -662,7 +662,9 @@ When the chosen microphone is a denoised one (`effect_output.rnnoise`), loud mus
 rnnoise swallow a quiet name: the trained ear and Vosk then hear lyrics instead of «Юми».
 A spare whisper ear therefore reads short slices of the raw microphone every few seconds
 while she waits; a name at the head of what it read plus a wish meant for her wakes her.
-Talk that only mentions her name deep inside a sentence stays a dream. The fallback is
+A «Юми, стоп» read from the raw mic stops her even when rnnoise and Vosk both missed it.
+Talk that only mentions her name deep inside a sentence stays a dream. The reading runs in
+its own thread, so the stop ear keeps getting sound while whisper thinks. The fallback is
 `wake_stt_sweep` in **Settings → Her ears** («Spare whisper ear for noisy rooms»); turn it
 off if you want to spend no extra CPU while she listens.
 
@@ -793,7 +795,9 @@ as before. The first wake-word records a voice automatically as «Voice 1» into
 voice, check it, rename/delete profiles in **Voice profiles**, and forget the
 participants of the current talk (the profiles stay).
 
-A known voice can keep talking without the name. If an unknown voice addresses her
+A known voice can keep talking without the name. A second phrase that scores just below
+the verify threshold is still matched to the closest profile — the same speaker saying
+different words no longer gets dropped by the gate. If an unknown voice addresses her
 during the follow-up window, Yumi enrols them and adds them to the talk; by default
 one addressed phrase is enough. **When a new voice joins** can require two addressed
 phrases in a row (`strict`) or disable auto-join (`off`). Conversation between

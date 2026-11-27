@@ -1656,7 +1656,11 @@ class Brain(Extras):
                 # phrase here; leaving it set parked the wake loop forever and
                 # Yumi stopped hearing her name until something else closed
                 # the dialogue (a hide, a stop, a settings change).
-                _mind_log('speaker gate: not for me')
+                _mind_log('speaker gate: not for me '
+                          f'(status={speaker.get("status")}, '
+                          f'id={speaker.get("id")}, score={speaker.get("score")}, '
+                          f'quality={speaker.get("quality")}, '
+                          f'in_dialogue={sorted(str(p) for p in self.conversation.participants)})')
                 route = self.conversation.last_route
                 self.conversation_close('speaker')
                 self.conversation.last_route = route   # the reason survives for the panel
