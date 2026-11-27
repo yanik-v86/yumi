@@ -192,6 +192,14 @@ h2.pagehead { font-size: 22px; letter-spacing: .1em; text-transform: uppercase; 
 .card h3 { margin-bottom: 6px; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
 .card p:last-child { margin-bottom: 0; }
 .card-hint { color: var(--muted); font-size: 11px; }
+/* provider cards: address/model go under the buttons, not above them */
+.provider-meta { margin-top: 12px; }
+.provider-meta p { margin-bottom: 4px; }
+.provider-form { display: flex; flex-direction: column; gap: 12px; }
+.provider-form .field-row > .field { flex: 1; min-width: 0; }
+.provider-check { min-height: 15px; margin: 0; }
+.provider-check.ok { color: var(--mint); }
+.provider-check.fail { color: var(--red); }
 .stat { padding: 14px 16px; min-height: 88px; }
 .stat .label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .13em; }
 .stat .value { font-size: 26px; line-height: 1.15; margin-top: 4px; font-weight: 700; }

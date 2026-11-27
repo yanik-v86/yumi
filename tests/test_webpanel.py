@@ -58,6 +58,7 @@ class Bridge:
         self.intents_log_clears = 0
         self.chat_models_reads = 0
         self.chat_models_refreshes = []
+        self.llm_checks = []
 
     def file_allowed(self, path):
         try:
@@ -178,6 +179,12 @@ class Bridge:
 
     def llm_provider_test(self, pid, timeout=4):
         return {'provider': pid, 'ok': True, 'models': ['one', 'two'], 'error': ''}
+
+    def llm_provider_check(self, record, key=None, timeout=4):
+        from yumi import llm
+        clean = llm.validate_record(record)
+        self.llm_checks.append((clean['id'], key))
+        return {'provider': clean['id'], 'ok': True, 'models': ['one', 'two'], 'error': ''}
 
     def llm_models_refresh(self, pid, timeout=4):
         return {'provider': pid, 'models': ['one', 'two'], 'error': ''}
@@ -890,6 +897,23 @@ try:
     assert code == 200, data
     new = [p for p in bridge.llm_providers()['providers'] if p['id'] == 'one'][0]
     assert 'topsecret' not in str(new)
+    # a form draft is checked before saving, without creating anything or leaking the key
+    draft_record = {'id': 'draft', 'name': 'Draft', 'kind': 'openai',
+                    'url': 'https://example.test/v1', 'default_model': 'x',
+                    'enabled': True, 'models': []}
+    code, data, _ = call('POST', '/api/llm/providers/check',
+                         {'record': draft_record, 'key': 'draftsecret'})
+    assert code == 403, 'a draft check without CSRF must fail'
+    code, data, _ = call('POST', '/api/llm/providers/check',
+                         {'record': draft_record, 'key': 'draftsecret'}, csrf=csrf)
+    assert code == 200 and data['models'] == ['one', 'two'], data
+    assert 'draftsecret' not in str(data)
+    assert bridge.llm_checks[-1] == ('draft', 'draftsecret')
+    assert 'draft' not in {p['id'] for p in bridge.llm_providers()['providers']}
+    assert all('draftsecret' not in str(item) for item in panel.audit_tail(20))
+    code, data, _ = call('POST', '/api/llm/providers/check',
+                         {'record': {**draft_record, 'id': 'BAD ID'}}, csrf=csrf)
+    assert code == 400, data
     code, data, _ = call('POST', '/api/llm/providers/one/test', {}, csrf=csrf)
     assert code == 200 and data['ok'] and 'topsecret' not in str(data), data
     code, data, _ = call('POST', '/api/llm/providers/one/models/refresh', {}, csrf=csrf)

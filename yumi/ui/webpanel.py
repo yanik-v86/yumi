@@ -516,6 +516,25 @@ class PanelMixin:
         """a detached copy for network calls that must not touch the GTK thread"""
         return copy.deepcopy(dict(self.settings))
 
+    def _web_llm_provider_draft(self, record, key=None):
+        """validate an unsaved form and prepare a detached copy for a network check.
+
+        Nothing is written here: the candidate record lives only in the copy and
+        a newly typed key is passed to the adapter for this one call.
+        """
+        record = record if isinstance(record, dict) else {}
+        records = llm.providers(self.settings)
+        pid = str(record.get('id') or '')
+        known = [r['id'] for r in records if r['id'] != pid]
+        clean = llm.validate_record(record, known)
+        snapshot = dict(self.settings)
+        snapshot['llm_providers'] = ([clean]
+                                     + [r for r in records if r['id'] != clean['id']])
+        secret = None
+        if key is not None and not webcatalog.is_masked(key) and str(key).strip():
+            secret = str(key).strip()
+        return snapshot, clean['id'], secret
+
     def _web_llm_snapshot(self):
         s = self.settings
         active = str(s.get('chat_provider') or '')

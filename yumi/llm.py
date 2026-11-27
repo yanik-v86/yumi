@@ -257,19 +257,24 @@ def _content(data, kind):
 
 
 # ---- public request API ----
-def models(settings, provider_id=None, timeout=4):
-    """{'provider', 'models', 'error'} — never raises, never leaks an endpoint"""
+def models(settings, provider_id=None, timeout=4, key=None):
+    """{'provider', 'models', 'error'} — never raises, never leaks an endpoint.
+
+    `key` is an explicit secret for an unsaved draft; ``None`` reads the private
+    key file.  It is used for this call only: never stored, logged or returned.
+    """
     pid = str(provider_id or (settings or {}).get('chat_provider') or 'local')
     out = {'provider': pid, 'models': [], 'error': ''}
     rec = get(settings, pid)
     if not rec:
         out['error'] = 'unknown provider'
         return out
-    if rec['kind'] == 'openai' and not llm_keys.get(pid):
+    secret = llm_keys.get(pid) if key is None else str(key)
+    if rec['kind'] == 'openai' and not secret:
         out['error'] = 'no api key'
         return out
     try:
-        data = _get_json(_endpoint(rec, 'models'), timeout, _headers(rec | {'key': llm_keys.get(pid)}))
+        data = _get_json(_endpoint(rec, 'models'), timeout, _headers(rec | {'key': secret}))
         if rec['kind'] == 'ollama':
             rows = data.get('models') if isinstance(data, dict) else None
             field = 'name'
@@ -290,9 +295,9 @@ def models(settings, provider_id=None, timeout=4):
     return out
 
 
-def test(settings, provider_id=None, timeout=4):
+def test(settings, provider_id=None, timeout=4, key=None):
     """a cheap reachability check: list models, no chat completion, no prompt"""
-    info = models(settings, provider_id, timeout)
+    info = models(settings, provider_id, timeout, key)
     return {'provider': info['provider'], 'ok': not bool(info['error']),
             'models': info['models'], 'error': info['error']}
 

@@ -140,6 +140,8 @@ export const api = {
   chatModelsRefresh: (provider) => api.post('/api/chat/models/refresh', { provider: provider || null }),
 
   llmProviders: () => api.get('/api/llm/providers'),
+  llmProviderCheck: (record, key) =>
+    api.post('/api/llm/providers/check', { record, key: key || null }),
   llmProviderSave: (record, key) => api.post('/api/llm/providers', { record, key: key || null }),
   llmProviderUpdate: (id, record, key) =>
     api.put(`/api/llm/providers/${encodeURIComponent(id)}`, { record, key: key || null }),

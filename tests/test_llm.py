@@ -122,6 +122,13 @@ assert llm.alive(SETTINGS, 'local') is True and llm.alive(SETTINGS, 'remote') is
 assert llm.models(SETTINGS, 'missing')['error'] == 'unknown provider'
 assert llm.models({'llm_providers': [good]}, 'my_provider')['error'] == 'no api key'
 assert llm_keys.set('my_provider', 'secret') is True
+# an explicit key checks an unsaved draft for this call only; nothing is stored
+draft = {'id': 'draft_provider', 'name': 'Draft', 'kind': 'openai', 'url': base,
+         'default_model': 'z-model', 'enabled': True}
+assert llm.models({'llm_providers': [draft]}, 'draft_provider')['error'] == 'no api key'
+assert llm.test({'llm_providers': [draft]}, 'draft_provider', key='secret')['models'] == ['z-model']
+assert ('/models', 'Bearer secret') in SEEN['get']
+assert llm_keys.get('draft_provider') == ''
 down = {'llm_providers': [{**good, 'url': 'http://127.0.0.1:1/v1'}], 'chat_provider': 'my_provider'}
 assert llm.models(down)['error'] == 'the provider did not answer'
 assert llm.test(down) == {'provider': 'my_provider', 'ok': False, 'models': [],

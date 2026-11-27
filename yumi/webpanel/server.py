@@ -411,6 +411,7 @@ def _make_handler(panel):
                 ('POST', '/api/chat/models/refresh'): self._chat_models_refresh,
                 ('GET', '/api/llm/providers'): self._llm_providers_get,
                 ('POST', '/api/llm/providers'): self._llm_providers_post,
+                ('POST', '/api/llm/providers/check'): self._llm_providers_check,
                 ('POST', '/api/chat/message/update'): self._chat_message_update,
                 ('POST', '/api/chat/message/remove'): self._chat_message_remove,
                 ('DELETE', '/api/chat/history'): self._chat_clear,
@@ -942,6 +943,13 @@ def _make_handler(panel):
             result = panel.bridge.llm_provider_save(record, key)
             panel.audit(self._ip(), 'llm-create', pid)
             panel.publish('llm', result)
+            return self._json(200, {'ok': True, **result})
+
+        def _llm_providers_check(self, _q):
+            record, key = self._llm_body()
+            result = panel.bridge.llm_provider_check(record, key)
+            # audit carries only the validated id, never the draft key
+            panel.audit(self._ip(), 'llm-check', str(result.get('provider') or ''))
             return self._json(200, {'ok': True, **result})
 
         def _llm_provider_put(self, pid):

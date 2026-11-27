@@ -215,6 +215,12 @@ class WebBridge:
         snapshot = dict(self._on(self.app._web_llm_settings))
         return llm.test(snapshot, pid, timeout)
 
+    def llm_provider_check(self, record, key=None, timeout=4):
+        """check the form draft before saving: nothing is written, no key returned"""
+        snapshot, pid, secret = self._on(
+            lambda: self.app._web_llm_provider_draft(record, key))
+        return llm.test(snapshot, pid, timeout, key=secret)
+
     def llm_models_refresh(self, pid, timeout=4):
         snapshot = dict(self._on(self.app._web_llm_settings))
         result = llm.models(snapshot, pid, timeout)

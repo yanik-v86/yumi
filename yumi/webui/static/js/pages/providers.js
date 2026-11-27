@@ -27,52 +27,107 @@ export function render(view, ctx) {
     }
     const url = el('input', { type: 'url', value: existing?.url || '', placeholder: 'http://127.0.0.1:11434' });
     const model = el('input', { type: 'text', value: existing?.default_model || '' });
-    const models = el('textarea', { rows: 3, value: (existing?.models || []).join('\n') });
+    const picker = el('select');
+    const models = el('textarea', { rows: 3, value: (existing?.models || []).join('\n'),
+      placeholder: L('Заполняется проверкой', 'Filled by the check') });
     const enabled = el('input', { type: 'checkbox', checked: existing ? existing.enabled !== false : true });
     const key = el('input', { type: 'password', value: '', autocomplete: 'off',
       placeholder: L('не менять', 'leave unchanged') });
-    return el('div', { class: 'provider-form' },
+    const status = el('div', { class: 'card-hint provider-check', text:
+      L('Проверьте провайдера, чтобы выбрать модель из его списка.',
+        'Check the provider to pick a model from its list.') });
+
+    function fillModels(names) {
+      const current = picker.value || model.value || existing?.default_model || '';
+      const values = [...new Set((names || []).filter(Boolean))];
+      picker.replaceChildren();
+      picker.append(el('option', { value: '', text: L('— выберите —', '— pick —') }));
+      for (const value of values) picker.append(el('option', { value, text: value }));
+      if (current && values.includes(current)) picker.value = current;
+      if (values.length) models.value = values.join('\n');
+    }
+    fillModels(existing?.models || []);
+    picker.addEventListener('change', () => {
+      if (picker.value) model.value = picker.value;
+    });
+
+    const node = el('div', { class: 'provider-form' },
       el('div', { class: 'field-row' },
         field(L('ID', 'ID'), id, L('Не меняется после создания', 'Fixed after creation')),
         field(L('Имя', 'Name'), name)),
       el('div', { class: 'field-row' },
         field(L('Тип', 'Kind'), kind),
         field(L('Адрес', 'Address'), url)),
-      field(L('Модель по умолчанию', 'Default model'), model),
-      field(L('Модели (по одной на строку)', 'Models (one per line)'), models),
+      status,
+      el('div', { class: 'field-row' },
+        field(L('Модель по умолчанию', 'Default model'), model),
+        field(L('Модели провайдера', 'Provider models'), picker,
+          L('После проверки выберите модель из списка', 'Pick a model after the check'))),
+      field(L('Список моделей (по одной на строку)', 'Model list (one per line)'), models),
       field(L('Включён', 'Enabled'), enabled),
       field(L('Ключ API', 'API key'), key,
         L('Пусто — оставить прежний. Ключ хранится отдельно и никогда не показывается.',
           'Empty keeps the old one. The key is stored separately and is never shown.')));
-  }
 
-  function readForm(formNode) {
-    const inputs = formNode.querySelectorAll('input, select, textarea');
-    const [id, name, kind, url, model, models, enabled, key] = inputs;
     return {
-      record: {
-        id: (id.value || '').trim().toLowerCase(),
-        name: (name.value || '').trim(),
-        kind: kind.value,
-        url: (url.value || '').trim().replace(/\/+$/, ''),
-        default_model: (model.value || '').trim(),
-        enabled: enabled.checked,
-        models: (models.value || '').split(/[\n,]+/).map((m) => m.trim()).filter(Boolean),
+      node,
+      status,
+      model,
+      fillModels,
+      read() {
+        return {
+          record: {
+            id: (id.value || '').trim().toLowerCase(),
+            name: (name.value || '').trim(),
+            kind: kind.value,
+            url: (url.value || '').trim().replace(/\/+$/, ''),
+            default_model: (model.value || '').trim(),
+            enabled: enabled.checked,
+            models: (models.value || '').split(/[\n,]+/).map((m) => m.trim()).filter(Boolean),
+          },
+          key: (key.value || '').trim(),
+        };
       },
-      key: (key.value || '').trim(),
     };
   }
 
+  async function checkDraft(draft) {
+    const { record, key } = draft.read();
+    const fail = (text) => {
+      draft.status.className = 'card-hint provider-check fail';
+      draft.status.textContent = text;
+    };
+    draft.status.className = 'card-hint provider-check';
+    draft.status.textContent = L('Проверяю…', 'Checking…');
+    try {
+      const result = await api.llmProviderCheck(record, key);
+      if (result?.error || result?.ok === false) {
+        fail(`${L('Недоступен', 'Unreachable')}: ${result?.error || L('нет ответа', 'no answer')}`);
+        return false;
+      }
+      const names = result?.models || [];
+      draft.fillModels(names);
+      if (!draft.model.value && names.length) draft.model.value = names[0];
+      draft.status.className = 'card-hint provider-check ok';
+      draft.status.textContent = L('Доступен. Выберите модель из списка.',
+        'Available. Pick a model from the list.');
+    } catch (err) {
+      fail(`${L('Недоступен', 'Unreachable')}: ${err.message || err}`);
+    }
+    return false;   // keep the modal open: the user still has to pick a model
+  }
+
   function openForm(existing) {
-    const body = form(existing);
+    const draft = form(existing);
     modal({
       title: existing ? L('Правка провайдера', 'Edit provider') : L('Новый провайдер', 'New provider'),
-      body,
+      body: draft.node,
       wide: true,
       actions: [
+        { label: L('Проверить', 'Check'), onClick: () => checkDraft(draft) },
         { label: L('Отмена', 'Cancel') },
         { label: L('Сохранить', 'Save'), kind: 'btn-primary', onClick: async () => {
-          const { record, key } = readForm(body);
+          const { record, key } = draft.read();
           try {
             if (existing) await api.llmProviderUpdate(existing.id, record, key);
             else await api.llmProviderSave(record, key);
@@ -144,10 +199,11 @@ export function render(view, ctx) {
     return el('section', { class: 'card' },
       el('div', { class: 'row between' },
         el('h3', { text: rec.name || rec.id }), badges),
-      el('p', { class: 'card-hint', text: `${rec.kind} · ${rec.url}` }),
-      rec.default_model ? el('p', { class: 'card-hint',
-        text: `${L('По умолчанию', 'Default')}: ${rec.default_model}` }) : null,
-      actions);
+      actions,
+      el('div', { class: 'provider-meta' },
+        el('p', { class: 'card-hint', text: `${rec.kind} · ${rec.url}` }),
+        rec.default_model ? el('p', { class: 'card-hint',
+          text: `${L('По умолчанию', 'Default')}: ${rec.default_model}` }) : null));
   }
 
   async function draw() {

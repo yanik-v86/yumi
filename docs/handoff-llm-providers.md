@@ -146,6 +146,7 @@ ask_stream(settings, messages, *, provider=None, model=None, timeout=90, **opts)
 | Метод | Роут | WebBridge |
 |---|---|---|
 | GET | `/api/llm/providers` | `llm_providers()` |
+| POST | `/api/llm/providers/check` | `llm_provider_check(record, key)` — проверка черновика формы, без записи |
 | POST | `/api/llm/providers` | `llm_provider_save(record, key)` |
 | PUT | `/api/llm/providers/<id>` | `llm_provider_save(record, key)` |
 | DELETE | `/api/llm/providers/<id>` | `llm_provider_delete(id)` |
@@ -202,10 +203,11 @@ ask_stream(settings, messages, *, provider=None, model=None, timeout=90, **opts)
 
 ### 5.1 Добавление и проверка провайдера из панели
 
-1. `pages/providers.js` → `api.llmProviderSave(record, key)` → `POST /api/llm/providers` (или `PUT` для правки).
-2. `server.py` → `WebBridge.llm_provider_save` → `App._web_*` в GTK-потоке: `llm.validate_record()`, `llm_keys.set_key()` (если key не пуст), сохранение настроек, публикация SSE `llm`.
-3. Кнопка «Проверить» → `POST /api/llm/providers/<id>/test` → `llm.test()` c таймаутом 4 c; это `GET /models` или `/api/tags`, **не** chat-completion и не выполнение промпта.
-4. Результат (количество моделей или общая ошибка) показывается в карточке; ключ в ответе не возвращается.
+1. В модалке `provider-form` кнопка «Проверить» → `api.llmProviderCheck(record, key)` → `POST /api/llm/providers/check`: `llm.validate_record()` и `llm.test()` на отсоединённой копии настроек, таймаут 4 c. Ответ даёт статус доступности и список моделей, откуда выбирается модель по умолчанию; настройки, приватный ключ и SSE не меняются, модалка остаётся открытой.
+2. `pages/providers.js` → `api.llmProviderSave(record, key)` → `POST /api/llm/providers` (или `PUT` для правки).
+3. `server.py` → `WebBridge.llm_provider_save` → `App._web_*` в GTK-потоке: `llm.validate_record()`, `llm_keys.set()` (если key не пуст), сохранение настроек, публикация SSE `llm`.
+4. Кнопка «Проверить» на карточке → `POST /api/llm/providers/<id>/test` → `llm.test()` c таймаутом 4 c; это `GET /models` или `/api/tags`, **не** chat-completion и не выполнение промпта.
+5. Результат (количество моделей или общая ошибка) показывается в карточке; ключ в ответе не возвращается.
 
 ### 5.2 Выбор провайдера (GTK и панель одинаково)
 
