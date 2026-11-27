@@ -553,19 +553,20 @@ decides whose speech counts as a voice. «Close» cuts a quiet voice from the ot
 of the room (a whisper by the screen is gone too), «Across the room» lets even a quiet
 one pass. The real range lives in the microphone itself: the input slider in the sound
 settings and the mic's directivity matter more than any gate. The answer model is picked
-in **Settings → Her mind → Answer model** (it cycles through the models of the selected
-provider), with the provider right above it in **Mind provider**. GTK only switches
-between records that already exist. The provider list, addresses and keys are edited in
+in **Settings → Her mind → Answer model**, right after **Mind provider** and before
+"Think before answering"; the dropdown lists only the models saved for the active
+provider. GTK only switches between records that already exist. The provider list,
+addresses and keys are edited in
 the web panel on the **Providers** page (`#/providers`): records with the `ollama` dialect
 (native `/api/tags` and `/api/chat`) and the `openai` dialect (`/models` and
 `/chat/completions` with an `Authorization` header) can be added without changing code.
 Keys live only in `~/.config/yumi/llm_keys.json` (mode `0600`), never in `settings.json`,
 API replies or logs. The embedding address is a separate `embed_url` setting and does not
 follow the chat provider. Selecting another provider resets the model to that record's
-`default_model` and refreshes the model list; old addresses and keys are moved over by a
-one-shot migration on the first start. In the web panel, **Settings → Her mind** shows
-those models as buttons under the field plus an «Update models» button; clicking a model
-saves it as the answer model. The panel never sends the key or address back. **Sassy 18+**
+`default_model`; old addresses and keys are moved over by a one-shot migration on the
+first start. The provider's model list is refreshed with "Update models" on the
+**Providers** page; in Settings you can only pick from that saved list, with no extra
+labels above the fields. The panel never sends the key or address back. **Sassy 18+**
 and the other mind parameters are edited in the panel too, under **Settings** (GTK keeps
 only the provider and model switches); it turns her into a foul-mouthed street-smart brat
 (off by default): she swears, roasts dumb questions and still helps with the real ones.

@@ -448,8 +448,8 @@ HINTS = {
             'ru': 'Работает, когда цвета от обоев выключены. 0…1 по кругу цветов.'},
     'scale': {'en': 'Whole interface pixels. A restart is needed for the window itself.',
               'ru': 'Целые пиксели интерфейса. Для самого окна нужен перезапуск.'},
-    'chat_model': {'en': 'The models offered by the current provider are fetched when you change it; use Update models to ask again.',
-                   'ru': 'Модели текущего провайдера подтягиваются при его смене; кнопка «Обновить модели» запрашивает их заново.'},
+    'chat_model': {'en': 'Pick one of the models saved for the active provider on the Providers page; refresh its list there.',
+                   'ru': 'Выберите одну из моделей активного провайдера, указанных на странице «Провайдеры»; список обновляется там же.'},
     'sassy': {'en': 'A bratty, swearing 18+ mood. Off by default; leaving it wipes its diary lines.',
               'ru': 'Дерзкая, матерящаяся натура 18+. По умолчанию выкл; при выключении её строки стираются.'},
     'prompt_system_ru': {'en': 'Who she is in Russian. Placeholders: {mood}, {manner}. Empty = built-in default.',
@@ -631,6 +631,8 @@ def _entry(key, default, settings=None):
         choices = _outfit_choices()
     elif key == 'chat_provider':
         choices = _provider_choices(settings)
+    elif key == 'chat_model':
+        choices = llm.model_choices(settings)
     elif key in CHOICES:
         choices = list(CHOICES[key])
     elif key == 'stt_mic':

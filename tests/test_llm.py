@@ -111,6 +111,16 @@ except ValueError:
 assert [r['id'] for r in llm.normalize_list([good, good, {'id': 'BAD!'}])] == ['my_provider']
 assert llm.providers(SETTINGS) == SETTINGS['llm_providers']
 
+# ---- the pickable models are the ones saved in the provider record ----
+record = {'id': 'mine', 'name': 'Mine', 'kind': 'ollama', 'url': base,
+          'default_model': 'primary', 'enabled': True, 'models': ['z-model']}
+assert llm.model_choices({'chat_provider': 'mine', 'chat_model': 'stale',
+                          'llm_providers': [record]}) == ['z-model', 'primary']
+assert llm.model_choices({'chat_provider': 'mine', 'llm_providers': [
+    {**record, 'models': []}], 'chat_model': 'only-known'}) == ['primary']
+assert llm.model_choices({'chat_provider': 'mine', 'llm_providers': [
+    {**record, 'models': [], 'default_model': ''}], 'chat_model': 'only-known'}) == ['only-known']
+
 # ---- listing models through both dialects ----
 info = llm.models(SETTINGS, 'local')
 assert info == {'provider': 'local', 'models': ['m1', 'm2'], 'error': ''}, info

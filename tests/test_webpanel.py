@@ -593,6 +593,14 @@ try:
     dynamic_entries = {entry['key']: entry for entry in dynamic['settings']}
     assert dynamic_entries['chat_provider']['choices'] == ['local', 'cloud']
     assert dynamic_entries['chat_provider']['choice_labels']['cloud'] == 'Cloud model'
+    # the answer model offers only what the active provider has in the registry
+    model_settings = {'chat_provider': 'cloud', 'chat_model': 'stale', 'llm_providers': [
+        {'id': 'cloud', 'name': 'Cloud model', 'kind': 'openai',
+         'url': 'https://example.test/v1', 'default_model': 'one',
+         'enabled': True, 'models': ['one', 'two']}]}
+    model_entries = {e['key']: e for e in catalog.schema(model_settings)['settings']}
+    assert model_entries['chat_model']['type'] == 'select'
+    assert model_entries['chat_model']['choices'] == ['one', 'two']
     assert catalog.coerce('llm_providers', [
         {'id': 'other', 'name': 'Other', 'kind': 'ollama', 'url': 'http://127.0.0.1:1',
          'default_model': 'm', 'enabled': True, 'models': []},

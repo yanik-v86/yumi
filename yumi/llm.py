@@ -127,6 +127,26 @@ def select(settings, provider_id):
     return dict(rec)
 
 
+def model_choices(settings, provider_id=None):
+    """models a user may pick from: the active provider's saved list + its default.
+
+    The registry on the Providers page is the source of truth.  A silent provider
+    with no saved list falls back to the model already in use, so the setting
+    never becomes an empty dropdown.
+    """
+    pid = str(provider_id or (settings or {}).get('chat_provider') or 'local')
+    rec = get(settings, pid) or {}
+    names = [str(n).strip() for n in (rec.get('models') or []) if str(n).strip()]
+    default = str(rec.get('default_model') or '').strip()
+    if default and default not in names:
+        names.append(default)
+    if not names:
+        current = str((settings or {}).get('chat_model') or '').strip()
+        if current:
+            names.append(current)
+    return list(dict.fromkeys(names))
+
+
 def resolve(settings, provider_id=None):
     """what a request needs: url, key, kind, model and the record's default"""
     pid = str(provider_id or (settings or {}).get('chat_provider') or 'local')

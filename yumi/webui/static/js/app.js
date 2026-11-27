@@ -163,9 +163,17 @@ function syncMicChoices(mics, current) {
   if (current) entry.choice_labels[String(current)] = entry.choice_labels[String(current)] || current;
 }
 
-// The answer model is a plain text field until the provider reports its models;
-// then it becomes a select. Keep the pristine entry so a failed refresh restores it.
-function syncChatModelChoices(models, current) {
+// The answer model is a select of the models saved for the active provider on
+// the Providers page — the same registry snapshot GTK reads.  A live-fetched
+// list may be newer, but it must not offer models the user never configured.
+function registeredModels() {
+  const rows = state.status?.runtime?.llm?.providers || [];
+  const rec = rows.find((p) => p.active)
+    || rows.find((p) => p.id === state.status?.settings?.chat_provider);
+  return [...new Set((rec?.models || []).filter(Boolean).map(String))];
+}
+
+function syncChatModelChoices() {
   const entry = (state.schema?.settings || []).find((e) => e.key === 'chat_model');
   if (!entry) return;
   if (!state.chatModelSchema) {
@@ -173,8 +181,7 @@ function syncChatModelChoices(models, current) {
       type: entry.type, choices: entry.choices, choice_labels: entry.choice_labels,
     };
   }
-  const names = [...new Set((Array.isArray(models) ? models : []).filter(Boolean).map(String))];
-  if (current && !names.includes(String(current))) names.unshift(String(current));
+  const names = registeredModels();
   if (!names.length) {
     Object.assign(entry, state.chatModelSchema);
     return;
@@ -184,13 +191,13 @@ function syncChatModelChoices(models, current) {
   entry.choice_labels = Object.fromEntries(names.map((name) => [name, name]));
 }
 
-function setChatModelsInfo(info, current) {
+function setChatModelsInfo(info) {
   state.chatModels = {
     provider: String(info?.provider || ''),
     models: Array.isArray(info?.models) ? info.models.filter(Boolean).map(String) : [],
     error: String(info?.error || ''),
   };
-  syncChatModelChoices(state.chatModels.models, current ?? state.status?.settings?.chat_model);
+  syncChatModelChoices();
   notifyStatus();
   return state.chatModels;
 }
@@ -252,7 +259,7 @@ function setStatus(next, { light = false } = {}) {
       error: String(mind.error || ''),
     };
   }
-  syncChatModelChoices(state.chatModels.models, state.status.settings?.chat_model);
+  syncChatModelChoices();
   applyLanguage(state.status.settings?.ui_lang);
   const tm = state.status.runtime?.timer;
   if (tm) {

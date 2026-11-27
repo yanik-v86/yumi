@@ -582,7 +582,8 @@ class Brain(Extras):
                 'chat_provider': ([r['id'] for r in llm.providers(self.settings)
                                    if r['enabled'] or r['id'] == self.settings.get('chat_provider')]
                                   or [self.settings.get('chat_provider') or 'local']),
-                'chat_model': self.chat_models or [self.settings.get('chat_model')],
+                'chat_model': (llm.model_choices(self.settings)
+                               or [self.settings.get('chat_model') or llm.LOCAL_MODEL]),
                 'chat_history_n': [2, 4, 6, 10, 16, 24],
                 'conversation_timeout_s': [5, 8, 10, 15, 20],
                 'conversation_gap_reset_min': [5, 15, 30, 60],

@@ -562,6 +562,10 @@ class PanelMixin:
         else:
             records.append(clean)
         self.settings['llm_providers'] = records
+        if clean['id'] == str(self.settings.get('chat_provider') or ''):
+            allowed = clean['models'] or ([clean['default_model']] if clean['default_model'] else [])
+            if allowed and str(self.settings.get('chat_model') or '') not in allowed:
+                self.settings['chat_model'] = clean['default_model'] or allowed[0]
         if key is not None and not webcatalog.is_masked(key) and str(key).strip():
             if not llm_keys.set(pid, str(key).strip()):
                 raise RuntimeError('could not save the key')
@@ -604,6 +608,14 @@ class PanelMixin:
 
     def _web_apply_settings(self, patch):
         old = {k: self.settings.get(k) for k in patch}
+        if 'chat_provider' in patch and 'chat_model' not in patch:
+            # the same rule as GTK and the Providers page: a new provider starts
+            # from its default model, never from a name it does not offer
+            try:
+                rec = llm.select(self.settings, patch['chat_provider'])
+                patch = {**patch, 'chat_model': rec['default_model']}
+            except ValueError:
+                pass
         self.settings.update(patch)
         self.settings.save()
         b = self.brain
