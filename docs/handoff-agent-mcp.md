@@ -4,6 +4,7 @@
 Дата: 2026-11-22.  
 Аудитория: агенты, которые будут реализовывать фичу, и ревьюер.  
 Список задач: `docs/tasks-agent-mcp.md`.  
+Переопределение: `docs/handoff-llm-providers.md` — общий реестр провайдеров (`yumi/llm.py`); раздел 3.1 ниже и реестр в T-01/T-03 считать заменёнными им.  
 Обязательно к прочтению: `AGENTS.md`, `docs/handoff-web-panel.md`, `docs/handoff-user-intents.md`, `docs/handoff-speaker-dialogue.md`.
 
 ## 1. Что нужно сделать
