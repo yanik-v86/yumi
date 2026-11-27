@@ -138,6 +138,17 @@ export const api = {
   chatHistory: () => api.get('/api/chat/history'),
   chatModels: () => api.get('/api/chat/models'),
   chatModelsRefresh: (provider) => api.post('/api/chat/models/refresh', { provider: provider || null }),
+
+  llmProviders: () => api.get('/api/llm/providers'),
+  llmProviderSave: (record, key) => api.post('/api/llm/providers', { record, key: key || null }),
+  llmProviderUpdate: (id, record, key) =>
+    api.put(`/api/llm/providers/${encodeURIComponent(id)}`, { record, key: key || null }),
+  llmProviderDelete: (id) => api.del(`/api/llm/providers/${encodeURIComponent(id)}`),
+  llmProviderSelect: (id) => api.post(`/api/llm/providers/${encodeURIComponent(id)}/select`),
+  llmProviderTest: (id) => api.post(`/api/llm/providers/${encodeURIComponent(id)}/test`),
+  llmProviderRefresh: (id) =>
+    api.post(`/api/llm/providers/${encodeURIComponent(id)}/models/refresh`),
+
   chatOps: (since = 0) => api.get(`/api/chat/ops?since=${Number(since) || 0}`),
   chatClear: () => api.del('/api/chat/history'),
   chatUpdate: (id, text) => api.post('/api/chat/message/update', { id, text }),
@@ -196,7 +207,7 @@ export const api = {
   },
 };
 
-export const EVENTS = ['hello', 'status', 'bubble', 'settings', 'files', 'jobs', 'actions', 'chat', 'chat_models', 'notes', 'server', 'doctor', 'intents_log'];
+export const EVENTS = ['hello', 'status', 'bubble', 'settings', 'files', 'jobs', 'actions', 'chat', 'chat_models', 'llm', 'notes', 'server', 'doctor', 'intents_log'];
 
 export function connectEvents(onEvent, onState) {
   let source = null;

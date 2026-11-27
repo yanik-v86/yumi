@@ -21,7 +21,7 @@ import time
 import urllib.request
 import zlib
 
-from .chat import DEFAULT_URL
+from .llm import DEFAULT_EMBED_URL
 from .config import STATE_DIR
 from .memory import (EMB_RETRY, EMB_TIMEOUT, FALLBACK_DIM, MODEL_BASE,
                      STOPWORDS, _cos, _norm, _pack, _prefix, _stem, _tokens,
@@ -247,12 +247,12 @@ class Notes:
 
     # ---------------------------------------------------------------- the vectors
     def _embed(self, text, settings, kind='passage'):
-        """(vector, dim, kind) of a note: Ollama's embeddings when they answer,
+        """(vector, dim, kind) of a note: server embeddings when they answer,
         the hashed bag-of-words otherwise (and for a while after any failure)"""
         if time.time() >= self._fail_until:
             model = str(settings.get('embed_model') or 'nomic-embed-text')
             try:
-                url = str(settings.get('ollama_url') or DEFAULT_URL).rstrip('/') \
+                url = str(settings.get('embed_url') or DEFAULT_EMBED_URL).rstrip('/') \
                       + '/api/embeddings'
                 body = {'model': model,
                         'prompt': _prefix(model, kind) + str(text)[:800]}

@@ -26,9 +26,8 @@ def make_brain(monkeypatch, tmp_path, settings=None):
         'music_skill': False, 'notes_voice': False, 'nlu': False,
         'chat_history_n': 10, 'conversation_history_n': 20,
         'conversation_gap_reset_min': 15, 'chat_memory': False,
-        'chat_provider': 'ollama', 'chat_model': 'test', 'chat_stream': False,
-        'chat_think': False, 'chat_provider_url': '', 'ollama_url': '',
-        'polza_url': '', 'polza_api_key': '', 'voice_vol': 0,
+        'chat_provider': 'local', 'chat_model': 'test', 'chat_stream': False,
+        'chat_think': False, 'embed_url': '', 'voice_vol': 0,
     }
     if settings:
         br.settings.update(settings)
@@ -38,6 +37,9 @@ def make_brain(monkeypatch, tmp_path, settings=None):
     br.say = lambda *a, **kw: True       # a phrase event needs a real Brain's state
     br._pending_speaker = None
     br.custom = []
+    br.user_intents_path = str(tmp_path / 'user-intents')  # never read the real rules here
+    br.user_intents_data = {'intents': []}
+    br.user_intents_mtime = 0.0
     br.requests = []
     br.chat_history = []
     br.now = 1.0

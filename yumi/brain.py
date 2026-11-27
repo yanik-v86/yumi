@@ -23,6 +23,7 @@ from . import entities
 from . import nlu
 from . import notes
 from . import intent_log
+from . import llm
 from . import user_intents
 from . import permission as permissions
 from .config import RING_SLOTS, UI, tr
@@ -287,7 +288,7 @@ class Brain(Extras):
         self._speaker_current = None    # the last voice's public card, for the panel
         self._speaker_last_event = ''   # 'joined' / 'recognized' / 'ignored'
         self.listening = False          # the mic button was pressed: she is waiting for a phrase
-        self.thinking = False           # the question is away at Ollama
+        self.thinking = False           # the question is away at the mind provider
         self.chat_streaming = False     # the mind is answering in a stream right now
         self.note_pending = False       # she asked «what should I write down?»: the next phrase is a note
         self.pending_permission = None  # a command with requires_confirmation waits for an answer
@@ -296,7 +297,7 @@ class Brain(Extras):
         self.last_confidence = 0.0      # and how sure the match was
         self.last_user_intent_run_id = ''  # the last own-intent run, for the panel journal
         self.chat_models = []           # models the current mind provider offers
-        self.chat_models_provider = ''  # which provider answered last ('ollama' / 'polza.ai')
+        self.chat_models_provider = ''  # id of the provider that answered last
         self.chat_models_error = ''     # why the list is empty, for the panel
         self.mics = []                  # microphones her ears can hear, for the settings row
         self.radial = False             # the ring of round buttons around her
@@ -578,7 +579,9 @@ class Brain(Extras):
                 'wake_model_size': ['small', 'big'],
                 'wake_ear': ['auto', 'oww', 'vosk'],
                 'wake_judge_log': [True, False],
-                'chat_provider': ['ollama', 'polza.ai'],
+                'chat_provider': ([r['id'] for r in llm.providers(self.settings)
+                                   if r['enabled'] or r['id'] == self.settings.get('chat_provider')]
+                                  or [self.settings.get('chat_provider') or 'local']),
                 'chat_model': self.chat_models or [self.settings.get('chat_model')],
                 'chat_history_n': [2, 4, 6, 10, 16, 24],
                 'conversation_timeout_s': [5, 8, 10, 15, 20],
@@ -652,7 +655,8 @@ class Brain(Extras):
             name = str(val or '').split('/')[-1].split(':')[0]   # the short, human part
             return name or t('n_a')
         if arg == 'chat_provider':
-            return 'Ollama' if str(val) == 'ollama' else 'Polza.ai'
+            rec = llm.get(self.settings, val) or {}
+            return str(rec.get('name') or val or t('n_a'))
         return str(val)
 
     def toggle_pin(self):
@@ -1068,23 +1072,14 @@ class Brain(Extras):
             rows = [('set', 'ui_lang', t('ui_lang')), ('set', 'speech_lang', t('speech_lang')),
                     ('menu', 'settings', t('back'))]
         elif kind == 'set_chat':
+            # GTK only switches the provider and the model of an existing record;
+            # creating and editing providers lives in the web panel
             if not self.chat_models and 'chat_model' not in self.unavailable:
                 self.requests.append(('chat_models',))
-            rows = [('set', 'chat_provider', t('chat_provider')), ('set', 'chat_model', t('chat_model')),
-                    ('set', 'sassy', t('sassy')),
-                    ('set', 'chat_think', t('chat_think')), ('set', 'chat_stream', t('chat_stream')),
-                    ('set', 'chat_history_n', t('chat_history_n')),
-                    ('set', 'chat_memory', t('chat_memory')),
-                    ('set', 'conversation_mode', t('conversation_mode')),
-                    ('set', 'conversation_timeout_s', t('conversation_timeout_s')),
-                    ('set', 'conversation_gap_reset_min', t('conversation_gap_reset_min')),
-                    ('set', 'conversation_history_n', t('conversation_history_n')),
-                    ('set', 'nlu', t('nlu')),
-                    ('set', 'intents', t('intents')),
-                    ('set', 'intents_log_level', t('intents_log_level'))]
-            if self.chat_models:        # the list may have grown stale: a way to look again
-                rows.append(('chat_refresh', None, t('chat_refresh')))
-            rows.append(('menu', 'settings', t('back')))
+            rows = [('set', 'chat_provider', t('chat_provider')),
+                    ('set', 'chat_model', t('chat_model')),
+                    ('hint', None, t('providers_hint')),
+                    ('menu', 'settings', t('back'))]
         elif kind == 'set_web':
             # the repository URL and signing keys are long text: they are edited on the
             # browser panel's «my phrases» page, which the shortcut below opens
@@ -1281,6 +1276,10 @@ class Brain(Extras):
             if arg.startswith('tts_') and (s.get('voice_kind') or 'blips') == 'tts':
                 self.say_sample()
             if arg == 'chat_provider':
+                try:
+                    llm.select(self.settings, s[arg])   # same selection as the panel
+                except ValueError:
+                    pass
                 self.chat_models = []       # refetch for the new provider
                 self.requests.append(('chat_models',))
             self.open_menu(self.menu['kind'] if self.menu else 'settings', data)
@@ -1295,8 +1294,6 @@ class Brain(Extras):
             self.open_menu('set_sound', data)
         elif action == 'sound_test':
             self.requests.append(('sound', 'timer'))
-        elif action == 'chat_refresh':
-            self.requests.append(('chat_models',))
         elif action == 'web_open':
             self.menu = None
             self.requests.append(('web_open',))
@@ -1489,7 +1486,8 @@ class Brain(Extras):
 
         Stop words are handled before this; a disabled feature or an old daemon
         with no speaker field takes the old path.  Only a known voice already in
-        the window or an addressed newcomer with a fresh profile gets through.
+        the window or an addressed newcomer with a fresh profile gets through —
+        even a wake word does not open the window to a voice outside it.
         ``raw`` keeps the case and commas that ``drop_name()`` normalises away:
         «Борис, где ключи?» is an address to a person, not a question for her.
         """
@@ -1505,28 +1503,20 @@ class Brain(Extras):
         pid = spk.get('joined_id') or spk.get('id')
         self._speaker_current = (self._speaker_card(pid, spk.get('status', 'unknown'),
                                                     spk.get('score')) if pid else None)
-        if who == 'other':
+        if who == 'other' or route == 'ignore':
             self._speaker_last_event = 'ignored'
             return 'ignore'
-        if wake or who == 'yumi':
-            if spk.get('status') == 'known' and str(spk.get('id')) in conv.participants:
-                conv.participant_seen(str(spk.get('id')))
-                self._speaker_last_event = 'recognized'
-            else:
-                self._speaker_last_event = 'addressed'
-            return 'pass'
-        if route == 'ignore':
-            self._speaker_last_event = 'ignored'
-            return 'ignore'
-        if spk.get('status') == 'known' and str(spk.get('id')) in conv.participants:
+        status = spk.get('status')
+        if status == 'known' and str(spk.get('id')) in conv.participants:
             conv.participant_seen(str(spk.get('id')))
             self._speaker_last_event = 'recognized'
             return 'pass'
         policy = self.settings.get('speaker_join_policy', 'addressed')
-        if (spk.get('status') == 'unknown' and join and spk.get('quality')
+        if (status == 'unknown' and join and spk.get('quality')
                 and spk.get('joined_id') and policy != 'off'):
             self._speaker_last_event = 'joined'
             return 'join'
+        # an outsider cannot keep an open dialogue alive, wake word or no wake word
         self._speaker_last_event = 'ignored'
         return 'ignore'
 
@@ -1666,7 +1656,9 @@ class Brain(Extras):
                 # Yumi stopped hearing her name until something else closed
                 # the dialogue (a hide, a stop, a settings change).
                 _mind_log('speaker gate: not for me')
+                route = self.conversation.last_route
                 self.conversation_close('speaker')
+                self.conversation.last_route = route   # the reason survives for the panel
                 return
             if verdict == 'join' and speaker.get('joined_id'):
                 if self.conversation.add_participant(str(speaker['joined_id'])):
@@ -1827,7 +1819,7 @@ class Brain(Extras):
         del self.chat_history[:-limit]  # the recent turn goes along; in an active
                                         # dialogue the window is a little wider
         # The mind gets a signed line, the panel and the diary keep the plain
-        # words: an extra JSON key in an Ollama message is not portable.
+        # words: an extra JSON key in a provider message is not portable.
         history = []
         for item in self.chat_history:
             msg = {'role': item['role'], 'content': item.get('content', '')}
@@ -1850,8 +1842,9 @@ class Brain(Extras):
         not menu words (a «45 МБ» label reads badly, so sizes live in words here)"""
         s = self.settings
         ru = str(lang) == 'ru'
-        model = str(s.get('chat_model') or (chat.POLZA_MODEL if s.get('chat_provider') == 'polza.ai'
-                                            else chat.DEFAULT_MODEL))
+        provider = llm.get(s, s.get('chat_provider')) or {}
+        who = str(provider.get('name') or s.get('chat_provider') or llm.DEFAULT_PROVIDERS[0]['name'])
+        model = str(s.get('chat_model') or provider.get('default_model') or llm.LOCAL_MODEL)
         intents = s.get('intents', True) and s.get('nlu', True)
         if ru:
             ear = 'точная' if s.get('stt_size') == 'big' else 'лёгкая'
@@ -1862,8 +1855,7 @@ class Brain(Extras):
             wake = ('Имя «Юми» слушаю' if s.get('wake_ears', True) else 'имя «Юми» не слушаю')
             judge = ('пробуждения перепроверяю whisper-ом, модель ' + wsize
                      if s.get('wake_confirm', True) else 'пробуждения не перепроверяю')
-            mind = ('мозги: полза-точка-ай, модель ' + model if s.get('chat_provider') == 'polza.ai'
-                    else 'мозги: локальный оллама, модель ' + model)
+            mind = 'мозги: ' + who + ', модель ' + model
             voice = 'говорю своим голосом' if s.get('voice_kind') != 'blips' else 'говорю звуками'
             return (f'Мои ушки: {reader} читает фразы, vosk {wsize} слушает имя, '
                     f'{mic}. {wake}, {judge}. '
@@ -1876,8 +1868,7 @@ class Brain(Extras):
         wake = ('I listen for the name Yumi' if s.get('wake_ears', True) else 'I do not listen for my name')
         judge = ('wakes are double-checked with whisper, the ' + wsize + ' model'
                  if s.get('wake_confirm', True) else 'wakes are not double-checked')
-        mind = ('mind: polza.ai, model ' + model if s.get('chat_provider') == 'polza.ai'
-                else 'mind: local ollama, model ' + model)
+        mind = 'mind: ' + who + ', model ' + model
         voice = 'I speak with my voice' if s.get('voice_kind') != 'blips' else 'I speak in sounds'
         return (f'My ears: {reader} reads the phrases, vosk {wsize} listens for the name, '
                 f'{mic}. {wake}, {judge}. '
@@ -2625,7 +2616,7 @@ class Brain(Extras):
             self.say('chat_fail')
 
     def replied(self, reply):
-        """Ollama answered (reply is '' when it did not work out)"""
+        """the mind answered (reply is '' when it did not work out)"""
         self.thinking = False
         reply = ' '.join(str(reply or '').split())
         if not reply:
@@ -2652,7 +2643,7 @@ class Brain(Extras):
     def chat_models_loaded(self, names, provider=None, error=''):
         """models from the mind provider, for the menu and the browser panel"""
         # a fetch that was still in flight when the provider changed is stale
-        if provider and str(provider) != str(self.settings.get('chat_provider') or 'ollama'):
+        if provider and str(provider) != str(self.settings.get('chat_provider') or llm.resolve(self.settings)['provider']):
             return
         self.chat_models = [str(n) for n in names or [] if n]
         self.chat_models_provider = str(provider or '')
@@ -3165,6 +3156,11 @@ class Brain(Extras):
         ry = y + 3 * P
         for action, arg, label in rows:
             r = (x + 2 * P, ry, w - 4 * P, rh)
+            if action == 'hint':
+                th = self.text_size(label)[1]
+                ops.append(('text', r[0] + 3 * P, ry + (rh - th) / 2, label, 'muted'))
+                ry += rh
+                continue
             if action == 'chips':
                 cxp = r[0] + 4 * P
                 for c in colors:

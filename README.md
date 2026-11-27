@@ -553,14 +553,21 @@ decides whose speech counts as a voice. «Close» cuts a quiet voice from the ot
 of the room (a whisper by the screen is gone too), «Across the room» lets even a quiet
 one pass. The real range lives in the microphone itself: the input slider in the sound
 settings and the mic's directivity matter more than any gate. The answer model is picked
-in **Settings → Her mind → Answer model** (it cycles through the installed ones); where
-Ollama lives lives in `~/.config/yumi/settings.json` as `ollama_url`. The mind provider
-is `ollama` or `polza.ai` (**Settings → Her mind → Mind provider**); changing it (or its
-address) refreshes the model list: Ollama answers `/api/tags`, Polza.ai answers `/models`
-with `polza_api_key`. In the web panel, **Settings → Her mind** shows those models as
-buttons under the field plus an «Update models» button; clicking a model saves it as the
-answer model. Neither the key nor the address is sent back to the panel. Right there,
-**Settings → Her mind → Sassy 18+** turns her into a foul-mouthed street-smart brat
+in **Settings → Her mind → Answer model** (it cycles through the models of the selected
+provider), with the provider right above it in **Mind provider**. GTK only switches
+between records that already exist. The provider list, addresses and keys are edited in
+the web panel on the **Providers** page (`#/providers`): records with the `ollama` dialect
+(native `/api/tags` and `/api/chat`) and the `openai` dialect (`/models` and
+`/chat/completions` with an `Authorization` header) can be added without changing code.
+Keys live only in `~/.config/yumi/llm_keys.json` (mode `0600`), never in `settings.json`,
+API replies or logs. The embedding address is a separate `embed_url` setting and does not
+follow the chat provider. Selecting another provider resets the model to that record's
+`default_model` and refreshes the model list; old addresses and keys are moved over by a
+one-shot migration on the first start. In the web panel, **Settings → Her mind** shows
+those models as buttons under the field plus an «Update models» button; clicking a model
+saves it as the answer model. The panel never sends the key or address back. **Sassy 18+**
+and the other mind parameters are edited in the panel too, under **Settings** (GTK keeps
+only the provider and model switches); it turns her into a foul-mouthed street-smart brat
 (off by default): she swears, roasts dumb questions and still helps with the real ones.
 The mode's lines go into her diary tagged, and so do the jokes: ask for four jokes in a
 row and she snaps back with a line her mind makes up — «you're not my stand-up comic».
@@ -803,7 +810,8 @@ saves the voiceprint as a profile you can rename later. Saying “let's get
 acquainted” no longer creates a placeholder «Voice 1» profile on its own, and
 Yumi never speaks a generated label as if it were your name. If you say “my name
 is John and I live in Ottawa” during the interview, she remembers the name and
-city even without a Polza.ai key — those fields are read from the phrase itself.
+city even when the selected provider has no key — those fields are read from the
+phrase itself.
 
 Short phrases like “Yumi, hi” are recognised too: the voiceprint for verification
 is taken from the last ~8 seconds of audio, not just the tail after the wake word,
@@ -871,7 +879,7 @@ met” about her own wake word. If you edit `speakers.json` by hand, run
   It is exchanged for an HttpOnly session. You can rotate the token on the Security page
   without signing out the tabs that are already open.
 - **What is inside:** overview, talk, facts, notes, files, music, ears and voice,
-  diagnostics, buttons, look, every setting, memory, config files, security and logs. Changes apply
+  diagnostics, buttons, providers, look, every setting, memory, config files, security and logs. Changes apply
   live and are saved to the same files the desktop Yumi uses. The chat uses a revision
   and Insert/Update/Remove/Clear ops over SSE, so two tabs stay in sync and a missed
   event triggers a full resync.
@@ -886,7 +894,8 @@ met” about her own wake word. If you edit `speakers.json` by hand, run
 - **Network:** it listens on `127.0.0.1` only by default. `0.0.0.0` exposes it to the LAN;
   do that only with a strong token and a firewall. There is no HTTPS yet.
 - **Data:** the token and signing secret live in `~/.config/yumi/webpanel.json` (mode
-  `0600`), config backups in `~/.config/yumi/backups/`, and the access log in
+  `0600`), provider keys in `~/.config/yumi/llm_keys.json` (mode `0600`, never in
+  `settings.json`), config backups in `~/.config/yumi/backups/`, and the access log in
   `~/.local/state/yumi/web-audit.log`.
 - Developer handoff: [docs/handoff-web-panel.md](docs/handoff-web-panel.md).
 

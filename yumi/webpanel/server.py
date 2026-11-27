@@ -409,6 +409,8 @@ def _make_handler(panel):
                 ('POST', '/api/chat'): self._chat,
                 ('GET', '/api/chat/models'): self._chat_models_get,
                 ('POST', '/api/chat/models/refresh'): self._chat_models_refresh,
+                ('GET', '/api/llm/providers'): self._llm_providers_get,
+                ('POST', '/api/llm/providers'): self._llm_providers_post,
                 ('POST', '/api/chat/message/update'): self._chat_message_update,
                 ('POST', '/api/chat/message/remove'): self._chat_message_remove,
                 ('DELETE', '/api/chat/history'): self._chat_clear,
@@ -488,6 +490,19 @@ def _make_handler(panel):
                     return self._note_update(int(m.group(1)))
                 if m and method == 'DELETE':
                     return self._note_delete(int(m.group(1)))
+                m = re.fullmatch(r'/api/llm/providers/([a-zA-Z0-9_-]{1,32})(/.*)?', path)
+                if m:
+                    pid, tail = m.group(1), m.group(2) or ''
+                    if method == 'PUT' and not tail:
+                        return self._llm_provider_put(pid)
+                    if method == 'DELETE' and not tail:
+                        return self._llm_provider_delete(pid)
+                    if method == 'POST' and tail == '/select':
+                        return self._llm_provider_select(pid)
+                    if method == 'POST' and tail == '/test':
+                        return self._llm_provider_test(pid)
+                    if method == 'POST' and tail == '/models/refresh':
+                        return self._llm_provider_models_refresh(pid)
                 if path == '/api/upload' and method == 'POST':
                     return self._upload(query)
                 if path == '/api/file/preview' and method == 'GET':
@@ -541,7 +556,7 @@ def _make_handler(panel):
             return self._json(200, {'ok': True, **panel.status()})
 
         def _schema(self, _q):
-            return self._json(200, {'ok': True, **catalog.schema()})
+            return self._json(200, {'ok': True, **catalog.schema(panel.settings)})
 
         def _settings_get(self, _q):
             return self._json(200, {'ok': True, 'settings': catalog.redact(panel.settings),
@@ -899,10 +914,72 @@ def _make_handler(panel):
         def _chat_models_refresh(self, _q):
             body = self._body()
             provider = str(body.get('provider') or '').strip() or None
-            if provider is not None and provider not in ('ollama', 'polza.ai'):
-                raise ValueError('unknown mind provider')
+            if provider is not None:
+                self._llm_known(provider)
             result = panel.bridge.chat_models_refresh(provider)
             panel.audit(self._ip(), 'chat-models-refresh', result.get('provider') or '')
+            panel.publish('chat_models', result)
+            return self._json(200, {'ok': True, **result})
+
+        def _llm_known(self, pid):
+            """the id must exist in the registry; the key is never inspected here"""
+            ids = {str(p.get('id') or '') for p in
+                   (panel.bridge.llm_providers().get('providers') or [])}
+            if str(pid) not in ids:
+                raise ValueError('unknown mind provider')
+
+        def _llm_providers_get(self, _q):
+            return self._json(200, {'ok': True, **panel.bridge.llm_providers()})
+
+        def _llm_body(self):
+            body = self._body()
+            record = body.get('record') if isinstance(body.get('record'), dict) else body
+            return record, body.get('key')
+
+        def _llm_providers_post(self, _q):
+            record, key = self._llm_body()
+            pid = str(record.get('id') or '')
+            result = panel.bridge.llm_provider_save(record, key)
+            panel.audit(self._ip(), 'llm-create', pid)
+            panel.publish('llm', result)
+            return self._json(200, {'ok': True, **result})
+
+        def _llm_provider_put(self, pid):
+            record, key = self._llm_body()
+            if str(record.get('id') or pid) != pid:
+                raise ValueError('the provider id cannot be changed')
+            record = {**record, 'id': pid}
+            result = panel.bridge.llm_provider_save(record, key)
+            panel.audit(self._ip(), 'llm-update', pid)
+            panel.publish('llm', result)
+            return self._json(200, {'ok': True, **result})
+
+        def _llm_provider_delete(self, pid):
+            self._llm_known(pid)
+            result = panel.bridge.llm_provider_delete(pid)
+            panel.audit(self._ip(), 'llm-delete', pid)
+            panel.publish('llm', result)
+            return self._json(200, {'ok': True, **result})
+
+        def _llm_provider_select(self, pid):
+            self._llm_known(pid)
+            result = panel.bridge.llm_provider_select(pid)
+            panel.audit(self._ip(), 'llm-select', pid)
+            panel.publish('llm', result)
+            panel.publish('settings', {'changed': ['chat_provider', 'chat_model']})
+            return self._json(200, {'ok': True, **result})
+
+        def _llm_provider_test(self, pid):
+            self._llm_known(pid)
+            result = panel.bridge.llm_provider_test(pid)
+            panel.audit(self._ip(), 'llm-test', pid + (' ok' if result.get('ok') else ' fail'))
+            return self._json(200, {'ok': True, **result})
+
+        def _llm_provider_models_refresh(self, pid):
+            self._llm_known(pid)
+            result = panel.bridge.llm_models_refresh(pid)
+            panel.audit(self._ip(), 'llm-models-refresh', pid)
+            panel.publish('llm', result)
             panel.publish('chat_models', result)
             return self._json(200, {'ok': True, **result})
 

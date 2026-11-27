@@ -59,7 +59,7 @@ class App:
 
 real_sync, real_speak = bridge_mod.tts.sync_profile, bridge_mod.tts.speak
 bridge_mod.tts.sync_profile = lambda _s: {'changed': False, 'profile': {'pitch': 1.12}}
-bridge_mod.tts.speak = lambda _text, _vol: Path('/tmp/sample.wav')
+bridge_mod.tts.speak = lambda _text, _vol, **_kw: Path('/tmp/sample.wav')
 
 app = App()
 web = bridge_mod.WebBridge(app)

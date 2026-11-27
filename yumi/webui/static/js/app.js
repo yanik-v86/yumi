@@ -16,6 +16,7 @@ const PAGES = {
   buttons: './pages/buttons.js',
   'user-intents': './pages/user-intents.js',
   appearance: './pages/appearance.js',
+  providers: './pages/providers.js',
   settings: './pages/settings.js',
   memory: './pages/memory.js',
   configs: './pages/configs.js',
@@ -314,7 +315,7 @@ async function applySettings(patch, { quiet = true } = {}) {
       applyLanguage(data.settings.ui_lang);
     }
     // a new provider (or endpoint) means a new list of answer models
-    if (['chat_provider', 'ollama_url', 'polza_url'].some(
+    if (['chat_provider', 'llm_providers', 'embed_url'].some(
       (key) => Object.prototype.hasOwnProperty.call(patch, key))) {
       await refreshChatModels();
     }
@@ -706,6 +707,14 @@ function startLive() {
     if (name === 'chat_models') {
       if (payload?.data) setChatModelsInfo(payload.data);
       emitEvent('chat_models', payload?.data || {});
+      return;
+    }
+    if (name === 'llm') {
+      if (payload?.data && state.status?.runtime) {
+        state.status.runtime.llm = { ...(state.status.runtime.llm || {}), ...payload.data };
+      }
+      emitEvent('llm', payload?.data || {});
+      refreshStatus();
       return;
     }
     if (name === 'bubble') {

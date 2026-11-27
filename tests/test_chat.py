@@ -176,15 +176,21 @@ for t in ('анекдот', 'расскажи анекдот', 'расскажи
 for t in ('который час', 'какая погода', 'привет', 'set a timer'):
     assert not chat.joke_question(t), t
 
-# Polza.ai: the OpenAI-compatible endpoint answers with a string, the key travels along
+# an OpenAI-compatible provider: the endpoint answers with a string, the key
+# travels in the header and lives in its own private file
 import json as _json                                   # noqa: E402
+import tempfile as _tempfile                            # noqa: E402
 import urllib.request as _urllib                        # noqa: E402
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer as _Server  # noqa: E402
+from yumi import llm_keys                               # noqa: E402
 
 SEEN = {}
+_original_keys_file = llm_keys.KEYS_FILE
+_tmp = _tempfile.TemporaryDirectory()
+llm_keys.KEYS_FILE = Path(_tmp.name) / 'llm_keys.json'
 
 
-class Polza(BaseHTTPRequestHandler):
+class OpenAIStyle(BaseHTTPRequestHandler):
     def do_GET(self):
         SEEN['models_path'] = self.path
         SEEN['models_auth'] = self.headers.get('Authorization')
@@ -214,19 +220,25 @@ class Polza(BaseHTTPRequestHandler):
         pass
 
 
-polza = _Server(('127.0.0.1', 0), Polza)
-threading.Thread(target=polza.serve_forever, daemon=True).start()
-s = {'chat_provider': 'polza.ai', 'polza_url': f'http://127.0.0.1:{polza.server_address[1]}/v1',
-     'polza_api_key': 'secret', 'chat_model': 'deepseek/deepseek-v4-flash'}
+server = _Server(('127.0.0.1', 0), OpenAIStyle)
+threading.Thread(target=server.serve_forever, daemon=True).start()
+llm_keys.set('cloud', 'secret')
+s = {'chat_provider': 'cloud', 'chat_model': 'deepseek/deepseek-v4-flash',
+     'llm_providers': [
+         {'id': 'cloud', 'name': 'Cloud', 'kind': 'openai',
+          'url': f'http://127.0.0.1:{server.server_address[1]}/v1',
+          'default_model': 'z-ai/glm-4.5-air', 'enabled': True, 'models': []}]}
 assert chat.alive(s)
 names = ['deepseek/deepseek-v4-flash', 'z-ai/glm-4.5-air']
 assert chat.models(s) == names, chat.models(s)          # real /models, sorted
 assert SEEN['models_path'] == '/v1/models', SEEN
 assert SEEN['models_auth'] == 'Bearer secret', SEEN
-assert chat.models_info(s) == {'provider': 'polza.ai', 'models': names, 'error': ''}
-assert chat.models_info({'chat_provider': 'polza.ai'})['error'] == 'no api key'
-assert chat.models_info({'chat_provider': 'polza.ai', 'polza_url': 'http://127.0.0.1:1/v1',
-                         'polza_api_key': 'x'})['error'] == 'the provider did not answer'
+assert chat.models_info(s) == {'provider': 'cloud', 'models': names, 'error': ''}
+assert chat.models_info({'chat_provider': 'cloud', 'llm_providers': s['llm_providers']},
+                        provider='unknown')['error'] == 'unknown provider'
+llm_keys.delete('cloud')
+assert chat.models_info(s)['error'] == 'no api key'
+llm_keys.set('cloud', 'secret')
 reply = chat.ask(s, [{'role': 'user', 'content': 'привет'}])
 assert reply == 'Спокойной ночи!', reply            # a string, not a list of words
 assert SEEN['path'] == '/v1/chat/completions', SEEN
@@ -234,14 +246,20 @@ assert SEEN['auth'] == 'Bearer secret', SEEN
 assert SEEN['model'] == 'deepseek/deepseek-v4-flash' and SEEN['max_tokens'] == 220, SEEN
 assert chat.hourly_joke(s, 14) == 'Спокойной ночи!'
 assert chat.joke(s, 'ru') == 'Спокойной ночи!'
-assert chat.ask({'chat_provider': 'polza.ai', 'polza_url': 'http://127.0.0.1:1/x'}, []) == ''
-polza.shutdown()
+assert chat.ask({'chat_provider': 'cloud', 'llm_providers': [
+    {'id': 'cloud', 'name': 'Cloud', 'kind': 'openai', 'url': 'http://127.0.0.1:1/x',
+     'default_model': 'x', 'enabled': True, 'models': []}]}, []) == ''
+server.shutdown()
 
 # no key: she gives up at once, no hanging request, no key sent anywhere
-assert chat.ask({'chat_provider': 'polza.ai'}, [{'role': 'user', 'content': 'hi'}]) == ''
-assert chat.hourly_joke({'chat_provider': 'polza.ai'}, 14) == ''
-assert chat.joke({'chat_provider': 'polza.ai'}, 'ru') == ''
+llm_keys.delete('cloud')
+assert chat.ask(s, [{'role': 'user', 'content': 'hi'}]) == ''
+assert chat.hourly_joke(s, 14) == ''
+assert chat.joke(s, 'ru') == ''
+llm_keys.KEYS_FILE = _original_keys_file
+_tmp.cleanup()
 
+# every chat question walks a COPY of the history: rebinding `history` inside the
 # the question must reach Ollama: chat_ask's worker walks a COPY of the history —
 # an assignment to `history` inside work() makes every earlier read of it an
 # UnboundLocalError, and every chat question dies before the answer

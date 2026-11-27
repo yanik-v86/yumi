@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .. import config, engines
+from .. import config, engines, llm
 
-# settings that must never travel to a browser in clear text
+# settings that must never travel to a browser in clear text; provider keys live
+# in their own private file and are never part of settings.json
 SECRET_KEYS = {
-    'polza_api_key', 'music_jellyfin_password', 'music_jellyfin_key',
+    'music_jellyfin_password', 'music_jellyfin_key',
 }
 MASK = '••••••••'
 
@@ -47,6 +48,10 @@ PAGES = [
               'ru': 'Свои интенты: правка, импорт, экспорт и проверка'}},
     {'id': 'appearance', 'icon': 'palette', 'title': {'en': 'Look', 'ru': 'Внешний вид'},
      'hint': {'en': 'Colors, outfit, scale and screens', 'ru': 'Цвета, наряд, масштаб и экраны'}},
+    {'id': 'providers', 'icon': 'grid',
+     'title': {'en': 'Providers', 'ru': 'Провайдеры'},
+     'hint': {'en': 'Mind providers, their models and keys',
+              'ru': 'Провайдеры мозгов, их модели и ключи'}},
     {'id': 'settings', 'icon': 'gear', 'title': {'en': 'Settings', 'ru': 'Настройки'},
      'hint': {'en': 'Every switch and value, applied live', 'ru': 'Все переключатели и значения, вживую'}},
     {'id': 'memory', 'icon': 'book', 'title': {'en': 'Memory', 'ru': 'Память'},
@@ -113,6 +118,7 @@ KEY_SECTION = {
     'timer_sound': 'sound', 'recolor': 'look', 'hue': 'look', 'scale': 'look',
     'outfit': 'look', 'ui_lang': 'language', 'speech_lang': 'language',
     'chat_provider': 'mind', 'chat_model': 'mind', 'chat_think': 'mind',
+    'llm_providers': 'mind', 'embed_url': 'mind',
     'chat_stream': 'mind', 'sassy': 'mind', 'chat_history_n': 'mind', 'chat_memory': 'mind',
     'prompt_system_ru': 'prompts', 'prompt_system_en': 'prompts',
     'prompt_sassy_ru': 'prompts', 'prompt_sassy_en': 'prompts',
@@ -127,12 +133,11 @@ KEY_SECTION = {
     'conversation_gap_reset_min': 'dialogue', 'conversation_history_n': 'dialogue',
     'notes_voice': 'mind',
     'embed_model': 'mind', 'nlu': 'mind', 'nlu_confidence': 'mind',
-    'user_intents': 'mind', 'intents': 'mind', 'ollama_url': 'mind',
+    'user_intents': 'mind', 'intents': 'mind',
     'intents_log_level': 'mind', 'intents_log_include_text': 'mind',
     'intents_log_max_chars': 'mind', 'intents_log_max_lines': 'mind',
     'user_intents_repo_url': 'mind', 'user_intents_trusted_keys': 'mind',
     'user_intents_require_signature': 'mind',
-    'polza_url': 'mind', 'polza_api_key': 'mind',
     'wake_ears': 'ears', 'wake_word': 'ears', 'wake_sensitivity': 'ears',
     'wake_confirm': 'ears', 'wake_model_size': 'ears', 'wake_ear': 'ears',
     'oww_spike': 'ears', 'oww_positive_ms': 'ears', 'oww_confirm': 'ears',
@@ -174,7 +179,6 @@ CHOICES = {
     'wake_model_size': ['small', 'big'],
     'wake_ear': ['auto', 'oww', 'vosk'],
     'wake_judge_log': [True, False],
-    'chat_provider': ['ollama', 'polza.ai'],
     'chat_history_n': [2, 4, 6, 10, 16, 24],
     'conversation_timeout_s': [5, 8, 10, 15, 20],
     'conversation_gap_reset_min': [5, 15, 30, 60],
@@ -238,8 +242,9 @@ TYPES = {
     'timer_sound': 'path', 'tts_pitch': 'range',
     'tts_ru_speaker': 'select', 'tts_en_speaker': 'select',
     'tts_ru_model': 'select',
-    'music_jellyfin_password': 'password', 'polza_api_key': 'password',
+    'music_jellyfin_password': 'password',
     'music_jellyfin_key': 'password', 'music_dirs': 'text',
+    'llm_providers': 'textarea',   # hidden in the settings page: CRUD lives in #/providers
     'web_panel': 'switch', 'web_panel_open': 'switch',
     'speaker_verify': 'switch', 'speaker_join_policy': 'select',
     'speaker_threshold': 'range', 'speaker_min_ms': 'number',
@@ -353,9 +358,8 @@ TITLES = {
     'user_intents_require_signature': {'en': 'Require a signature',
                                        'ru': 'Требовать подпись'},
     'intents': {'en': 'Intents mind', 'ru': 'Распознавание фраз'},
-    'ollama_url': {'en': 'Ollama address', 'ru': 'Адрес Ollama'},
-    'polza_url': {'en': 'Polza.ai address', 'ru': 'Адрес Polza.ai'},
-    'polza_api_key': {'en': 'Polza.ai API key', 'ru': 'Ключ Polza.ai'},
+    'llm_providers': {'en': 'Mind providers', 'ru': 'Провайдеры мозгов'},
+    'embed_url': {'en': 'Embedding address', 'ru': 'Адрес эмбеддингов'},
     'wake_ears': {'en': 'Wake on the name', 'ru': 'Будить по имени'},
     'wake_word': {'en': 'Wake word', 'ru': 'Имя для пробуждения'},
     'wake_sensitivity': {'en': 'Name matching', 'ru': 'Строгость имени'},
@@ -406,6 +410,10 @@ TITLES = {
 }
 
 HINTS = {
+    'llm_providers': {'en': 'The provider list is edited on the Providers page. Keys are kept in a separate private file.',
+                      'ru': 'Список провайдеров правится на странице «Провайдеры». Ключи лежат в отдельном приватном файле.'},
+    'embed_url': {'en': 'Where embeddings are read, independent of the selected chat provider.',
+                  'ru': 'Откуда брать векторы, независимо от выбранного провайдера чата.'},
     'pinned': {'en': 'She does not hide at the bottom edge.',
                'ru': 'Она не прячется у нижнего края.'},
     'reactions': {'en': 'Charger, Wi-Fi, downloads, screenshots, music.',
@@ -578,7 +586,20 @@ CONFIG_FILES = {
 }
 
 
-def _choice_value(key, value):
+def _provider_choices(settings=None):
+    """ids of the providers GTK and the settings page may switch between"""
+    source = settings if isinstance(settings, dict) else config.DEFAULT_SETTINGS
+    active = str(source.get('chat_provider') or '')
+    ids = [r['id'] for r in llm.providers(source)
+           if r['enabled'] or r['id'] == active]
+    return ids or [active or llm.DEFAULT_PROVIDERS[0]['id']]
+
+
+def _choice_value(key, value, settings=None):
+    if key == 'chat_provider':
+        source = settings if isinstance(settings, dict) else config.DEFAULT_SETTINGS
+        rec = llm.get(source, value) or {}
+        return rec.get('name') or value
     return CHOICE_LABELS.get(key, {}).get(str(value), value)
 
 
@@ -590,7 +611,7 @@ def _outfit_choices():
         return ['auto', 'off']
 
 
-def _entry(key, default):
+def _entry(key, default, settings=None):
     kind = TYPES.get(key)
     if kind is None:
         if isinstance(default, bool):
@@ -608,6 +629,8 @@ def _entry(key, default):
     choices = None
     if key == 'outfit':
         choices = _outfit_choices()
+    elif key == 'chat_provider':
+        choices = _provider_choices(settings)
     elif key in CHOICES:
         choices = list(CHOICES[key])
     elif key == 'stt_mic':
@@ -627,7 +650,8 @@ def _entry(key, default):
         'title': TITLES.get(key) or {'en': key.replace('_', ' ').title(), 'ru': key},
         'hint': HINTS.get(key) or {},
         'choices': choices,
-        'choice_labels': {str(v): _choice_value(key, v) for v in (choices or [])},
+        'choice_labels': {str(v): _choice_value(key, v, settings) for v in (choices or [])},
+        'hidden': key == 'llm_providers',
         'min': rng[0] if rng else None,
         'max': rng[1] if rng else None,
         'step': rng[2] if rng else None,
@@ -637,8 +661,8 @@ def _entry(key, default):
     }
 
 
-def schema():
-    """the complete form map: sections, pages, config files and setting entries"""
+def schema(settings=None):
+    """the complete form map; `settings` makes provider choices reflect the registry"""
     keys = list(config.DEFAULT_SETTINGS.keys())
     # keys the code reads but the defaults forgot: show them too, never hide a knob
     for extra in ('music_jellyfin_key',):
@@ -649,7 +673,7 @@ def schema():
         default = config.DEFAULT_SETTINGS.get(key)
         if key == 'music_jellyfin_key':
             default = ''
-        entries.append(_entry(key, default))
+        entries.append(_entry(key, default, settings))
     return {
         'version': __import__('yumi').__version__,
         'pages': PAGES,
@@ -664,6 +688,8 @@ def schema():
 def coerce(key, value):
     """validate and normalize one value from a browser; raises ValueError"""
     default = config.DEFAULT_SETTINGS.get(key, '')
+    if key == 'llm_providers':
+        return llm.normalize_list(value)
     if key in ('hue',):
         if value in (None, ''):
             return None

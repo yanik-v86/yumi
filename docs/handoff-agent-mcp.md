@@ -24,7 +24,7 @@
 |---|---|
 | Что за агент | встроенный в Юми, с инструментами и MCP, доступен из панели и голосом |
 | MCP-транспорт | `stdio` в этой задаче; `HTTP/SSE` — отдельная будущая задача, интерфейс заложить заранее |
-| Модель | расширяемый реестр провайдеров/моделей; уже есть `ollama` и `polza.ai`; добавить свои OpenAI-совместимые |
+| Модель | общий реестр `yumi/llm.py` (`DEFAULT_SETTINGS['llm_providers']`), диалекты `ollama` и `openai`; новые провайдеры добавляются настройкой на странице `providers` |
 | Каналы | панель + голос вместе |
 | Безопасность | whitelist, `safe/confirm/deny`, подтверждения, песочница, лимиты, аудит; всё выключено по умолчанию |
 
@@ -43,17 +43,20 @@
 
 ### Мозг и LLM
 
-- `yumi/chat.py:20-22` — `DEFAULT_MODEL`, `DEFAULT_URL`, `POLZA_MODEL = 'deepseek/deepseek-v4-flash'`.
-- `yumi/chat.py:34-42` — `_provider()` (`ollama` / `polza.ai`) и `_url()`.
-- `yumi/chat.py:51-76` — `alive()`, `_get()`, `models()`; у Polza список моделей захардкожен.
-- `yumi/chat.py:187-210` — `_ollama_chat()` и `_polza_chat()`, тесла ответа; `stream=True` → `urlopen`.
-- `yumi/chat.py:213-325` — `_think_filter()`, стриминговые парсеры Ollama и Polza (SSE `data:`).
-- `yumi/chat.py:327-371` — `ask_stream()` / `ask()`; пустой `polza_api_key` → сразу `''`.
-- `yumi/config.py:42`, `:107-110` — `chat_provider`, `chat_model`, `ollama_url`, `polza_url`, `polza_api_key`.
-- `yumi/brain.py` — реактивная маршрутизация; `heard_text()` ~`:1336-1478`; меню и диалоги подтверждений
-  `intent_confirm` ~`:1295-1306`, `_voice_confirm_web()` ~`:1463-1475`.
-- **Важно:** `chat.py` не поддерживает `tools`/`tool_calls`. Реестр `yumi/llm.py` должен добавить это,
-  переиспользовав транспорт, а не дублируя его.
+- `yumi/llm.py` — общий реестр: `providers()`, `get()`, `select()`, `validate_record()`,
+  адаптеры `ollama` и `openai`, `ask()` / `ask_stream()` / `models()` / `test()`; аргумент
+  `tools=None` уже оставлен заготовкой под агента.
+- `yumi/llm_keys.py` — ключи провайдеров в приватном файле `~/.config/yumi/llm_keys.json`
+  с правами `0600`; в `settings.json` их нет.
+- `yumi/chat.py` — фасад совместимости: промпты, погода, `<think>`-фильтр и делегирование
+  запросов в `llm`. Вызывающие (`brain.py`, `ui/senses.py`, `ui/webpanel.py`, `music.py`)
+  не меняются.
+- `yumi/config.py` — `DEFAULT_SETTINGS['llm_providers']`, `chat_provider` (id записи),
+  `chat_model`, `embed_url`; старые настройки переносит одноразовый `yumi/llm_migrate.py`.
+- `yumi/brain.py` — реактивная маршрутизация; GTK-меню «Её мозги» только переключает
+  провайдера и модель, CRUD живёт на странице `providers` веб-панели.
+- **Важно:** tool-calling достраивается в `yumi/llm.py` в T-02; второго
+  «агентского» реестра провайдеров и ключей быть не должно.
 
 ### Настройки, панель, мост
 
@@ -92,10 +95,10 @@
 |---|---|---:|---|
 | `agent_enabled` | bool | `false` | главный выключатель |
 | `agent_voice` | bool | `true` | голосовой триггер |
-| `agent_provider` | choice | `polza.ai` | провайдер рассуждений |
-| `agent_model` | str | `''` | пусто → fallback провайдера |
-| `agent_providers_custom` | list | `[]` | `{id, name, kind:'openai', url, models:[]}` без ключей |
-| `agent_custom_keys` | dict | `{}` | ключи кастомных провайдеров → `SECRET_KEYS` |
+| `agent_provider` | str | `''` | id записи из общего реестра; пусто → активный `chat_provider` |
+| `agent_model` | str | `''` | пусто → `default_model` выбранной записи |
+| `agent_providers_custom` | — | — | не используется: записи живут в `llm_providers` (страница `providers`) |
+| `agent_custom_keys` | — | — | не используется: ключи лежат в `llm_keys.json` |
 | `agent_max_steps` | int | `8` | шагов на задачу |
 | `agent_tool_timeout_s` | int | `20` | таймаут инструмента |
 | `agent_max_tokens` | int | `4000` | токенов на задачу |
@@ -105,8 +108,10 @@
 | `agent_file_sandbox` | bool | `true` | файлы только в песочнице |
 | `agent_allow_network` | bool | `false` | сеть запрещена |
 
-`polza.ai` выбран по умолчанию, потому что локальная модель `lakomoor/vikhr-llama-3.2-1b-instruct:1b`
-не гарантирует tool-calling. Пользователь может выбрать `ollama` вручную; тогда включается JSON-fallback.
+Провайдер агента берётся из общего реестра; пустое значение означает активного
+чат-провайдера. Локальная модель `lakomoor/vikhr-llama-3.2-1b-instruct:1b` не гарантирует
+tool-calling, поэтому T-02 добавляет проверку поддержки и JSON-fallback; пользователь
+выбирает подходящую запись на странице `providers`, а не в отдельном «агентском» списке.
 
 ### 3.2 Task и Step
 
@@ -202,7 +207,7 @@ CSRF на все POST, аудит вызовов, ответы без секре
 {
   "runtime": {
     "agent": {
-      "enabled": true, "provider": "polza.ai", "model": "deepseek/deepseek-v4-flash",
+      "enabled": true, "provider": "local", "model": "lakomoor/vikhr-llama-3.2-1b-instruct:1b",
       "active_task": {"id": 12, "status": "awaiting_confirmation"},
       "pending_confirmations": 1, "tools_count": 14,
       "mcp": [{"id": "files", "enabled": true, "connected": true, "tools": 3, "last_error": null}],
@@ -293,9 +298,9 @@ def run_task(task, settings, model, registry, policy, audit):
 
 | Риск | Смягчение |
 |---|---|
-| Локальная 1b-модель не умеет tool-calling | дефолт `polza.ai`; для `ollama` — JSON-fallback + проверка поддержки на целевой машине |
+| Локальная 1b-модель не умеет tool-calling | проверка поддержки на целевой машине + JSON-fallback; провайдер выбирается из общего реестра |
 | Prompt injection от вывода MCP-инструмента | вывод инструмента — данные, не инструкции; лимит размера; `deny` по умолчанию; аудит |
-| Утечка ключей в LLM/логи/панель | маскирование по `SECRET_KEYS` + `permission.SECRET_PATHS`; ключи не попадают в контекст |
+| Утечка ключей в LLM/логи/панель | ключи только в `llm_keys.json` (`0600`); `permission.SECRET_PATHS`; в контекст и снимок не попадают |
 | Голос случайно разрешил опасное действие | голос только `once/deny`; `always` — кликом; отрицание сильнее согласия; таймаут → `deny` |
 | MCP-процесс завис/течёт ресурсами | таймауты, whitelist env, `cwd`-песочница, `kill`, лимит вывода |
 | Агент вызвал агента | вложенные задачи запрещены на уровне executor |

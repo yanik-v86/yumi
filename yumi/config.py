@@ -1,4 +1,5 @@
 """Paths, settings, persistent state and interface strings (no GTK here)."""
+import copy
 import hashlib
 import json
 import os
@@ -44,7 +45,7 @@ DEFAULT_SETTINGS = {
     'outfit': 'auto',         # auto (by date) / off / a folder name in sprites/outfits
     'ring': [],               # order of her round buttons ([] = the default order)
     'ring_off': [],           # the buttons switched off
-    'chat_provider': 'ollama',   # ollama or polza.ai: who answers when she listens
+    'chat_provider': 'local',    # id of a record in llm_providers: who answers her
     'chat_think': False,      # her mind thinks out loud before answering (deepseek-r1,
                               # qwen3 and friends); off = the answer comes right away
     'chat_stream': True,      # the answer comes in as it is written and she speaks it
@@ -109,10 +110,16 @@ DEFAULT_SETTINGS = {
                           'carry the original spelling. Write the most likely original spelling '
                           '(how it appears on the covers and the labels). Answer with the name '
                           'only, in one line, nothing else.'),
-    'chat_model': 'lakomoor/vikhr-llama-3.2-1b-instruct:1b',   # who answers when she listens
-    'ollama_url': 'http://127.0.0.1:11434',   # where her local Ollama lives
-    'polza_url': 'https://polza.ai/api/v1',   # Polza.ai OpenAI-compatible endpoint
-    'polza_api_key': '',   # Polza.ai API key (get it at polza.ai)
+    'chat_model': 'lakomoor/vikhr-llama-3.2-1b-instruct:1b',   # the answer model
+    # the registry is data, not code: the panel creates and edits its records,
+    # GTK only switches between the enabled ones (see yumi/llm.py)
+    'llm_providers': [
+        {'id': 'local', 'name': 'Local model', 'kind': 'ollama',
+         'url': 'http://127.0.0.1:11434',
+         'default_model': 'lakomoor/vikhr-llama-3.2-1b-instruct:1b',
+         'enabled': True, 'models': []},
+    ],
+    'embed_url': 'http://127.0.0.1:11434',   # embeddings live apart from the chat provider
     'chat_history_n': 10,     # how many of her last messages go along with every
                               # new question, so the answer knows the whole turn
     'conversation_mode': False,   # after a chat answer she keeps listening for the
@@ -126,7 +133,7 @@ DEFAULT_SETTINGS = {
     'chat_memory': True,      # she keeps the talks in a sqlite diary and recalls
                               # the older lines about the same thing into the
                               # context (yumi/memory.py)
-    'embed_model': 'nomic-embed-text',   # the Ollama mind's embeddings for the
+    'embed_model': 'nomic-embed-text',   # server embeddings for the
                               # recall; without it a light hashed bag-of-words
                               # stands in, so the diary works offline all the same
     'notes_voice': True,      # her notes by voice: «запиши заметку …» writes one,
@@ -263,7 +270,7 @@ class Store(dict):
     """A dict saved as JSON; unknown keys from older versions are kept, missing ones defaulted."""
 
     def __init__(self, path, defaults):
-        super().__init__(defaults)
+        super().__init__(copy.deepcopy(defaults))
         self.path = Path(path)
         self.fresh = not self.path.exists()
         try:
@@ -308,10 +315,14 @@ def _adopt_tts_profile(st):
 
 def load_settings():
     st = Store(CONFIG_DIR / 'settings.json', DEFAULT_SETTINGS)
-    if st.fresh:                                  # first run: speak the system language
+    fresh = st.fresh
+    if fresh:                                     # first run: speak the system language
         st['ui_lang'] = st['speech_lang'] = detect_lang()
-        st.save()
     _adopt_tts_profile(st)
+    from . import llm_migrate                     # legacy names live only in that module
+    changed = llm_migrate.migrate(st)
+    if fresh or changed:
+        st.save()
     return st
 
 
@@ -502,7 +513,7 @@ UI = {
         'wake_ear': 'The ear that hears «Yumi»', 'we_auto': 'auto (the trained ear when it is here)',
         'we_oww': 'the trained ear (openWakeWord)', 'we_vosk': 'vosk, as before', 'wake_judge_log': 'Write the whisper judge to /tmp/yumi/judge.log',
         'mic_refresh': 'Find the microphone', 'mic_auto': 'auto', 'chat_provider': 'Mind provider',
-        'polza_url': 'Polza.ai address', 'polza_api_key': 'Polza.ai API key',
+        'embed_url': 'Embedding address', 'providers_hint': 'Providers are managed in the web panel',
         'tap_ears': 'Write everything it hears (/tmp/yumi)',
         'stt_echo': 'Echo canceller (she never hears herself)',
         'speaker_verify': 'Recognise voices in a talk',
@@ -617,7 +628,8 @@ UI = {
         'wake_ear': 'Кто слушает имя «Юми»', 'we_auto': 'авто (обученное ухо, когда оно тут)',
         'we_oww': 'обученное ухо (openWakeWord)', 'we_vosk': 'vosk, как раньше',
         'mic_refresh': 'Найти микрофон', 'mic_auto': 'авто',
-        'chat_provider': 'Провайдер мозгов', 'polza_url': 'Адрес Polza.ai', 'polza_api_key': 'Ключ Polza.ai',
+        'chat_provider': 'Провайдер мозгов', 'embed_url': 'Адрес эмбеддингов',
+        'providers_hint': 'Провайдеры настраиваются в веб-панели',
         'tap_ears': 'Записывать всё услышанное (/tmp/yumi)',
         'stt_echo': 'Подавление эха (не слышит себя)',
         'speaker_verify': 'Различать голоса в разговоре',

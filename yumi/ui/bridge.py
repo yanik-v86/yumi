@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 from yumi import (chat, config, doctor as doctor_mod, ears, engines, facts, files, jobs,
-                  memory, models, music, notes, permission, system, tts)
+                  llm, memory, models, music, notes, permission, system, tts)
 
 
 class WebBridge:
@@ -191,10 +191,36 @@ class WebBridge:
         return self._on(self.app._web_chat_models_status)
 
     def chat_models_refresh(self, provider=None):
-        """ask Ollama / Polza.ai for their models and share the answer with GTK"""
-        result = chat.models_info(self.app.settings, provider=provider)
+        """ask the selected mind provider for its models and share them with GTK"""
+        snapshot = dict(self._on(self.app._web_llm_settings))
+        result = chat.models_info(snapshot, provider=provider)
         self._on(lambda: self.app._web_chat_models_loaded(result, provider))
         return result
+
+    # ---- the shared provider registry (all network work stays on this thread)
+    def llm_providers(self):
+        return self._on(self.app._web_llm_snapshot)
+
+    def llm_provider_save(self, record, key=None):
+        return self._on(lambda: self.app._web_llm_provider_save(record, key), 60)
+
+    def llm_provider_delete(self, pid):
+        return self._on(lambda: self.app._web_llm_provider_delete(pid), 60)
+
+    def llm_provider_select(self, pid):
+        return self._on(lambda: self.app._web_llm_provider_select(pid), 60)
+
+    def llm_provider_test(self, pid, timeout=4):
+        """a cheap reachability check: no chat request, no GTK blocking"""
+        snapshot = dict(self._on(self.app._web_llm_settings))
+        return llm.test(snapshot, pid, timeout)
+
+    def llm_models_refresh(self, pid, timeout=4):
+        snapshot = dict(self._on(self.app._web_llm_settings))
+        result = llm.models(snapshot, pid, timeout)
+        info = {'provider': pid, 'models': result['models'], 'error': result['error']}
+        self._on(lambda: self.app._web_llm_provider_refresh(pid, info))
+        return info
 
     # ---- voice state
     def voice_state(self):

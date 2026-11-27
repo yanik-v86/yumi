@@ -1,4 +1,5 @@
 """The optional browser panel and the App-side helpers its bridge calls (a mixin for App)."""
+import copy
 import json
 import os
 import shutil
@@ -11,8 +12,8 @@ from pathlib import Path
 from gi.repository import Gdk, GLib
 
 from yumi import (chat, config, doctor, ears, engines, facts, intent_log, intents_bundle,
-                  intents_remote, memory, models, music, notes, permission, pixui,
-                  speaker, speaker_sherpa, system, tts, user_intents, webpanel)
+                  intents_remote, llm, llm_keys, memory, models, music, notes, permission,
+                  pixui, speaker, speaker_sherpa, system, tts, user_intents, webpanel)
 from yumi.sprites import ui_colors
 from yumi.webpanel import catalog as webcatalog
 
@@ -426,6 +427,7 @@ class PanelMixin:
                 'monitors': int(getattr(b, 'monitors', 1) or 1),
                 'chat_models': list(b.chat_models or []),
                 'chat_models_info': self._web_chat_models_status(),
+                'llm': self._web_llm_snapshot(),
                 'mics': list(b.mics or []),
                 'unavailable': sorted(b.unavailable or []),
                 'palette': palette,
@@ -505,9 +507,81 @@ class PanelMixin:
         names = [str(n) for n in (info.get('models') or []) if n]
         error = str(info.get('error') or '')
         # a late answer from the previous provider must not overwrite the new list
-        if prov == str(self.settings.get('chat_provider') or 'ollama'):
+        if prov == str(self.settings.get('chat_provider') or llm.resolve(self.settings)['provider']):
             self.brain.chat_models_loaded(names, prov, error)
         return {'provider': prov, 'models': names, 'error': error}
+
+    # ---- mind providers: the panel edits the registry, GTK only selects from it
+    def _web_llm_settings(self):
+        """a detached copy for network calls that must not touch the GTK thread"""
+        return copy.deepcopy(dict(self.settings))
+
+    def _web_llm_snapshot(self):
+        s = self.settings
+        active = str(s.get('chat_provider') or '')
+        cached = list(getattr(self.brain, 'chat_models', None) or [])
+        rows = []
+        for rec in llm.providers(s):
+            is_active = rec['id'] == active
+            rows.append({**rec, 'active': is_active,
+                         'has_key': bool(llm_keys.get(rec['id'])),
+                         'models_count': len(rec['models']) or (len(cached) if is_active else 0),
+                         'error': (str(getattr(self.brain, 'chat_models_error', '') or '')
+                                   if is_active else '')})
+        return {'providers': rows, 'active_provider': active,
+                'active_model': str(s.get('chat_model') or '')}
+
+    def _web_llm_provider_save(self, record, key=None):
+        """create or edit one record; an empty or masked key keeps the old one"""
+        record = record if isinstance(record, dict) else {}
+        pid = str(record.get('id') or '')
+        records = llm.providers(self.settings)
+        known = [r['id'] for r in records if r['id'] != pid]
+        clean = llm.validate_record(record, known)
+        if any(r['id'] == pid for r in records):
+            records = [clean if r['id'] == pid else r for r in records]
+        else:
+            records.append(clean)
+        self.settings['llm_providers'] = records
+        if key is not None and not webcatalog.is_masked(key) and str(key).strip():
+            if not llm_keys.set(pid, str(key).strip()):
+                raise RuntimeError('could not save the key')
+        self.settings.save()
+        self.web_sync_soon()
+        return {'ok': True, 'provider': clean['id']}
+
+    def _web_llm_provider_delete(self, pid):
+        records = llm.providers(self.settings)
+        if not any(r['id'] == pid for r in records):
+            raise ValueError('unknown provider')
+        if len(records) <= 1:
+            raise ValueError('the last provider cannot be removed')
+        if str(pid) == str(self.settings.get('chat_provider') or ''):
+            raise ValueError('switch to another provider first')
+        self.settings['llm_providers'] = [r for r in records if r['id'] != pid]
+        llm_keys.delete(pid)
+        self.settings.save()
+        self.web_sync_soon()
+        return {'ok': True, 'provider': str(pid)}
+
+    def _web_llm_provider_select(self, pid):
+        rec = llm.select(self.settings, pid)   # the same routine GTK calls
+        b = self.brain
+        b.chat_models = []
+        b.chat_models_provider = ''
+        b.chat_models_error = ''
+        b.requests.append(('chat_models',))
+        self.settings.save()
+        self.web_sync_soon()
+        return {'ok': True, 'provider': rec['id'], 'model': rec['default_model']}
+
+    def _web_llm_provider_refresh(self, pid, info=None):
+        """called after a network check: share the models with GTK when active"""
+        info = info if isinstance(info, dict) else self._web_chat_models_status()
+        if str(pid) == str(self.settings.get('chat_provider') or ''):
+            self.brain.chat_models_loaded(info['models'], str(pid), info['error'])
+        self.web_sync_soon()
+        return {'provider': str(pid), 'models': info['models'], 'error': info['error']}
 
     def _web_apply_settings(self, patch):
         old = {k: self.settings.get(k) for k in patch}
@@ -554,7 +628,7 @@ class PanelMixin:
         # nlu_confidence is read from settings on every phrase, so it applies at once
         # stt_hotwords is read by the ears daemon from settings.json on the next
         # /listen or /wake (refresh_tune there) — the panel needs no extra call
-        if any(k in patch for k in ('chat_provider', 'ollama_url', 'polza_url')):
+        if any(k in patch for k in ('chat_provider', 'llm_providers', 'embed_url')):
             # the old list belongs to the old endpoint; GTK refetches it in the
             # background, the panel asks for it explicitly through /api/chat/models/refresh
             b.chat_models = []

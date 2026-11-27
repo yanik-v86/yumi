@@ -1,13 +1,8 @@
-"""Her chat: answers through a local Ollama or Polza.ai (no GTK here).
+"""Her chat: the prompts, the little questions and one facade over `yumi.llm`.
 
-She asks http://127.0.0.1:11434 (settings 'ollama_url') with the conversation so far
-and answers with the model from settings 'chat_model'
-(default lakomoor/vikhr-llama-3.2-1b-instruct:1b, changed in Settings → Her mind).
-
-When settings 'chat_provider' is 'polza.ai', she talks to the Polza.ai OpenAI-compatible
-endpoint (settings 'polza_url', 'polza_api_key') instead.
-
-If the provider is not running or has no models, ask() returns '' and she says so.
+Which provider answers, how the request is built and how a stream is parsed all
+live in the shared registry (``llm_providers`` in settings).  Here only her
+prompts, moods, clock and weather remain; no provider brand or endpoint.
 """
 import json
 import random
@@ -17,98 +12,31 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from . import llm
 from .tts import (_EN_SMALL, _RU_SMALL, _en_words, _ru_words)  # numbers as words for the spoken clock
-
-DEFAULT_MODEL = 'lakomoor/vikhr-llama-3.2-1b-instruct:1b'
-DEFAULT_URL = 'http://127.0.0.1:11434'
-POLZA_MODEL = 'deepseek/deepseek-v4-flash'
-
-
-def _log(msg):
-    """short timestamped line in /tmp/yumi/mind.log: model requests, no bodies"""
-    try:
-        with open('/tmp/yumi/mind.log', 'a', encoding='utf-8') as f:
-            f.write(f'{time.strftime("%H:%M:%S")} chat: {msg}\n')
-    except OSError:
-        pass
 
 
 def _provider(settings):
-    return str(settings.get('chat_provider') or 'ollama')
-
-
-def _url(settings, provider=None):
-    if (provider or _provider(settings)) == 'polza.ai':
-        return str(settings.get('polza_url') or 'https://polza.ai/api/v1').rstrip('/')
-    return str(settings.get('ollama_url') or DEFAULT_URL).rstrip('/')
-
-
-def _post(url, body, timeout):
-    req = urllib.request.Request(url, data=body,
-                                 headers={'Content-Type': 'application/json'})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+    return str((settings or {}).get('chat_provider') or 'local')
 
 
 def alive(settings, timeout=0.8):
-    """is there an Ollama / Polza.ai on the other end"""
-    try:
-        if _provider(settings) == 'polza.ai':
-            return True   # cannot cheaply ping Polza.ai without a key; assume yes
-        return isinstance(_get(_url(settings) + '/api/version', timeout), dict)
-    except (OSError, ValueError):
-        return False
-
-
-def _get(url, timeout, headers=None):
-    req = urllib.request.Request(url, headers=headers or {})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+    """a cheap pulse from the selected provider; never raises"""
+    return llm.alive(settings, timeout=timeout)
 
 
 def models_info(settings, provider=None, timeout=4):
-    """{'provider', 'models', 'error'} from the mind provider, never raises.
-
-    Ollama keeps its models in /api/tags; Polza.ai speaks the OpenAI
-    /models dialect and needs the key. Errors are deliberately generic:
-    neither the URL nor the key ever leaves this module.
-    """
-    prov = str(provider or _provider(settings))
-    out = {'provider': prov, 'models': [], 'error': ''}
-    try:
-        if prov == 'polza.ai':
-            key = str(settings.get('polza_api_key') or '').strip()
-            if not key:
-                out['error'] = 'no api key'
-                return out
-            data = _get(_url(settings, prov) + '/models', timeout,
-                        {'Authorization': 'Bearer ' + key})
-            field = 'id'
-            rows = data.get('data') if isinstance(data, dict) else None
-        else:
-            data = _get(_url(settings, prov) + '/api/tags', timeout)
-            field = 'name'
-            rows = data.get('models') if isinstance(data, dict) else None
-        if not isinstance(rows, list):
-            out['error'] = 'the provider did not answer'
-            return out
-        names = {str(m.get(field)) for m in rows
-                 if isinstance(m, dict) and m.get(field)}
-    except (OSError, ValueError, TypeError):
-        out['error'] = 'the provider did not answer'
-        return out
-    out['models'] = sorted(names)
-    if not out['models']:
-        out['error'] = 'the provider has no models'
-    return out
+    """{'provider', 'models', 'error'} from the shared registry, never raises"""
+    return llm.models(settings, provider, timeout)
 
 
 def models(settings, provider=None, timeout=4):
-    """model names the provider offers, sorted; the in-world menu uses this"""
+    """names the provider offers; a silent one still has its default model"""
     info = models_info(settings, provider, timeout)
-    if not info['models'] and info['provider'] == 'polza.ai':
-        return [POLZA_MODEL]   # no key or no answer: keep her usual answer model
-    return info['models']
+    if info['models']:
+        return info['models']
+    rec = llm.get(settings, provider or _provider(settings)) or {}
+    return [rec['default_model']] if rec.get('default_model') else []
 
 
 MOODS = (
@@ -213,198 +141,24 @@ def recalled_note(turns, lang='en', settings=None):
 
 
 def _strip_think(text):
-    """the mind's silent reasoning sometimes leaks into the answer as a
-    «<think>...» block: it never reaches the bubble"""
-    tag = '<' + 'think' + '>'
-    return re.sub(re.escape(tag) + r'.*?' + re.escape(tag) + r'\s*', '',
-                  str(text or ''), flags=re.S | re.I).strip()
-
-
-def _ollama_chat(settings, history, timeout, stream=False):
-    body = {'model': settings.get('chat_model') or DEFAULT_MODEL,
-            'messages': history, 'stream': stream,
-            'options': {'num_predict': 220},
-            'think': _think(settings)}          # off: the answer comes right away
-    if stream:
-        req = urllib.request.Request(_url(settings) + '/api/chat', data=json.dumps(body).encode(),
-                                     headers={'Content-Type': 'application/json'})
-        return urllib.request.urlopen(req, timeout=timeout)
-    return _post(_url(settings) + '/api/chat', json.dumps(body).encode(), timeout)
-
-
-def _polza_chat(settings, history, timeout, stream=False):
-    body = {'model': settings.get('chat_model') or POLZA_MODEL,
-            'messages': history, 'stream': stream,
-            'max_tokens': 220}
-    headers = {'Content-Type': 'application/json',
-               'Authorization': 'Bearer ' + str(settings.get('polza_api_key') or '')}
-    req = urllib.request.Request(_url(settings) + '/chat/completions',
-                                 data=json.dumps(body).encode(), headers=headers)
-    if stream:
-        return urllib.request.urlopen(req, timeout=timeout)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+    """the mind's silent reasoning must never reach a bubble"""
+    return llm.strip_think(text)
 
 
 def _think_filter():
-    """a streaming filter for the mind's «<think>…» reasoning: yields only the text
-    that belongs in the answer, holding back a block that may be split across chunks"""
-    tag = '<' + 'think' + '>'
-    end = '<' + '/think' + '>'
-    buf = ''
-    inside = False
-
-    def feed(chunk):
-        nonlocal buf, inside
-        buf += str(chunk or '')
-        out = []
-        while buf:
-            if inside:
-                i = buf.lower().find(end)
-                if i < 0:
-                    keep = len(end) - 1
-                    buf = buf[-keep:] if len(buf) > keep else buf
-                    break
-                buf = buf[i + len(end):]
-                inside = False
-            else:
-                i = buf.lower().find(tag)
-                if i < 0:
-                    keep = len(tag) - 1
-                    if len(buf) > keep:
-                        out.append(buf[:-keep])
-                        buf = buf[-keep:]
-                    break
-                if i:
-                    out.append(buf[:i])
-                buf = buf[i + len(tag):]
-                inside = True
-        return ''.join(out)
-
-    def flush():
-        nonlocal buf, inside
-        if inside:
-            buf = ''
-            return ''
-        out, buf = buf, ''
-        return out
-
-    return feed, flush
-
-
-def _ollama_stream(resp):
-    feed, flush = _think_filter()
-    try:
-        try:
-            for raw in resp:
-                try:
-                    line = raw.decode('utf-8', errors='replace').strip()
-                except Exception:
-                    continue
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                except ValueError:
-                    continue
-                chunk = ((data.get('message') or {}).get('content') or '')
-                out = feed(chunk)
-                if out:
-                    yield out
-                if data.get('done'):
-                    break
-        except (OSError, ValueError):
-            pass
-        tail = flush()
-        if tail:
-            yield tail
-    finally:
-        try:
-            resp.close()
-        except Exception:
-            pass
-
-
-def _polza_stream(resp):
-    feed, flush = _think_filter()
-    try:
-        try:
-            for raw in resp:
-                try:
-                    line = raw.decode('utf-8', errors='replace').strip()
-                except Exception:
-                    continue
-                if not line or not line.startswith('data:'):
-                    continue
-                payload = line[5:].strip()
-                if payload == '[DONE]':
-                    break
-                try:
-                    data = json.loads(payload)
-                except ValueError:
-                    continue
-                delta = ((data.get('choices') or [{}])[0].get('delta') or {})
-                chunk = delta.get('content') or ''
-                out = feed(chunk)
-                if out:
-                    yield out
-        except (OSError, ValueError):
-            pass
-        tail = flush()
-        if tail:
-            yield tail
-    finally:
-        try:
-            resp.close()
-        except Exception:
-            pass
+    """a streaming filter for reasoning split across several chunks"""
+    return llm.think_filter()
 
 
 def ask_stream(settings, history, timeout=90):
     """a reply as a stream of text chunks; yields nothing when it did not work out"""
-    prov = _provider(settings)
-    model = settings.get('chat_model') or (POLZA_MODEL if prov == 'polza.ai' else DEFAULT_MODEL)
-    if prov == 'polza.ai' and not str(settings.get('polza_api_key') or '').strip():
-        _log(f'ask_stream skipped: polza.ai key is empty, model={model}')
-        return          # no key: Polza.ai would hang or refuse, she says so at once
-    _log(f'ask_stream -> {prov} model={model} url={_url(settings)} msgs={len(history or [])} timeout={timeout}s')
-    try:
-        if prov == 'polza.ai':
-            resp = _polza_chat(settings, history, timeout, stream=True)
-            _log(f'ask_stream <- {prov} stream opened')
-            yield from _polza_stream(resp)
-        else:
-            resp = _ollama_chat(settings, history, timeout, stream=True)
-            _log(f'ask_stream <- {prov} stream opened')
-            yield from _ollama_stream(resp)
-        _log(f'ask_stream done {prov} model={model}')
-    except (urllib.error.URLError, OSError, ValueError) as e:
-        _log(f'ask_stream error {prov} model={model}: {e}')
-        return
+    yield from llm.ask_stream(settings, history, timeout=timeout)
 
 
 def ask(settings, history, timeout=90):
     """one reply for the conversation `history` ([{role, content}, ...], user last);
     the reply text, or '' if it did not work out"""
-    prov = _provider(settings)
-    model = settings.get('chat_model') or (POLZA_MODEL if prov == 'polza.ai' else DEFAULT_MODEL)
-    if prov == 'polza.ai' and not str(settings.get('polza_api_key') or '').strip():
-        _log(f'ask skipped: polza.ai key is empty, model={model}')
-        return ''          # no key: Polza.ai would hang or refuse, she says so at once
-    _log(f'ask -> {prov} model={model} url={_url(settings)} msgs={len(history or [])} timeout={timeout}s')
-    try:
-        if prov == 'polza.ai':
-            data = _polza_chat(settings, history, timeout)
-            msg = (data.get('choices') or [{}])[0].get('message') or {}
-            reply = _strip_think(' '.join(str(msg.get('content') or '').split()))
-        else:
-            data = _ollama_chat(settings, history, timeout)
-            reply = _strip_think(' '.join(str((data.get('message') or {}).get('content') or '').split()))
-        _log(f"ask <- {prov} model={model} ok={'yes' if reply else 'empty'}")
-        return reply
-    except (urllib.error.URLError, OSError, ValueError) as e:
-        _log(f'ask error {prov} model={model}: {e}')
-        return ''
+    return llm.ask(settings, history, timeout=timeout)
 
 
 def summarize(settings, title, text, lang='en', timeout=15):
@@ -561,50 +315,12 @@ def weather_when(text):
 def _one_shot(settings, user, tokens, lang='en', timeout=90, temp=None, system=None):
     """one reply for one user line, no conversation behind it (the hour joke, a joke, ...);
     the reply text, or '' when the mind is out of reach"""
-    prov = _provider(settings)
-    model = settings.get('chat_model') or (POLZA_MODEL if prov == 'polza.ai' else DEFAULT_MODEL)
-    if prov == 'polza.ai' and not str(settings.get('polza_api_key') or '').strip():
-        _log(f'one_shot skipped: polza.ai key is empty, model={model}')
-        return ''          # no key: Polza.ai would hang or refuse, she says so at once
-    options = {'num_predict': tokens} if prov != 'polza.ai' else {'max_tokens': tokens}
-    if temp is not None:
-        options['temperature'] = temp      # the jokes and the hour lines want a loose hand
-    req_body = {
-        'model': model,
-        'messages': [
-            {'role': 'system', 'content': system or system_prompt(lang, bool(settings.get('sassy')), settings)},
-            {'role': 'user', 'content': user}
-        ],
-        'stream': False,
-        'options': options,
-    }
-    if temp is not None and prov == 'polza.ai':
-        req_body['temperature'] = temp     # the openai-style body carries it on top
-    if prov != 'polza.ai':
-        req_body['think'] = _think(settings)    # off: the joke comes right away
-    body = json.dumps(req_body).encode()
-    _log(f'one_shot -> {prov} model={model} url={_url(settings)} timeout={timeout}s')
-    try:
-        if prov == 'polza.ai':
-            headers = {'Content-Type': 'application/json',
-                       'Authorization': 'Bearer ' + str(settings.get('polza_api_key') or '')}
-            req = urllib.request.Request(_url(settings) + '/chat/completions', data=body,
-                                         headers=headers)
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                data = json.loads(r.read().decode())
-            msg = (data.get('choices') or [{}])[0].get('message') or {}
-            reply = _strip_think(' '.join(str(msg.get('content') or '').split()))
-        else:
-            req = urllib.request.Request(_url(settings) + '/api/chat', data=body,
-                                         headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                data = json.loads(r.read().decode())
-            reply = _strip_think(' '.join(str((data.get('message') or {}).get('content') or '').split()))
-        _log(f"one_shot <- {prov} model={model} ok={'yes' if reply else 'empty'}")
-        return reply
-    except (urllib.error.URLError, OSError, ValueError) as e:
-        _log(f'one_shot error {prov} model={model}: {e}')
-        return ''
+    messages = [
+        {'role': 'system', 'content': system or system_prompt(lang, bool(settings.get('sassy')), settings)},
+        {'role': 'user', 'content': user},
+    ]
+    return llm.ask(settings, messages, timeout=timeout, max_tokens=tokens,
+                   temperature=temp)
 
 
 def music_name(settings, kind, query, timeout=15):

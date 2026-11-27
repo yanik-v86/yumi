@@ -92,9 +92,10 @@ WebBridge (yumi.ui.bridge)  ── GLib.idle_add ──▶  App / Brain / Memory
 | `voice` | Ушки и голос | карточки «Активация», «Судья фраз», «Голос»: выбор движка, состояние «доступно/нет», проверка имени и фразы вживую, прослушивание TTS; ниже — «закрыть ушки», выбор микрофона, живое состояние микрофона с кнопками Пауза/Продолжить/Освободить и остальные настройки ушек/звука; голосовые профили: явный выбор профиля, поля «Старое имя» / «Новое имя», результат «Проверить голос» сохраняется при обновлении статуса, переименование подтверждает «было → стало», удаление профиля спрашивает подтверждение в модалке |
 | `doctor` | Диагностика | один отчёт: движки, микрофоны, модели, имя, TTS и STT; быстрый запуск без микрофона, запись и проверку хэшей моделей, копирование отчёта. То же, что `yumi --doctor` |
 | `buttons` | Кнопки | кольцо, порядок, выключенные кнопки, свои команды, добавление и редактирование; карточка ожидающего разрешения Разово/Всегда/Запретить |
-| `user-intents` | Мои фразы | CRUD своих интентов в `user-intents/<id>/intent.json`, импорт/экспорт JSON; «Проверить» на карточке запускает найденный интент, «Совпадение?» только проверяет; для `command` есть `capture` и `{stdout}`, раздельные «Озвучивать отдельно» / «Пузыть отдельно», свои шаблоны и «Лимит бабла» (1000 по умолчанию); тумблер `user_intents` живёт в Настройках → Мозги; ниже — блок журнала действий: уровень, opt-in на превью, лимиты, фильтры по правилу/этапу, обновление и очистка, автообновление по SSE `intents_log` |
+| `user-intents` | Мои фразы | CRUD своих интентов в `user-intents/<id>/intent.json`, импорт/экспорт ZIP; «Проверить» на карточке запускает найденный интент, «Совпадение?» только проверяет; для `command` есть `capture` и `{stdout}`, раздельные «Озвучивать отдельно» / «Пузыть отдельно», свои шаблоны и «Лимит бабла» (1000 по умолчанию); тумблер `user_intents` живёт в Настройках → Мозги; ниже — блок журнала действий: уровень, opt-in на превью, лимиты, фильтры по правилу/этапу, обновление и очистка, автообновление по SSE `intents_log` |
+| `providers` | Провайдеры | карточки общего реестра нейронок: id, имя, диалект, адрес, активный, «ключ задан», число моделей, последняя ошибка; создание/правка/удаление, «Проверить», «Выбрать», «Обновить модели»; ключ пишется только в приватный файл |
 | `appearance` | Внешний вид | текущая палитра, пипетка, пересборка цветов, наряд, масштаб, другой экран, JSON палитры |
-| `settings` | Настройки | все ключи `settings.json`, сгруппированные по секциям, поиск, сброс, живое применение; в разделе «Её мозги» — список моделей текущего провайдера кнопками, «Обновить модели» и автообновление после смены провайдера/адреса |
+| `settings` | Настройки | все ключи `settings.json`, сгруппированные по секциям, поиск, сброс, живое применение; реестр `llm_providers` скрыт (правка на странице `providers`); в разделе «Её мозги» — список моделей текущего провайдера кнопками, «Обновить модели» и автообновление после смены `chat_provider`, `llm_providers`, `embed_url` |
 | `memory` | Память | поиск по дневнику, лимит, строки, удаление 18+ и всей памяти |
 | `configs` | Конфиги | список JSON-файлов, просмотр и редактирование с бэкапами; токен только для чтения |
 | `security` | Безопасность | адрес, токен, сессии, ротация ссылки, настройки доступа, список и сброс сохранённых разрешений, журнал |
@@ -165,7 +166,14 @@ ctx.navigate(id)
 | GET | `/api/models` | кэшированная проверка моделей (без хэширования) |
 | POST | `/api/models/verify`, `/api/models/record` | `{names?}` — явная проверка / запись SHA-256 |
 | GET | `/api/chat/models` | последний список моделей мозгов: `{provider, models, error}` (без сети) |
-| POST | `/api/chat/models/refresh` | `{provider?}` — запросить модели у Ollama (`/api/tags`) или Polza.ai (`/models`); обновляет список в Юми и публикует SSE `chat_models`; ключ не отдаётся |
+| POST | `/api/chat/models/refresh` | `{provider?}` — запросить модели у записи реестра по её диалекту (`/api/tags` или `/models`); обновляет список в Юми и публикует SSE `chat_models`; ключ не отдаётся |
+| GET | `/api/llm/providers` | список записей реестра с `has_key`, `models_count`, `active`, `error`; без ключей |
+| POST | `/api/llm/providers` | `{record, key}` — создать запись; ключ уходит в `llm_keys.json` |
+| PUT | `/api/llm/providers/<id>` | `{record, key}` — изменить запись; пустой или замаскированный `key` оставляет прежний |
+| DELETE | `/api/llm/providers/<id>` | удалить (нельзя удалить активный и последний); ключ удаляется вместе с записью |
+| POST | `/api/llm/providers/<id>/select` | выбрать активным через общую `llm.select()`, сбросить `chat_model` на `default_model` |
+| POST | `/api/llm/providers/<id>/test` | дешёвая проверка `models()` в HTTP-потоке, без chat-запроса |
+| POST | `/api/llm/providers/<id>/models/refresh` | обновить кэш моделей; для активной записи список попадает в GTK |
 | GET | `/api/permissions` | сохранённые правила allow/deny |
 | POST | `/api/permissions/answer` | `{decision: once|always|deny}` — ответить на ожидающее разрешение; `always` только кликом |
 | POST | `/api/permissions/clear` | стереть все сохранённые правила |
@@ -210,7 +218,7 @@ ctx.navigate(id)
 | POST | `/api/security/link` | показать ссылку с токеном (только POST + CSRF) |
 | GET | `/api/audit` | хвост журнала панели |
 | GET | `/api/logs?name=&lines=` | логи; `name=intents` — приватный JSONL журнал своих фраз |
-| GET | `/api/events` | SSE: hello/status/bubble/settings/files/jobs/actions/chat/chat_models/notes/server/doctor/intents_log |
+| GET | `/api/events` | SSE: hello/status/bubble/settings/files/jobs/actions/chat/chat_models/llm/notes/server/doctor/intents_log |
 | GET | `/api/facts?lang=ru|en` | список фактов с источниками и сводка по книге (`builtin`, `custom`, `total`, `error`) |
 | POST | `/api/facts/check` | `{path}` — проверить свой JSON, не меняя настроек |
 | POST | `/api/facts/say` | `{id?}` — сказать факт (или случайный) сразу, минуя лимит болтовни; во сне отказ |
@@ -249,6 +257,13 @@ Task payload'ов в снимке нет; мутирующих HTTP-роутов
 фичи очищает участников и кэш узнавания, но не удаляет профили. `speakers.json`
 **не** входит в `CONFIG_FILES`: биометрию нельзя редактировать как обычный JSON через
 панель.
+
+`runtime.llm` — общий снимок реестра нейронок, который читают и GTK, и панель:
+`providers` (список записей `{id, name, kind, url, default_model, enabled, models, active,
+has_key, models_count, error}`), `active_provider`, `active_model`. Никаких значений ключей,
+тел запросов и токенов в снимке нет; `has_key` — только булева метка. Событие SSE `llm`
+публикуется на всех мутациях `/api/llm/providers*` и содержит такой же безопасный результат.
+Страница `providers` редактирует реестр, GTK — только переключает провайдера и модель.
 
 `runtime.facts` — сводка книги фактов (`path`, `builtin`, `custom`, `total`, `error`, `ok`),
 текущий `mode` (`off` / `mixed` / `only`) и `last` (последний выбранный факт). Модель для
@@ -290,7 +305,12 @@ voice_engines, voice_mics, voice_test_wake(seconds, ear), voice_test(text, lang)
 speaker_status, speaker_enroll, speaker_test, speaker_rename(id, label),
 speaker_delete(id), speaker_clear_participants,
 facts_list(lang), facts_check(path), facts_say(id),
-tools_*, logs`.
+llm_providers, llm_provider_save(record, key), llm_provider_delete(id),
+llm_provider_select(id), llm_provider_test(id), llm_models_refresh(id), tools_*, logs`.
+
+Сетевые проверки провайдеров (`llm_provider_test`, `llm_models_refresh`) работают на
+HTTP-потоке с отсоединённой копией настроек и не блокируют GTK; мутации реестра идут
+через `_on()` → `App._web_call()` в GTK-поток.
 
 Проверки слуха и голоса (`voice_listen`, `voice_test_wake`, `/api/speaker/test`) на время
 записи ставят фоновый wake-цикл на паузу и всегда возобновляют его. `wake_pause()` не
@@ -347,7 +367,9 @@ tools_*, logs`.
 - Заголовки: `Content-Security-Policy` без внешних источников, `X-Frame-Options: DENY`,
   `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`.
 - Статика отдаётся через `_safe_join`; выход за пределы `yumi/webui` и спрайтов невозможен.
-- Секреты (`polza_api_key`, пароли/ключ Jellyfin) маскируются в API и в редакторе конфигов.
+- Ключи нейронок хранятся только в `~/.config/yumi/llm_keys.json` (права `0600`) и не
+  отдаются ни в `/api/status`, ни в `/api/settings`, ни в аудит; пароли/ключ Jellyfin
+  маскируются в API и в редакторе конфигов.
 - Превью и открытие файлов разрешены только для недавних, полки и собственных загрузок
   панели: подставленный в `?path=` посторонний путь получает 403.
 - `webpanel.json` нельзя сохранить через API: токен меняется только на странице

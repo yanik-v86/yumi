@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The browser panel's HTTP face: catalog, lock, CSRF, settings and static files.
 Run: python3 tests/test_webpanel.py"""
+import copy
 import http.cookiejar
 import io
 import json
@@ -34,7 +35,11 @@ class Bridge:
     """The smallest stand-in for yumi.ui.bridge.WebBridge."""
 
     def __init__(self, settings=None):
-        self.settings = settings if settings is not None else dict(config.DEFAULT_SETTINGS)
+        self.settings = settings if settings is not None else copy.deepcopy(config.DEFAULT_SETTINGS)
+        self.settings.setdefault('llm_providers', []).append(
+            {'id': 'cloud', 'name': 'Cloud model', 'kind': 'openai',
+             'url': 'https://example.test/v1', 'default_model': 'deepseek/deepseek-v4-flash',
+             'enabled': True, 'models': []})
         self.applied = []
         self.saved = []
         self.voice_calls = []
@@ -71,7 +76,7 @@ class Bridge:
                         'busy': False, 'progress': False, 'bubble': 'привет',
                         'face': 'idle', 'monitor': None, 'monitors': 1,
                         'chat_models': ['one', 'two'], 'mics': [], 'unavailable': [],
-                        'chat_models_info': {'provider': 'ollama',
+                        'chat_models_info': {'provider': 'local',
                                              'models': ['one', 'two'], 'error': ''},
                         'palette': {}, 'ui_colors': {'accent': '#c9a7e0'},
                         'music': {'now_playing': None, 'volume': 50, 'resumable': False},
@@ -135,6 +140,47 @@ class Bridge:
         self.chat_models_refreshes.append(provider)
         return {'provider': provider or self.settings.get('chat_provider'),
                 'models': ['one', 'two'], 'error': ''}
+
+    # ---- the shared provider registry
+    def llm_providers(self):
+        active = str(self.settings.get('chat_provider') or '')
+        rows = []
+        for rec in self.settings.get('llm_providers') or []:
+            rows.append({**rec, 'active': rec['id'] == active, 'has_key': False,
+                         'models_count': len(rec.get('models') or []), 'error': ''})
+        return {'providers': rows, 'active_provider': active,
+                'active_model': str(self.settings.get('chat_model') or '')}
+
+    def llm_provider_save(self, record, key=None):
+        from yumi import llm
+        records = self.settings.get('llm_providers') or []
+        clean = llm.validate_record(record, [r['id'] for r in records
+                                             if r['id'] != record.get('id')])
+        found = False
+        for i, row in enumerate(records):
+            if row['id'] == clean['id']:
+                records[i] = clean
+                found = True
+        if not found:
+            records.append(clean)
+        self.settings['llm_providers'] = records
+        return {'ok': True, 'provider': clean['id']}
+
+    def llm_provider_delete(self, pid):
+        self.settings['llm_providers'] = [r for r in self.settings['llm_providers']
+                                          if r['id'] != pid]
+        return {'ok': True, 'provider': pid}
+
+    def llm_provider_select(self, pid):
+        from yumi import llm
+        llm.select(self.settings, pid)
+        return {'ok': True, 'provider': pid, 'model': self.settings['chat_model']}
+
+    def llm_provider_test(self, pid, timeout=4):
+        return {'provider': pid, 'ok': True, 'models': ['one', 'two'], 'error': ''}
+
+    def llm_models_refresh(self, pid, timeout=4):
+        return {'provider': pid, 'models': ['one', 'two'], 'error': ''}
 
     def actions_get(self):
         return {'actions': self.actions, 'ring': [
@@ -407,7 +453,7 @@ orig_intents_dir = user_intents.INTENTS_DIR
 config.STATE_DIR = tmp
 user_intents.INTENTS_DIR = tmp / 'user-intents'
 user_intents.INTENTS_FILE = tmp / 'user_intents.json'
-settings = dict(config.DEFAULT_SETTINGS)
+settings = copy.deepcopy(config.DEFAULT_SETTINGS)
 settings['web_panel'] = True
 settings['web_panel_host'] = '127.0.0.1'
 settings['web_panel_port'] = free_port()
@@ -449,10 +495,11 @@ try:
     assert set(config.DEFAULT_SETTINGS) <= keys, set(config.DEFAULT_SETTINGS) - keys
     assert {'web_panel', 'web_panel_host', 'web_panel_port', 'web_panel_open',
             'web_panel_session_hours'} <= keys
-    assert len(schema['pages']) == 16
+    assert len(schema['pages']) == 17
     assert {page['id'] for page in schema['pages']} == {
         'dashboard', 'chat', 'notes', 'facts', 'files', 'music', 'voice', 'doctor', 'buttons',
-        'user-intents', 'appearance', 'settings', 'memory', 'configs', 'security', 'logs'}
+        'user-intents', 'appearance', 'providers', 'settings', 'memory', 'configs', 'security',
+        'logs'}
     entries = {entry['key']: entry for entry in schema['settings']}
     assert entries['chatter_facts']['type'] == 'select'
     assert entries['chatter_facts']['choices'] == ['off', 'mixed', 'only']
@@ -527,7 +574,24 @@ try:
         raise AssertionError('bad confidence accepted')
     except ValueError:
         pass
-    assert catalog.redact({'polza_api_key': 'secret', 'music_jellyfin_password': 'x'})['polza_api_key'] == catalog.MASK
+    assert catalog.redact({'music_jellyfin_password': 'secret'})['music_jellyfin_password'] == catalog.MASK
+    assert entries['llm_providers']['hidden'] and entries['llm_providers']['section'] == 'mind'
+    assert entries['chat_provider']['choices'] == ['local']
+    assert entries['chat_provider']['choice_labels']['local'] == 'Local model'
+    dynamic = catalog.schema({'chat_provider': 'local', 'llm_providers': [
+        {'id': 'local', 'name': 'Local model', 'kind': 'ollama',
+         'url': 'http://127.0.0.1:11434', 'default_model': 'm', 'enabled': True, 'models': []},
+        {'id': 'cloud', 'name': 'Cloud model', 'kind': 'openai',
+         'url': 'https://example.test/v1', 'default_model': 'm', 'enabled': True, 'models': []}]})
+    dynamic_entries = {entry['key']: entry for entry in dynamic['settings']}
+    assert dynamic_entries['chat_provider']['choices'] == ['local', 'cloud']
+    assert dynamic_entries['chat_provider']['choice_labels']['cloud'] == 'Cloud model'
+    assert catalog.coerce('llm_providers', [
+        {'id': 'other', 'name': 'Other', 'kind': 'ollama', 'url': 'http://127.0.0.1:1',
+         'default_model': 'm', 'enabled': True, 'models': []},
+        {'id': 'bad', 'name': 'Bad', 'kind': 'ftp', 'url': 'ftp://x', 'default_model': 'm'},
+    ]) == [{'id': 'other', 'name': 'Other', 'kind': 'ollama', 'url': 'http://127.0.0.1:1',
+            'default_model': 'm', 'enabled': True, 'models': []}]
     assert catalog.validate_settings_patch({'web_panel': True, 'web_panel_port': '9000'}) == {
         'web_panel': True, 'web_panel_port': 9000}
     try:
@@ -807,12 +871,42 @@ try:
     assert code == 200 and data['models'] == ['one', 'two'], (code, data)
     assert bridge.chat_models_refreshes[-1] is None
     code, data, _ = call('POST', '/api/chat/models/refresh',
-                         {'provider': 'polza.ai'}, csrf=csrf)
-    assert code == 200 and data['provider'] == 'polza.ai', (code, data)
-    assert bridge.chat_models_refreshes[-1] == 'polza.ai'
+                         {'provider': 'cloud'}, csrf=csrf)
+    assert code == 200 and data['provider'] == 'cloud', (code, data)
+    assert bridge.chat_models_refreshes[-1] == 'cloud'
     code, data, _ = call('POST', '/api/chat/models/refresh',
                          {'provider': 'nope'}, csrf=csrf)
     assert code == 400
+
+    # the shared provider registry: no key ever appears in an answer or an audit
+    code, data, _ = call('GET', '/api/llm/providers')
+    assert code == 200 and {p['id'] for p in data['providers']} == {'local', 'cloud'}, data
+    assert all('key' not in p for p in data['providers'])
+    code, data, _ = call('POST', '/api/llm/providers',
+                         {'record': {'id': 'one', 'name': 'One', 'kind': 'ollama',
+                                     'url': 'http://127.0.0.1:1', 'default_model': 'm',
+                                     'enabled': True, 'models': []}, 'key': 'topsecret'},
+                         csrf=csrf)
+    assert code == 200, data
+    new = [p for p in bridge.llm_providers()['providers'] if p['id'] == 'one'][0]
+    assert 'topsecret' not in str(new)
+    code, data, _ = call('POST', '/api/llm/providers/one/test', {}, csrf=csrf)
+    assert code == 200 and data['ok'] and 'topsecret' not in str(data), data
+    code, data, _ = call('POST', '/api/llm/providers/one/models/refresh', {}, csrf=csrf)
+    assert code == 200 and data['models'] == ['one', 'two'], data
+    code, data, _ = call('POST', '/api/llm/providers/one/select', {}, csrf=csrf)
+    assert code == 200 and data['provider'] == 'one', data
+    code, data, _ = call('POST', '/api/llm/providers/one/select', {})
+    assert code == 403, 'select without CSRF must fail'
+    code, data, _ = call('DELETE', '/api/llm/providers/one', csrf=csrf)
+    assert code == 200, data          # the mock allows deleting the active one
+    code, data, _ = call('DELETE', '/api/llm/providers/nope', csrf=csrf)
+    assert code == 400, data
+    code, data, _ = call('PUT', '/api/llm/providers/local',
+                         {'record': {'id': 'renamed', 'name': 'Local', 'kind': 'ollama',
+                                     'url': 'http://127.0.0.1:11434', 'default_model': 'm'}},
+                         csrf=csrf)
+    assert code == 400, 'the provider id cannot change'
 
     code, data, _ = call('GET', '/api/chat/history')
     assert code == 200 and data['messages'] == [] and data['rev'] == 0

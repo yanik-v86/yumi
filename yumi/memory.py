@@ -22,7 +22,7 @@ import time
 import urllib.request
 import zlib
 
-from .chat import DEFAULT_URL
+from .llm import DEFAULT_EMBED_URL
 from .config import STATE_DIR
 
 DB_FILE = STATE_DIR / 'yumi.db'
@@ -225,14 +225,14 @@ class Memory:
 
     # ---------------------------------------------------------------- the vectors
     def _embed(self, text, settings, kind='passage'):
-        """(vector, dim, kind) of a line: Ollama's embeddings ('model') when they
+        """(vector, dim, kind) of a line: server embeddings ('model') when they
         answer, the hashed bag-of-words ('bag') otherwise (and for a while after
         any failure); kind is 'query' for the phrase just asked and 'passage'
         for the diary lines — some minds want to know which is which"""
         if time.time() >= self._fail_until:
             model = str(settings.get('embed_model') or 'nomic-embed-text')
             try:
-                url = str(settings.get('ollama_url') or DEFAULT_URL).rstrip('/') \
+                url = str(settings.get('embed_url') or DEFAULT_EMBED_URL).rstrip('/') \
                       + '/api/embeddings'
                 body = {'model': model,
                         'prompt': _prefix(model, kind) + str(text)[:800]}

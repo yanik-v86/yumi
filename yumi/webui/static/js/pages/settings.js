@@ -57,7 +57,7 @@ export function render(view, ctx) {
     drawContent();
   });
 
-  const entries = () => ctx.schema?.settings || [];
+  const entries = () => (ctx.schema?.settings || []).filter((entry) => !entry.hidden);
   const sections = () => ctx.schema?.sections || [];
 
   function valueOf(entry) {
@@ -128,13 +128,19 @@ export function render(view, ctx) {
   function mindNote() {
     const info = modelInfo();
     const models = Array.isArray(info.models) ? info.models.filter(Boolean).map(String) : [];
-    const provider = info.provider === 'polza.ai' ? 'Polza.ai'
-      : info.provider === 'ollama' ? 'Ollama'
-        : (lang() === 'ru' ? 'не запрошен' : 'not fetched');
+    const llm = status.runtime?.llm || {};
+    const current = (llm.providers || []).find((p) => p.active);
+    const provider = current?.name || llm.active_provider || info.provider
+      || (lang() === 'ru' ? 'не запрошен' : 'not fetched');
     const box = el('div', { class: 'card-hint', style: { marginBottom: '12px' } },
       el('div', { class: 'row' },
         el('span', { text: lang() === 'ru' ? 'Провайдер моделей:' : 'Model provider:' }),
         el('b', { text: provider }),
+        el('button', {
+          class: 'btn btn-small btn-ghost', type: 'button',
+          text: lang() === 'ru' ? 'Провайдеры' : 'Providers',
+          onclick: () => ctx.navigate('providers'),
+        }),
         el('span', { class: 'spacer' }),
         el('button', {
           class: 'btn btn-small', type: 'button',
