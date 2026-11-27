@@ -658,6 +658,14 @@ not enough either: the stretch must last `oww_positive_ms` (160 ms). The knobs l
 (`oww_reject_cooldown`). The panel's changes are picked up before the next wake, no restart
 of Yumi needed.
 
+When the chosen microphone is a denoised one (`effect_output.rnnoise`), loud music can make
+rnnoise swallow a quiet name: the trained ear and Vosk then hear lyrics instead of «Юми».
+A spare whisper ear therefore reads short slices of the raw microphone every few seconds
+while she waits; a name at the head of what it read plus a wish meant for her wakes her.
+Talk that only mentions her name deep inside a sentence stays a dream. The fallback is
+`wake_stt_sweep` in **Settings → Her ears** («Spare whisper ear for noisy rooms»); turn it
+off if you want to spend no extra CPU while she listens.
+
 The browser panel's **Ears & voice** page puts the two choices beside each other and can test
 them without leaving the browser: **1. Activation** picks the ear that hears «Yumi» —
 openWakeWord (the trained `yumi.onnx` model) or vosk — and **Test the name** holds the

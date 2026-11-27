@@ -107,6 +107,11 @@ WAKE_VOSK_FALLBACK = 4.0      # s: how long ago the stop ear's last final may st
 WAKE_READ = 4.0               # s of the tape the phrase ear reads after the name: a
                               # command is short, and a longer window buys latency,
                               # not words (the user's own dial: wake_read_s)
+WAKE_SWEEP_S = 4.0            # s between the spare whisper ear's reads of the raw mic:
+                              # rnnoise throws the name away under loud music; this ear
+                              # hears what the microphone actually caught
+WAKE_SWEEP_TAPE = 6.0         # s of raw sound one read spans (long enough for a name
+                              # and a command, short enough not to stall the mic)
 VOSK_STALE = 2.0              # s: how fresh the small ear's final must be for a caller
                               # that stands in for STT with it (fresh_vosk's slack): an
                               # older final is someone else's talk from before the wake
@@ -296,7 +301,8 @@ def _wake_tuning():
          'judge_ttl': JUDGE_TTL, 'wake_phonetic': True,
          'stt_diag_wav': False, 'oww_cooldown': OWW_COOLDOWN,
          'wake_lead_ms': WAKE_LEAD_MS, 'wake_listen': WAKE_LISTEN,
-         'wake_read_s': WAKE_READ, 'wake_vosk_fallback': WAKE_VOSK_FALLBACK}
+         'wake_read_s': WAKE_READ, 'wake_vosk_fallback': WAKE_VOSK_FALLBACK,
+         'wake_stt_sweep': True}
 
     def clamp(key, lo, hi):
         try:
@@ -328,7 +334,7 @@ def _wake_tuning():
     # as «о негдот». The stop ear's own reading is a stronger, per-phrase hint;
     # these words are the fallback for a phrase vosk did not catch.
     t['stt_hotwords'] = hotwords_text(st.get('stt_hotwords', ''))
-    for key in ('wake_phonetic', 'stt_diag_wav', 'oww_confirm'):
+    for key in ('wake_phonetic', 'stt_diag_wav', 'oww_confirm', 'wake_stt_sweep'):
         try:
             t[key] = bool(st[key])
         except (TypeError, ValueError, KeyError):
@@ -492,6 +498,33 @@ def echo_ready(mic=None):
             if not _echo_load(want):        # the reload failed: the plain mic is next best
                 _echo['on'], _echo['master'], _echo['module'] = False, None, None
     return ECHO_SOURCE if _echo['on'] else None
+
+
+def raw_source(mic=None):
+    """the un-denoised capture source, when the chosen mic is a cleaned end.
+
+    rnnoise keeps the room pleasant but under loud music it swallows a quiet
+    name: the trained ear and the small one then hear lyrics instead of «Юми».
+    The spare wake ear needs the sound the microphone actually caught, so find
+    a plain capture source beside the chosen one. A raw mic already chosen
+    needs no second reader: None says 'use the main ring'.
+    """
+    name = str(mic or '')
+    if not name or 'rnnoise' not in name and 'effect_output' not in name:
+        return None
+    plain = []
+    for line in _pactl_short('sources').splitlines():
+        part = line.split('\t')
+        if len(part) < 2:
+            continue
+        src = part[1].strip()
+        if not src or src == name or src == ECHO_SOURCE or '.monitor' in src:
+            continue
+        if 'rnnoise' in src or 'effect_output' in src:
+            continue
+        if src.startswith('alsa_input.') or 'capture' in src or 'input' in src:
+            plain.append(src)
+    return plain[0] if plain else None
 
 
 class Detector:
@@ -1092,6 +1125,20 @@ def fallback_route(text, hints=()):
     except Exception:                   # noqa: BLE001 - the ears keep working without it
         return 'ignore'
     return route(text, hints)
+
+
+def stt_wake_tail(text, spellings, hints=()):
+    """a name read by the spare phrase ear and the wish that followed it.
+
+    The name must stand at the head of what was read (wake_at's own rule): a
+    talk that merely mentions «Юми» deep inside a sentence stays a dream.
+    The wish must also be meant for her (fallback_route) — lyrics with her name
+    in them must not turn the microphone on.
+    """
+    tail, _said = wake_at(text or '', spellings, 1)
+    if tail is None or fallback_route(tail, hints) == 'ignore':
+        return None
+    return tail
 
 
 def wake_enrollment_allowed(text, alt=''):
@@ -1886,7 +1933,10 @@ class Ears:
         When the trained ear misses the name but vosk has both the name and a tail,
         the tail is routed (yumi/addressing.py): a command or a phrase meant for her
         may wake her, background talk stays a dream. `hints` are the user's own
-        phrases/keywords from actions.json, so a custom button is known here too."""
+        phrases/keywords from actions.json, so a custom button is known here too.
+        When the chosen mic is denoised, a spare whisper ear also reads short
+        slices of the raw microphone: rnnoise can erase a name under loud music,
+        and the phrase ear must still hear an addressed command."""
         import selectors
         from vosk import KaldiRecognizer
         echo = echo_ready(mic)
@@ -1907,6 +1957,13 @@ class Ears:
         ring = bytearray()
         wake_pcm = b''                   # the tape the phrase ear read, for the voice print
         RING_MAX = RATE * 8 * 2          # 8 s of s16 mono
+        # a denoised mic may swallow the name under music: keep a reader on the
+        # untouched one for the spare phrase ear. A raw mic needs no second ring.
+        sweep_mic = raw_source(mic) if (TUNE['wake_stt_sweep']
+                                       and name in ('pw-record', 'parecord')) else None
+        sweep_proc = None
+        sweep_ring = bytearray() if sweep_mic else None
+        sweep_last = 0.0
 
         def judge_note(what):
             """one line into the wake's diary (judge.log): what the ear heard and why
@@ -2037,6 +2094,19 @@ class Ears:
                     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 except OSError as e:
                     raise RuntimeError(f'the microphone would not start: {e}') from e
+                if sweep_mic:
+                    # a second reader on the plain source: PipeWire gives it to
+                    # both at once, and the spare ear hears what rnnoise threw away
+                    _, sweep_cmd = recorder_cmd(sweep_mic)
+                    if sweep_cmd:
+                        try:
+                            sweep_proc = subprocess.Popen(
+                                sweep_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            os.set_blocking(sweep_proc.stdout.fileno(), False)
+                            judge_note(f'spare wake ear on {sweep_mic}')
+                        except OSError as e:
+                            log(f'spare wake ear would not start: {e}'[-160:])
+                            sweep_mic, sweep_ring = None, None
                 if oww_ear in ('auto', 'oww'):
                     ear_oww = oww_ear_start()
                     if oww_ear == 'oww' and ear_oww is None:
@@ -2207,6 +2277,47 @@ class Ears:
                     phrase_ms = 0.0
                     return True
 
+                def spare_ear(now):
+                    """the spare phrase ear: read a short slice of the raw mic
+                    while the trained ear is silent. A name at the head of what
+                    was read and a wish routed to her wake her at once (the
+                    phrase is already complete, so there is no tail to wait for)."""
+                    nonlocal sweep_last, woken, fallback_wake, wake_t, wake_score
+                    nonlocal heard_after, utt
+                    if not sweep_ring or woken or muted() or self.abort:
+                        return None
+                    if now - sweep_last < WAKE_SWEEP_S:
+                        return None
+                    sweep_last = now
+                    tape = bytes(sweep_ring[-int(WAKE_SWEEP_TAPE * RATE * 2):])
+                    if len(tape) < RATE:        # a breath, not a name and a command
+                        return None
+                    try:
+                        text, ear, variants = self.read_tape(
+                            tape, lang, size, engine, min(beam, 5),
+                            hotwords_text(TUNE.get('stt_hotwords', '')))
+                    except Exception as e:      # noqa: BLE001 - a spare ear must stay best effort
+                        log(f'spare wake ear failed: {e}'[-160:])
+                        return None
+                    if not text:
+                        return None
+                    tail = stt_wake_tail(text, spellings, hints)
+                    judge_note(f'STT sweep ({text!r}) tail={tail!r} by={ear}')
+                    if tail is None:
+                        return None
+                    diag.event(arbitration='CANDIDATE', reason='stt_sweep',
+                               stt_text=text, stt_by=ear, wake_candidate=True,
+                               judge_called=False, final_wake=False,
+                               **diag_base('LISTENING', voiced))
+                    woken = True
+                    fallback_wake = True       # the trained ear missed it
+                    wake_t = now
+                    wake_score = 0.0
+                    _last_wake[0] = now
+                    heard_after = tail
+                    utt = None                 # the whole phrase is already in `text`
+                    return wake_result(tail, 'stt_sweep', 0.0, variants=variants)
+
                 while time.monotonic() - t0 < secs:
                     if self.abort:
                         break               # /stop, or a listen that needs the microphone
@@ -2279,6 +2390,19 @@ class Ears:
                         if die not in (None, 0):
                             raise RuntimeError(f'{name} died ({die}){err}'.rstrip())
                         break               # the stream is over: what is on the tape stands
+                    if sweep_proc is not None and sweep_ring is not None:
+                        # the plain mic runs beside the denoised one; read it
+                        # without blocking the wake loop, keep only its last
+                        # six seconds for the spare phrase ear
+                        try:
+                            raw_chunk = os.read(sweep_proc.stdout.fileno(), 4000)
+                        except (BlockingIOError, OSError):
+                            raw_chunk = b''
+                        if raw_chunk:
+                            sweep_ring += raw_chunk
+                            keep = int(WAKE_SWEEP_TAPE * RATE * 2)
+                            if len(sweep_ring) > keep:
+                                del sweep_ring[:-keep]
                     heard = True
                     voiced = det.feed(chunk)            # the voice detector follows the frames
                     if voiced:
@@ -2422,6 +2546,9 @@ class Ears:
                         # model): the name from vosk's own words, the way the ears
                         # worked before the trained one arrived — not deaf, as before
                         wake_from_vosk(words)
+                    answer = spare_ear(time.monotonic())
+                    if answer is not None:
+                        return answer
                     if woken:
                         # LISTENING: the phrase after the name gathers on the tape,
                         # its end comes from the same VAD endpointing as ever — and
@@ -2509,6 +2636,21 @@ class Ears:
                             proc.stderr.close()
                         except OSError:
                             pass
+                if sweep_proc is not None:      # the spare reader dies with the wake
+                    try:
+                        sweep_proc.terminate()
+                        sweep_proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        sweep_proc.kill()
+                        sweep_proc.wait()
+                    except OSError:
+                        pass
+                    finally:
+                        for stream in (sweep_proc.stdout, sweep_proc.stderr):
+                            try:
+                                stream.close()
+                            except OSError:
+                                pass
                 self.busy = False
                 self.kind = None
 
